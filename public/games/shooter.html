@@ -335,6 +335,9 @@ input:focus { border-color:var(--accent); }
     <div class="sprint-label">SPRINT</div>
     <div class="sprint-track"><div class="sprint-fill" id="sprint-fill" style="width:100%"></div></div>
   </div>
+  <div class="hud-el" id="hud-crouch" style="bottom:0;left:140px;background:rgba(0,0,0,.75);padding:6px 12px 10px;display:none;">
+    <div style="font-size:9px;color:#888;letter-spacing:1px;text-transform:uppercase;">CROUCH</div>
+  </div>
 
   <div id="hud-nametag"></div>
   <div class="hud-el" id="hud-damage" style="inset:0;position:absolute;pointer-events:none;"></div>
@@ -382,7 +385,7 @@ input:focus { border-color:var(--accent); }
     </div>
 
     <div class="controls-hint">
-      <b>WASD</b> move · <b>Shift</b> sprint · <b>Space</b> jump · <b>Left Click</b> shoot · <b>1/2/3</b> weapons · <b>R</b> reload · <b>Esc</b> pause
+      <b>WASD</b> move · <b>Shift</b> sprint · <b>C</b> crouch · <b>Space</b> jump · <b>Left Click</b> shoot · <b>1/2/3/4</b> weapons · <b>R</b> reload · <b>Esc</b> pause
     </div>
 
     <div class="settings-btns">
@@ -416,27 +419,30 @@ input:focus { border-color:var(--accent); }
 //  CONFIG
 // ══════════════════════════════════════════════════════════════
 const CFG = {
-  PLAYER_SPEED:    5.0,
-  SPRINT_SPEED:    7.5,
-  SPRINT_MAX_MS:   5000,
-  SPRINT_REGEN:    600,
-  MOVE_HZ:         20,
-  EYE_HEIGHT:      1.6,
-  MAX_HEALTH:      100,
-  KILLS_TO_WIN:    5,
-  BOT_SPEED:       3.2,
-  BOT_SHOOT_MS:    950,
-  BOT_ACCURACY:    0.52,
-  BOT_AGGRO_DIST:  18,
+  PLAYER_SPEED:      5.0,
+  SPRINT_SPEED:      7.5,
+  CROUCH_SPEED_MULT: 0.60,   // speed multiplier when crouching
+  SPRINT_MAX_MS:     5000,
+  SPRINT_REGEN:      600,
+  MOVE_HZ:           20,
+  EYE_HEIGHT:        1.6,
+  CROUCH_HEIGHT:     0.80,   // camera height when crouching
+  MAX_HEALTH:        100,
+  KILLS_TO_WIN:      5,
+  BOT_SPEED:         3.2,
+  BOT_SHOOT_MS:      950,
+  BOT_ACCURACY:      0.52,
+  BOT_AGGRO_DIST:    18,
 };
 
 // Weapon configs — MUST match server.js WEAPONS
 const WEAPONS = {
-  rifle:   { name:'AK-47',   fireMode:'auto', fireMs:105, mag:30, dmg:22, headDmg:100, reloadMs:2000, pellets:1, spread:0.022, spreadMove:0.35, spreadDecay:4 },
-  pistol:  { name:'PISTOL',  fireMode:'semi', fireMs:180, mag:12, dmg:34, headDmg:100, reloadMs:1500, pellets:1, spread:0.014, spreadMove:0.20, spreadDecay:5 },
-  shotgun: { name:'SHOTGUN', fireMode:'semi', fireMs:700, mag:6,  dmg:16, headDmg:60,  reloadMs:2500, pellets:6, spread:0.10,  spreadMove:0.50, spreadDecay:3 },
+  rifle:   { name:'AK-47',   fireMode:'auto', fireMs:105,  mag:30, dmg:22, headDmg:100, reloadMs:2000, pellets:1, spread:0.022, spreadMove:0.35, spreadDecay:4 },
+  pistol:  { name:'PISTOL',  fireMode:'semi', fireMs:180,  mag:12, dmg:34, headDmg:100, reloadMs:1500, pellets:1, spread:0.014, spreadMove:0.20, spreadDecay:5 },
+  shotgun: { name:'SHOTGUN', fireMode:'semi', fireMs:700,  mag:6,  dmg:16, headDmg:60,  reloadMs:2500, pellets:6, spread:0.10,  spreadMove:0.50, spreadDecay:3 },
+  sniper:  { name:'M40A3',   fireMode:'semi', fireMs:1500, mag:5,  dmg:50, headDmg:100, reloadMs:3500, pellets:1, spread:0.003, spreadMove:0.28, spreadDecay:1.5 },
 };
-const WEAPON_ORDER = ['rifle', 'pistol', 'shotgun'];
+const WEAPON_ORDER = ['rifle', 'pistol', 'shotgun', 'sniper'];
 
 // ══════════════════════════════════════════════════════════════
 //  HELPERS
@@ -930,9 +936,13 @@ const GameEngine = {
     rifle:   { ammo: 30, reloading: false },
     pistol:  { ammo: 12, reloading: false },
     shotgun: { ammo: 6,  reloading: false },
+    sniper:  { ammo: 5,  reloading: false },
   },
   _firing: false,
   _lastShotTime: 0,
+
+  // Crouch
+  crouching: false,
 
   // Input
   _keys:         {},
@@ -1183,7 +1193,7 @@ const GameEngine = {
       this._gunModels[key] = g;
       this.camera.add(g);
     }
-    this.gunGroup = this._gunModels.rifle;
+    this.gunGroup = this._gunModels['rifle'];
 
     // Muzzle flash (shared, repositioned per weapon)
     const flash = new THREE.Mesh(
@@ -1233,6 +1243,27 @@ const GameEngine = {
       const grip = box(0.05, 0.10, 0.05, wood);   grip.position.set(0, -0.085, 0.06);
       const fs   = box(0.012, 0.024, 0.012, accent); fs.position.set(0, 0.075, -0.58);
       G.add(recv, bar1, hg, pump, stk, grip, fs);
+    } else if (key === 'sniper') {
+      // Long bolt-action sniper rifle with scope
+      G.position.set(0.20, -0.18, -0.56);
+      G.rotation.y = 0.04;
+      const recv  = box(0.07, 0.065, 0.48, dark);
+      const bar   = box(0.038, 0.038, 0.56, dark);  bar.position.set(0, 0.013, -0.52);
+      const hg    = box(0.08,  0.052, 0.22, wood);  hg.position.set(0, -0.012, -0.22);
+      const stk   = box(0.058, 0.072, 0.22, wood);  stk.position.set(0, -0.010, 0.30);
+      const grip  = box(0.044, 0.10,  0.042, wood); grip.position.set(0, -0.080, 0.08);
+      const mag   = box(0.048, 0.11,  0.052, dark); mag.position.set(0, -0.10, -0.02);
+      // Scope body
+      const scopeB = box(0.038, 0.038, 0.28, accent); scopeB.position.set(0, 0.062, -0.13);
+      // Scope lenses
+      const lensF  = box(0.060, 0.060, 0.030, metal); lensF.position.set(0, 0.062, -0.30);
+      const lensR  = box(0.048, 0.048, 0.030, metal); lensR.position.set(0, 0.062, 0.02);
+      // Suppressor tip
+      const supp   = box(0.050, 0.050, 0.10, accent); supp.position.set(0, 0.013, -0.83);
+      // Bipod legs (folded forward)
+      const bipL   = box(0.018, 0.11, 0.015, metal); bipL.position.set(-0.048, -0.055, -0.40); bipL.rotation.z = 0.28;
+      const bipR   = box(0.018, 0.11, 0.015, metal); bipR.position.set( 0.048, -0.055, -0.40); bipR.rotation.z = -0.28;
+      G.add(recv, bar, hg, stk, grip, mag, scopeB, lensF, lensR, supp, bipL, bipR);
     }
     return G;
   },
@@ -1337,7 +1368,7 @@ const GameEngine = {
   _bindInput(canvas) {
     const GAME_KEYS = new Set([
       'KeyW','KeyS','KeyA','KeyD','ShiftLeft','ShiftRight','KeyR','Space',
-      'Digit1','Digit2','Digit3',
+      'Digit1','Digit2','Digit3','Digit4','KeyC',
     ]);
 
     window.addEventListener('keydown', e => {
@@ -1352,7 +1383,9 @@ const GameEngine = {
       if (e.code === 'Digit1') this.switchWeapon('rifle');
       if (e.code === 'Digit2') this.switchWeapon('pistol');
       if (e.code === 'Digit3') this.switchWeapon('shotgun');
-      if (e.code === 'Space' && this.pointerLocked && this._grounded) {
+      if (e.code === 'Digit4') this.switchWeapon('sniper');
+      if (e.code === 'KeyC')   this.crouching = !this.crouching;
+      if (e.code === 'Space' && this.pointerLocked && this._grounded && !this.crouching) {
         this._yVel = 4.5;
         this._grounded = false;
       }
@@ -1454,9 +1487,10 @@ const GameEngine = {
 
     if (this._muzzleFlash) {
       const muzzlePos = {
-        rifle:   { x: 0.20, y: -0.18, z: -1.00 },
+        rifle:   { x: 0.20, y: -0.18,  z: -1.00 },
         pistol:  { x: 0.18, y: -0.165, z: -0.55 },
-        shotgun: { x: 0.22, y: -0.18, z: -1.10 },
+        shotgun: { x: 0.22, y: -0.18,  z: -1.10 },
+        sniper:  { x: 0.20, y: -0.165, z: -1.45 },
       }[this.currentWeapon] || { x: 0.20, y: -0.18, z: -1.00 };
       this._muzzleFlash.position.set(muzzlePos.x, muzzlePos.y, muzzlePos.z);
       this._muzzleFlash.material.opacity = 1;
@@ -1615,22 +1649,22 @@ const GameEngine = {
     // Full-auto firing (only for auto-fire weapons while holding mouse button)
     if (this._firing && this._wCfg().fireMode === 'auto') this._shoot();
 
-    // Sprint
+    // Sprint (disabled while crouching)
     const shift  = this._keys['ShiftLeft'] || this._keys['ShiftRight'];
     const moving = this._keys['KeyW'] || this._keys['KeyS'] || this._keys['KeyA'] || this._keys['KeyD'];
-    this.sprinting = shift && moving && this.sprintFuel > 0;
+    this.sprinting = shift && moving && this.sprintFuel > 0 && !this.crouching;
     this.sprintFuel = this.sprinting
       ? Math.max(0, this.sprintFuel - dt * 1000)
       : Math.min(CFG.SPRINT_MAX_MS, this.sprintFuel + dt * CFG.SPRINT_REGEN);
     UIManager.updateSprint(this.sprintFuel / CFG.SPRINT_MAX_MS);
+    UIManager.updateCrouch(this.crouching);
 
-    // ── MOVEMENT (CORRECTED) ──────────────────────────────────────────────
-    // Camera look direction in world: (-sinY, 0, -cosY)
-    // Camera right direction in world: (cosY, 0, -sinY)
-    // For local input (mx, mz) where mz=-1 = forward:
-    //   worldX = mx * cos(yaw) + mz * sin(yaw)   ← fixed signs
-    //   worldZ = -mx * sin(yaw) + mz * cos(yaw)  ← fixed signs
-    const speed = this.sprinting ? CFG.SPRINT_SPEED : CFG.PLAYER_SPEED;
+    // Movement speed: sprint > normal > crouch
+    const speed = this.sprinting
+      ? CFG.SPRINT_SPEED
+      : this.crouching
+        ? CFG.PLAYER_SPEED * CFG.CROUCH_SPEED_MULT
+        : CFG.PLAYER_SPEED;
     let mx = 0, mz = 0;
     if (this._keys['KeyW']) mz -= 1;
     if (this._keys['KeyS']) mz += 1;
@@ -1675,8 +1709,12 @@ const GameEngine = {
       this._footT = 0;
     }
 
-    // Update camera
-    this.camera.position.set(this.pos.x, CFG.EYE_HEIGHT + this._yPos, this.pos.z);
+    // Update camera (crouch lowers eye height smoothly)
+    const targetEyeH = (this.crouching ? CFG.CROUCH_HEIGHT : CFG.EYE_HEIGHT) + this._yPos;
+    this._currentEyeH = this._currentEyeH !== undefined
+      ? this._currentEyeH + (targetEyeH - this._currentEyeH) * Math.min(1, dt * 14)
+      : targetEyeH;
+    this.camera.position.set(this.pos.x, this._currentEyeH, this.pos.z);
     this.camera.rotation.order = 'YXZ';
     this.camera.rotation.y = this.yaw;
     this.camera.rotation.x = this.pitch;
@@ -1707,6 +1745,7 @@ const GameEngine = {
       rifle:   { x: 0.20, y: -0.20, z: -0.48 },
       pistol:  { x: 0.18, y: -0.18, z: -0.36 },
       shotgun: { x: 0.22, y: -0.22, z: -0.50 },
+      sniper:  { x: 0.20, y: -0.18, z: -0.56 },
     }[this.currentWeapon] || { x: 0.20, y: -0.20, z: -0.48 };
 
     if (moving && this.pointerLocked) {
@@ -1760,7 +1799,9 @@ const GameEngine = {
     }
     this.currentWeapon = 'rifle';
     UIManager.updateAmmo(WEAPONS.rifle.mag, WEAPONS.rifle.mag, WEAPONS.rifle.name);
-    this.sprintFuel  = CFG.SPRINT_MAX_MS;
+    this.sprintFuel   = CFG.SPRINT_MAX_MS;
+    this.crouching    = false;
+    this._currentEyeH = CFG.EYE_HEIGHT;
     this._spread     = 0;
     this._keys       = {};
     this._gunRecoil  = 0;
@@ -1983,6 +2024,10 @@ const UIManager = {
   },
 
   updateSprint(f) { document.getElementById('sprint-fill').style.width = `${f*100}%`; },
+  updateCrouch(c) {
+    const el = document.getElementById('hud-crouch');
+    if (el) el.style.display = c ? 'block' : 'none';
+  },
 
   updateScore(mine, opp) {
     document.getElementById('hud-my-kills').textContent  = mine;
@@ -2475,7 +2520,9 @@ const App = {
       this.myHealth = CFG.MAX_HEALTH;
       UIManager.updateHealth(CFG.MAX_HEALTH);
       UIManager.hideRespawn();
-      GameEngine.isDead = false;
+      GameEngine.isDead    = false;
+      GameEngine.crouching = false;
+      UIManager.updateCrouch(false);
       GameEngine.setSpawn({ x: 0, y: 0, z: 17 });
       for (const k of Object.keys(WEAPONS)) {
         GameEngine.weapons[k].ammo      = WEAPONS[k].mag;
@@ -2576,7 +2623,9 @@ const App = {
     this.myHealth = health;
     UIManager.updateHealth(health);
     UIManager.hideRespawn();
-    GameEngine.isDead = false;
+    GameEngine.isDead     = false;
+    GameEngine.crouching  = false;
+    UIManager.updateCrouch(false);
     GameEngine.setSpawn(position);
     for (const k of Object.keys(WEAPONS)) {
       GameEngine.weapons[k].ammo      = WEAPONS[k].mag;
