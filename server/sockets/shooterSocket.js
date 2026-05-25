@@ -81,24 +81,10 @@ function endMatch(io, matchId, winnerSocketId, reason) {
     }
   }).catch(err => console.error('[shooter] finishMatch failed', err));
 
-  // Reset lobby
-  if (match.lobbyId) {
-    const lobby = lobbies.get(match.lobbyId);
-    if (lobby) {
-      lobby.players = lobby.players.filter(id => !match.playerIds.includes(id));
-      lobby.mapVotes = {};
-      lobby.status = lobby.players.length === 0 ? 'waiting'
-                   : lobby.players.length < 2  ? 'waiting'
-                   : 'in_progress';
-    }
-  }
-
-  // Clear per-player references and leave the room
+  // Clear per-player match references (lobby was already cleared when match started)
   for (const sockId of match.playerIds) {
     const p = players.get(sockId);
     if (p) { p.currentMatch = null; p.currentLobby = null; }
-    const sock = io.of('/shooter').sockets.get(sockId);
-    if (sock && match.lobbyId) sock.leave(match.lobbyId);
   }
 
   matches.delete(matchId);
@@ -164,7 +150,16 @@ async function startMatch(io, lobbyId) {
   matches.set(match.id, match);
   p1.currentMatch = match.id;
   p2.currentMatch = match.id;
-  lobby.status = 'in_progress';
+
+  // Clear lobby immediately so new players can queue while this match runs
+  lobby.players = [];
+  lobby.mapVotes = {};
+  lobby.status = 'waiting';
+  p1.currentLobby = null;
+  p2.currentLobby = null;
+  const ns = io.of('/shooter');
+  ns.sockets.get(p1Id)?.leave(lobbyId);
+  ns.sockets.get(p2Id)?.leave(lobbyId);
   broadcastLobbies(io);
 
   const basePayload = {
@@ -217,6 +212,7 @@ function attach(io) {
       if (lobby.status === 'in_progress') return cb?.({ error: 'in_progress' });
       if (lobby.players.length >= 2) return cb?.({ error: 'full' });
       if (p.currentLobby) return cb?.({ error: 'already_in_lobby' });
+      if (p.currentMatch) return cb?.({ error: 'already_in_match' });
 
       const balance = await getBalance(p.userId);
       if (balance < lobby.bet) return cb?.({ error: 'insufficient_balance' });
