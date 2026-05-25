@@ -22,6 +22,20 @@ const PLAYER_HEIGHT      = 1.8;
 const MAX_MOVE_DELTA     = 2.5;
 const HOUSE_FEE_PERCENT  = Math.min(50, Math.max(0, Number(process.env.HOUSE_FEE_PERCENT || 5)));
 
+// ── Server-authoritative tuneables ─────────────────────────────────────────
+// All deliberately a little generous so average-ping players are never
+// punished. Reject only what is clearly impossible.
+const MAX_MOVE_SPEED_UPS        = 14;     // units/sec — sprint ~6, this allows lag-burst spikes
+const MAX_ACCEL_UPS2            = 80;     // per-second velocity delta cap
+const MAX_LAG_COMP_MS           = 600;    // never rewind further than this (mirrors LAG_COMP_BUFFER_MS)
+const MAX_CLIENT_TIME_DRIFT_MS  = 2500;   // |clientTs - serverTs|
+const WEAPON_SWITCH_COOLDOWN_MS = 250;    // can't switch faster than this
+const SHOT_AFTER_SWITCH_MS      = 180;    // can't fire immediately after switching
+const POSITION_HISTORY_MS       = 1500;   // how far back we keep position history
+const MOVEMENT_SNAPSHOT_INTERVAL_MS = 200; // replay-log throttle for movement
+const MAX_SUSPICIOUS_SCORE      = 50;     // soft cap — not auto-banned, only logged
+const MAX_SHOT_DIRECTION_DEVIATION = 0.6; // dot-product floor between shot dir and look dir
+
 // Weapon configs — must mirror client's WEAPONS
 const WEAPONS = {
   rifle:   { fireMs: 105,  mag: 30, dmg: 22, headDmg: 100, reloadMs: 2000, pellets: 1, spread: 0.0  },
@@ -266,6 +280,10 @@ module.exports = {
   // Constants / configs
   LOBBY_DEFS, MAX_HEALTH, KILLS_TO_WIN, MATCH_DURATION_MS, RESPAWN_DELAY_MS,
   LAG_COMP_BUFFER_MS, PLAYER_HW, PLAYER_HEIGHT, MAX_MOVE_DELTA, WEAPONS, DEFAULT_WEAPON,
+  // Server-authoritative tuneables
+  MAX_MOVE_SPEED_UPS, MAX_ACCEL_UPS2, MAX_LAG_COMP_MS, MAX_CLIENT_TIME_DRIFT_MS,
+  WEAPON_SWITCH_COOLDOWN_MS, SHOT_AFTER_SWITCH_MS, POSITION_HISTORY_MS,
+  MOVEMENT_SNAPSHOT_INTERVAL_MS, MAX_SUSPICIOUS_SCORE, MAX_SHOT_DIRECTION_DEVIATION,
   // Live state (used by shooterSocket.js)
   lobbies, matches, players,
   // Helpers
