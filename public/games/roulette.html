@@ -10,70 +10,56 @@
 .wheel-area {
   display:flex; align-items:center; justify-content:center;
   background: var(--bg2); border:1px solid var(--border); border-radius:8px;
-  padding: 18px; min-height: 320px; position: relative;
+  padding: 24px; min-height: 340px; position: relative;
 }
-.wheel-wrap { position: relative; width: 280px; height: 280px; }
-.wheel {
+.wheel-wrap { position: relative; width: 300px; height: 300px; }
+
+/* Canvas wheel — CSS rotation applied via JS */
+#wheel {
   position: absolute; inset: 0;
+  width: 300px; height: 300px;
   border-radius: 50%;
-  background: radial-gradient(circle at center, #3a2913 0%, #1f1610 45%, #0e0a07 100%);
-  border: 8px solid #7a5430;
-  box-shadow: inset 0 0 16px rgba(0,0,0,.7), 0 6px 16px rgba(0,0,0,.6);
-  transform-origin: center;
-  transition: transform 5s cubic-bezier(.16,.78,.18,1);
+  transform-origin: center center;
+  /* box-shadow provides the outer ring effect */
+  box-shadow:
+    0 0 0 6px #7a5020,
+    0 0 0 10px #4a2e0e,
+    0 0 0 12px #8a6030,
+    0 14px 36px rgba(0,0,0,.85);
+  will-change: transform;
 }
-.wheel .pocket {
-  position: absolute; top: 0; left: 50%;
-  width: 26px; height: 60px; margin-left: -13px;
-  transform-origin: 50% 140px;        /* radius from center */
-  display: flex; align-items: flex-start; justify-content: center;
-  padding-top: 6px;
-  font-size: 12px; font-weight: 700; color: #fff;
-  font-family: 'Rajdhani', sans-serif;
-  text-shadow: 0 1px 2px rgba(0,0,0,.8);
+
+/* Fixed notch at 12-o'clock (landing indicator) */
+.wheel-notch {
+  position: absolute; top: -2px; left: 50%; transform: translateX(-50%);
+  width: 10px; height: 14px;
+  background: linear-gradient(to bottom, #ffe066, #c89020);
+  border-radius: 0 0 4px 4px;
+  box-shadow: 0 2px 6px rgba(0,0,0,.6);
+  z-index: 6;
 }
-.wheel .pocket.red   { background: #c0142d; }
-.wheel .pocket.black { background: #161616; }
-.wheel .pocket.green { background: #128a3a; }
-.wheel .pocket::after {
-  /* angled gap between pockets */
-  content: ''; position: absolute; inset: 0;
-  border-left: 1px solid rgba(0,0,0,.6);
-  border-right: 1px solid rgba(0,0,0,.6);
-}
-.wheel-center {
-  position: absolute; top: 50%; left: 50%;
-  width: 100px; height: 100px; margin: -50px 0 0 -50px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 35% 35%, #b48650, #4a2c14 65%, #2a1a0a);
-  box-shadow: inset -4px -4px 8px rgba(0,0,0,.6), 0 4px 8px rgba(0,0,0,.4);
-}
-/* Pointer at top */
-.pointer {
-  position: absolute; top: -8px; left: 50%; transform: translateX(-50%);
-  width: 0; height: 0;
-  border-left: 12px solid transparent;
-  border-right: 12px solid transparent;
-  border-top: 20px solid #ffd84a;
-  filter: drop-shadow(0 1px 2px rgba(0,0,0,.6));
-  z-index: 5;
-}
-/* Ball — rotates in opposite direction at slower decel */
+
+/* Ball orbits in the opposite direction */
 .ball-track {
   position: absolute; inset: 0; transform-origin: center;
-  transition: transform 5s cubic-bezier(.18,.74,.18,1);
+  will-change: transform;
   pointer-events: none;
 }
 .ball-track::after {
   content: ''; position: absolute;
-  top: 6px; left: 50%; transform: translateX(-50%);
-  width: 12px; height: 12px; border-radius: 50%;
-  background: radial-gradient(circle at 35% 35%, #fff, #c9c9c9 70%);
-  box-shadow: 0 1px 2px rgba(0,0,0,.4);
+  top: 8px; left: 50%; transform: translateX(-50%);
+  width: 14px; height: 14px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #ffffff, #c0c0c0 60%, #888 100%);
+  box-shadow: 0 2px 6px rgba(0,0,0,.7), inset 0 -2px 4px rgba(0,0,0,.3);
 }
-.last-numbers { display:flex; gap:4px; flex-wrap:wrap; margin-top:14px; justify-content:center; }
+
+.last-numbers {
+  display:flex; gap:5px; flex-wrap:wrap; margin-top:14px; justify-content:center;
+}
 .last-numbers span {
-  padding:4px 9px; font-size:12px; font-family:monospace; color:#fff; border-radius:2px; font-weight:700;
+  padding:4px 10px; font-size:12px; font-family:monospace;
+  color:#fff; border-radius:3px; font-weight:700;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,.4);
 }
 
 /* ─── Table ──────────────────────────────────────────────────────────── */
@@ -189,14 +175,13 @@
   <h1 class="page">ROULETTE</h1>
   <p class="subtitle">European wheel · single zero · crypto-secure RNG · place multiple chips per spin.</p>
 
-  <div style="display:grid; grid-template-columns: 320px 1fr; gap:18px; align-items:start;">
+  <div style="display:grid; grid-template-columns: 348px 1fr; gap:18px; align-items:start;">
     <div>
       <div class="wheel-area">
         <div class="wheel-wrap">
-          <div class="pointer"></div>
-          <div class="wheel" id="wheel"></div>
+          <div class="wheel-notch"></div>
+          <canvas id="wheel" width="300" height="300"></canvas>
           <div class="ball-track" id="ball"></div>
-          <div class="wheel-center"></div>
         </div>
       </div>
       <div class="last-numbers" id="history"></div>
