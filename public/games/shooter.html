@@ -197,14 +197,76 @@ input:focus { border-color:var(--accent); }
 .stat-label { color:var(--dim);font-size:13px; } .stat-value { color:#fff;font-size:13px;font-weight:600; }
 .postmatch-btns { display:flex;gap:12px;width:100%; }
 .postmatch-btns button { flex:1;padding:13px 0;font-size:14px; }
-.ranking-grid { display:grid;grid-template-columns:1fr;gap:6px;width:100%;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:4px;padding:12px 16px; }
+.ranking-grid { display:flex;flex-direction:column;gap:8px;width:100%;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:4px;padding:14px 16px; }
 .ranking-grid .rank-row { display:flex;justify-content:space-between;font-size:13px;letter-spacing:1px; }
 .ranking-grid .stat-value.pos { color:var(--green); }
 .ranking-grid .stat-value.neg { color:var(--red); }
 .level-up { color:#ffcc00;font-weight:700;margin-left:6px;animation:pulse 1s ease infinite alternate; }
+.level-up-banner {
+  text-align:center;font-size:18px;letter-spacing:5px;font-weight:700;
+  color:#ffcc00;text-shadow:0 0 14px rgba(255,204,0,.7);
+  padding:8px 0;background:linear-gradient(90deg,rgba(255,204,0,.0),rgba(255,204,0,.18),rgba(255,204,0,.0));
+  border-top:1px solid rgba(255,204,0,.35);border-bottom:1px solid rgba(255,204,0,.35);
+  animation:lvlPulse 1.2s ease infinite alternate;
+}
+@keyframes lvlPulse { from { transform:scale(1);} to { transform:scale(1.03);} }
+.tier-banner {
+  display:flex;align-items:center;gap:14px;padding:10px 12px;border-radius:3px;
+  background:linear-gradient(90deg,rgba(0,0,0,.4),rgba(255,255,255,.05));
+  border-left:3px solid var(--tier-color);
+}
+.tier-banner .tier-icon { font-size:22px;color:var(--tier-color);text-shadow:0 0 8px var(--tier-color); }
+.tier-banner .tier-name { font-size:16px;letter-spacing:4px;font-weight:700;color:var(--tier-color);flex:1; }
+.tier-banner .tier-lvl  { font-size:13px;color:#fff;letter-spacing:2px; }
+.xp-bar {
+  position:relative;height:14px;border-radius:8px;background:rgba(0,0,0,.45);
+  overflow:hidden;border:1px solid rgba(255,255,255,.08);
+}
+.xp-fill {
+  height:100%;background:linear-gradient(90deg,#3fa9ff,#9be0ff);
+  transition:width 1.1s cubic-bezier(.16,.84,.44,1);
+  box-shadow:0 0 8px rgba(150,210,255,.6);
+}
+.xp-text { position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:10px;letter-spacing:2px;color:#fff;text-shadow:0 0 2px #000; }
+
+/* Header rank badge */
+#header-rank { display:flex;flex-direction:column;align-items:flex-end;line-height:1.2; }
+#header-rank .rank-tier { font-size:12px;font-weight:700;letter-spacing:3px;text-shadow:0 0 6px currentColor; }
+#header-rank .rank-meta { font-size:10px;color:var(--dim);letter-spacing:1px; }
 .killcam-note { font-size:12px;color:var(--dim);letter-spacing:1px;text-align:center; }
 .lobby-card.tier-locked { opacity:.45;cursor:not-allowed;filter:grayscale(.5); }
 .lobby-card.tier-locked .card-name { color:var(--dim); }
+
+/* ── Sniper scope overlay ─────────────────────────────────────────── */
+#scope-overlay .scope-ring {
+  position:absolute;top:50%;left:50%;width:100vmin;height:100vmin;
+  margin-left:-50vmin;margin-top:-50vmin;border-radius:50%;
+  box-shadow:0 0 0 9999px #000;
+  pointer-events:none;
+  animation:scopeIn .12s ease;
+}
+#scope-overlay .scope-cross-v,
+#scope-overlay .scope-cross-h {
+  position:absolute;background:rgba(255,255,255,.85);
+}
+#scope-overlay .scope-cross-v { left:50%;top:0;bottom:0;width:1px;transform:translateX(-.5px); }
+#scope-overlay .scope-cross-h { top:50%;left:0;right:0;height:1px;transform:translateY(-.5px); }
+#scope-overlay::after {
+  content:'';position:absolute;top:50%;left:50%;width:6px;height:6px;
+  background:#e63946;border-radius:50%;transform:translate(-50%,-50%);
+}
+@keyframes scopeIn { from { opacity:0;transform:scale(1.05);} to { opacity:1;transform:scale(1);} }
+
+/* ── Killcam tag overrides ─────────────────────────────────────────── */
+#overlay-respawn.killcam-active { background:#000; }
+#overlay-respawn.killcam-active h2 { color:#ff3030;text-shadow:0 0 8px #f00; }
+
+/* ── In-game chat box ─────────────────────────────────────────────── */
+#game-chat-input:focus { outline:1px solid var(--accent);background:rgba(0,0,0,.75); }
+.gc-from { color:#7fd; font-weight:600; }
+.gc-from.you { color:#fc7; }
+.gc-msg { color:#fff; }
+.gc-sys { color:#888; font-style:italic; }
 
 /* ═══ SETTINGS / LEAVE OVERLAY ════════════════════════════════════════════ */
 #overlay-paused { gap:14px; }
@@ -361,11 +423,28 @@ input:focus { border-color:var(--accent); }
     </div>
   </div>
   <div class="game-overlay" id="overlay-respawn">
-    <h2>YOU DIED</h2>
+    <h2 id="respawn-title">YOU DIED</h2>
     <div id="respawn-countdown">3</div>
-    <p style="color:#888;font-size:13px;letter-spacing:1px;">Respawning...</p>
+    <p id="respawn-sub" style="color:#888;font-size:13px;letter-spacing:1px;">Respawning...</p>
+    <!-- Killcam canvas overlays the death screen for the first ~3s. -->
+    <canvas id="killcam-canvas" style="position:absolute;inset:0;width:100%;height:100%;display:none;z-index:-1;"></canvas>
+    <div id="killcam-tag" style="position:absolute;bottom:24px;left:0;right:0;text-align:center;font-size:12px;letter-spacing:2px;color:#f33;display:none;">KILLCAM · POV of <span id="killcam-name">?</span></div>
   </div>
 
+  <!-- Sniper scope overlay -->
+  <div id="scope-overlay" style="display:none;position:absolute;inset:0;pointer-events:none;z-index:9;">
+    <div class="scope-ring"></div>
+    <div class="scope-cross-v"></div>
+    <div class="scope-cross-h"></div>
+  </div>
+
+  <!-- In-game chat (toggle with T) -->
+  <div id="game-chat" style="display:none;position:absolute;left:14px;bottom:120px;width:340px;z-index:8;">
+    <div id="game-chat-log" style="max-height:160px;overflow-y:auto;font-size:12px;color:#cfd;line-height:1.45;text-shadow:0 0 3px #000;background:rgba(0,0,0,.35);padding:6px 8px;border-radius:3px;"></div>
+    <input id="game-chat-input" type="text" maxlength="200"
+           placeholder="Press T to chat, Enter to send, Esc to close"
+           style="margin-top:6px;width:100%;background:rgba(0,0,0,.55);border:1px solid #444;color:#fff;padding:6px 8px;font-family:inherit;font-size:12px;display:none;">
+  </div>
 </div>
 
 <!-- Settings overlay (top-level — works from any screen) -->
@@ -974,6 +1053,11 @@ const GameEngine = {
   // Settings
   _sens:   1.0,    // mouse sensitivity multiplier
   _fov:    75,
+  // Scope / aim-down-sights state. Only the sniper has a true scope;
+  // other weapons just get a soft FOV pull and reduced sensitivity.
+  _scoped:    false,
+  _scopeFovTarget: null,   // animated target FOV; null = no animation
+  _scopeFovBase:   75,
 
   // Footsteps / jump
   _footT:    0,
@@ -1405,6 +1489,42 @@ const GameEngine = {
       this._keys[e.code] = false;
     });
 
+    // ── In-game chat hotkey (T) ──────────────────────────────────────
+    // While the chat input is focused, all game keys are ignored.
+    const chatInput = document.getElementById('game-chat-input');
+    if (chatInput) {
+      window.addEventListener('keydown', e => {
+        if (!this.running) return;
+        if (document.activeElement === chatInput) {
+          if (e.code === 'Enter') {
+            e.preventDefault();
+            const text = chatInput.value.trim();
+            chatInput.value = '';
+            chatInput.style.display = 'none';
+            chatInput.blur();
+            // Return focus to the canvas so movement resumes.
+            this.requestPointerLock();
+            if (text) App.sendMatchChat(text);
+          } else if (e.code === 'Escape') {
+            e.preventDefault();
+            chatInput.value = '';
+            chatInput.style.display = 'none';
+            chatInput.blur();
+            this.requestPointerLock();
+          }
+          // Swallow all other keys so they don't trigger WASD.
+          e.stopPropagation();
+          return;
+        }
+        if (e.code === 'KeyT' && this.pointerLocked) {
+          e.preventDefault();
+          document.exitPointerLock?.();
+          chatInput.style.display = '';
+          chatInput.focus();
+        }
+      }, true); // capture so we run before the WASD handler
+    }
+
     window.addEventListener('mousemove', e => {
       if (!this.pointerLocked || !this.running || this._tabHidden) return;
       // Discard the huge delta that browsers emit right after pointer lock
@@ -1412,24 +1532,34 @@ const GameEngine = {
         this._firstLock = false;
         return;
       }
-      const s = 0.0022 * this._sens;
+      // Scale sensitivity by current FOV so the on-screen pixel-per-mouse
+      // movement is constant. This is the standard "scoped sensitivity"
+      // fix — at half FOV the world appears twice as large, so the mouse
+      // delta needs to be halved for the same on-target movement.
+      const fov = this.camera?.fov || this._fov;
+      const fovScale = fov / 75;
+      const s = 0.0022 * this._sens * fovScale;
       this.yaw   -= e.movementX * s;
       this.pitch -= e.movementY * s;
       this.pitch  = Math.max(-1.45, Math.min(1.45, this.pitch));
     });
 
     window.addEventListener('mousedown', e => {
-      if (e.button !== 0) return;
       AudioManager.resume();
       // Don't intercept clicks on UI elements (buttons, sliders, etc.)
       if (e.target && e.target.id !== 'game-canvas') return;
       if (!this.pointerLocked) { this.requestPointerLock(); return; }
       if (!this.running || this._tabHidden) return;
-      this._firing = true;
-      this._shoot();
+      if (e.button === 0) { this._firing = true; this._shoot(); }
+      else if (e.button === 2) { this.setScoped(true); }
     });
     window.addEventListener('mouseup', e => {
       if (e.button === 0) this._firing = false;
+      else if (e.button === 2) this.setScoped(false);
+    });
+    // Suppress the OS context menu while playing — RMB is the ADS button.
+    window.addEventListener('contextmenu', e => {
+      if (this.running && this.pointerLocked) e.preventDefault();
     });
 
     document.addEventListener('pointerlockchange', () => {
@@ -1463,6 +1593,8 @@ const GameEngine = {
     if (!WEAPONS[name]) return;
     if (this.currentWeapon === name) return;
     if (this._wState().reloading) return;
+    // Unscope on any weapon change.
+    if (this._scoped) this.setScoped(false);
     this.currentWeapon = name;
     // Swap visible gun model
     if (this._gunModels) {
@@ -1793,6 +1925,19 @@ const GameEngine = {
     const dt = Math.min(ts - (this._lastTime ?? ts), 100) / 1000;
     this._lastTime = ts;
     this._update(dt);
+    // Smoothly animate FOV toward scope target.
+    if (this._scopeFovTarget != null) {
+      const cur = this.camera.fov;
+      const tgt = this._scopeFovTarget;
+      const next = cur + (tgt - cur) * Math.min(1, dt * 18);
+      if (Math.abs(next - tgt) < 0.05) {
+        this.camera.fov = tgt;
+        this._scopeFovTarget = null;
+      } else {
+        this.camera.fov = next;
+      }
+      this.camera.updateProjectionMatrix();
+    }
     this.renderer.render(this.scene, this.camera);
     this._rafId = requestAnimationFrame(t => this._loop(t));
   },
@@ -1898,6 +2043,26 @@ const GameEngine = {
   },
 
   setSensitivity(s) { this._sens = Math.max(0.1, +s || 1); },
+
+  // Scope / ADS toggle. Sniper gets a hard zoom + overlay; other weapons
+  // just get a soft pull-in (15° drop) for hipfire-with-aim feel.
+  setScoped(on) {
+    if (!this.running || this.isDead) on = false;
+    const w = this.currentWeapon;
+    if (this._scoped === !!on) return;
+    this._scoped = !!on;
+    this._scopeFovBase = this._fov;
+    if (on) {
+      const target = (w === 'sniper') ? 22
+                   : (w === 'rifle')  ? Math.max(45, this._fov - 12)
+                   : Math.max(48, this._fov - 10);
+      this._scopeFovTarget = target;
+    } else {
+      this._scopeFovTarget = this._fov; // restore base
+    }
+    UIManager.showScopeOverlay(on && w === 'sniper');
+  },
+
   setFOV(f) {
     this._fov = Math.max(50, Math.min(80, +f || 75));
     if (this.camera) {
@@ -1976,11 +2141,28 @@ const UIManager = {
     });
   },
 
+  // MMR → tier mapping. Bronze < 1000 < Silver < 1200 < Gold < 1500 < Diamond
+  // < 1800 < Master. Each tier has a colour and an icon.
+  _tierForMmr(mmr) {
+    const m = Number(mmr) || 1000;
+    if (m >= 1800) return { name: 'MASTER',  color: '#b06bff', icon: '★' };
+    if (m >= 1500) return { name: 'DIAMOND', color: '#79e0ff', icon: '◆' };
+    if (m >= 1200) return { name: 'GOLD',    color: '#ffce4a', icon: '◈' };
+    if (m >= 1000) return { name: 'SILVER',  color: '#cdd4dc', icon: '◇' };
+    return                  { name: 'BRONZE',  color: '#c97f43', icon: '▲' };
+  },
+
   updateRankBadge(ranking) {
     const el = document.getElementById('header-rank');
     if (!el) return;
-    if (!ranking) { el.textContent = ''; return; }
-    el.textContent = `Lvl ${ranking.level} · ${ranking.mmr} MMR`;
+    if (!ranking) { el.innerHTML = ''; return; }
+    const t = this._tierForMmr(ranking.mmr);
+    el.innerHTML = `
+      <span class="rank-tier" style="color:${t.color}">
+        ${t.icon} ${t.name}
+      </span>
+      <span class="rank-meta">Lvl ${ranking.level} · ${ranking.mmr} MMR</span>
+    `;
   },
 
   updateBalance(bal) {
@@ -2152,7 +2334,34 @@ const UIManager = {
     };
     tick();
   },
-  hideRespawn() { document.getElementById('overlay-respawn').classList.remove('visible'); },
+  hideRespawn() {
+    const ov = document.getElementById('overlay-respawn');
+    ov.classList.remove('visible');
+    ov.classList.remove('killcam-active');
+    Killcam.stop();
+  },
+
+  showScopeOverlay(on) {
+    const el = document.getElementById('scope-overlay');
+    if (el) el.style.display = on ? '' : 'none';
+  },
+
+  // Append a chat line to the in-game chat log.
+  pushGameChat({ from, body, isYou, system }) {
+    const log = document.getElementById('game-chat-log');
+    if (!log) return;
+    const row = document.createElement('div');
+    if (system) {
+      row.innerHTML = `<span class="gc-sys">${escapeHtml(body)}</span>`;
+    } else {
+      row.innerHTML = `<span class="gc-from ${isYou ? 'you' : ''}">${escapeHtml(from)}:</span> <span class="gc-msg">${escapeHtml(body)}</span>`;
+    }
+    log.appendChild(row);
+    while (log.childElementCount > 30) log.firstChild.remove();
+    log.scrollTop = log.scrollHeight;
+    const box = document.getElementById('game-chat');
+    if (box) box.style.display = '';
+  },
 
   showPostMatch(data, trainingMode) {
     const won = data.won;
@@ -2202,14 +2411,37 @@ const UIManager = {
         const r  = data.ranking || {};
         const ls = data.liveStats || {};
         const mmrSign = (r.mmrChange ?? 0) >= 0 ? '+' : '';
-        const lvlUp   = r.leveledUp ? ' <span class="level-up">LEVEL UP!</span>' : '';
+        const tier = this._tierForMmr(r.newMmr ?? ls.mmr);
+        // XP progress within the current level: span between this level's
+        // xp floor and the next level's xp floor.
+        const lvl     = r.newLevel ?? ls.level ?? 1;
+        const xp      = r.newXp    ?? ls.xp    ?? 0;
+        const xpFloor = Math.pow(Math.max(0, lvl - 1), 2) * 100;
+        const xpNext  = Math.pow(lvl, 2) * 100;
+        const xpInLvl = Math.max(0, xp - xpFloor);
+        const span    = Math.max(1, xpNext - xpFloor);
+        const pct     = Math.min(100, Math.round((xpInLvl / span) * 100));
+        const lvlUpBanner = r.leveledUp
+          ? `<div class="level-up-banner">LEVEL UP!  ${lvl - 1} → ${lvl}</div>` : '';
         rankEl.innerHTML = `
+          ${lvlUpBanner}
+          <div class="tier-banner" style="--tier-color:${tier.color}">
+            <span class="tier-icon">${tier.icon}</span>
+            <span class="tier-name">${tier.name}</span>
+            <span class="tier-lvl">Lvl ${lvl}</span>
+          </div>
           <div class="rank-row"><span class="stat-label">XP Gained</span><span class="stat-value pos">+${r.xpGained ?? 0}</span></div>
+          <div class="xp-bar"><div class="xp-fill" style="width:0%"></div><span class="xp-text">${xpInLvl} / ${span} XP</span></div>
           <div class="rank-row"><span class="stat-label">MMR</span><span class="stat-value ${(r.mmrChange ?? 0) >= 0 ? 'pos' : 'neg'}">${mmrSign}${r.mmrChange ?? 0} → ${r.newMmr ?? ls.mmr ?? '?'}</span></div>
-          <div class="rank-row"><span class="stat-label">Level</span><span class="stat-value">${r.newLevel ?? ls.level ?? '?'}${lvlUp}</span></div>
           <div class="rank-row"><span class="stat-label">Record</span><span class="stat-value">${ls.wins ?? '?'}W / ${ls.losses ?? '?'}L</span></div>
+          <div class="rank-row"><span class="stat-label">Win Streak</span><span class="stat-value">${ls.currentWinStreak ?? 0} (best ${ls.bestWinStreak ?? 0})</span></div>
         `;
         rankEl.style.display = '';
+        // Animate the XP fill after one frame so the transition kicks in.
+        requestAnimationFrame(() => {
+          const fill = rankEl.querySelector('.xp-fill');
+          if (fill) fill.style.width = pct + '%';
+        });
       } else {
         rankEl.style.display = 'none';
       }
@@ -2234,6 +2466,123 @@ const UIManager = {
     }
 
     this.show('postmatch');
+  },
+};
+
+// Tiny HTML-escape used by chat + killcam labels.
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => (
+    { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]
+  ));
+}
+
+// ══════════════════════════════════════════════════════════════
+//  KILLCAM  — plays back the killer's last 3s in a small Three.js
+//  scene rendered on top of the death overlay.
+// ══════════════════════════════════════════════════════════════
+const Killcam = {
+  _scene: null, _camera: null, _renderer: null, _raf: null,
+  _start: 0, _data: null,
+
+  // Build (lazily) a tiny scene that re-uses the same map cover the live
+  // game built. We don't try to render every visual detail — the goal is
+  // a recognisable POV path, not a perfect replay.
+  _ensureScene(coverBoxes) {
+    if (this._scene) return;
+    const canvas = document.getElementById('killcam-canvas');
+    if (!canvas || !window.THREE) return;
+    this._renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: true });
+    this._renderer.setSize(window.innerWidth, window.innerHeight, false);
+    this._scene = new THREE.Scene();
+    this._scene.background = new THREE.Color(0x111111);
+    // Lighting
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x202028, 0.9);
+    this._scene.add(hemi);
+    const dir = new THREE.DirectionalLight(0xffffff, 0.6);
+    dir.position.set(8, 14, 6);
+    this._scene.add(dir);
+    // Floor
+    const floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(40, 40),
+      new THREE.MeshLambertMaterial({ color: 0x2a2f36 })
+    );
+    floor.rotation.x = -Math.PI / 2;
+    this._scene.add(floor);
+    // Cover boxes from the live match.
+    for (const c of (coverBoxes || [])) {
+      const m = new THREE.Mesh(
+        new THREE.BoxGeometry(c.size.w, c.size.h, c.size.d),
+        new THREE.MeshLambertMaterial({ color: 0x586068 })
+      );
+      m.position.set(c.position.x, c.position.h ? c.position.h/2 : c.size.h/2, c.position.z);
+      this._scene.add(m);
+    }
+    this._camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 200);
+  },
+
+  // data = { killerName, events, weapon, headshot }
+  play(data, coverBoxes) {
+    if (!data || !data.events?.length) return;
+    this._data = data;
+    this._ensureScene(coverBoxes);
+    if (!this._renderer) return;
+
+    const canvas = document.getElementById('killcam-canvas');
+    canvas.style.display = '';
+    const tag = document.getElementById('killcam-tag');
+    document.getElementById('killcam-name').textContent = data.killerName || '?';
+    tag.style.display = '';
+    document.getElementById('overlay-respawn').classList.add('killcam-active');
+    document.getElementById('respawn-title').textContent = 'KILLCAM';
+
+    // Build sorted movement keyframes for the killer's POV.
+    const moves = data.events.filter(e => e.type === 'movement' && e.r);
+    if (!moves.length) { this.stop(); return; }
+    const tFirst = moves[0].t;
+    const tLast  = moves[moves.length - 1].t;
+    const duration = Math.max(500, tLast - tFirst);
+    this._start = performance.now();
+
+    const renderFrame = () => {
+      const elapsed = performance.now() - this._start;
+      if (elapsed > duration + 200) { this.stop(); return; }
+      // Find the surrounding keyframes for the current time.
+      const target = tFirst + Math.min(elapsed, duration);
+      let i = 0;
+      while (i < moves.length - 1 && moves[i + 1].t <= target) i++;
+      const a = moves[i];
+      const b = moves[Math.min(i + 1, moves.length - 1)];
+      const span = Math.max(1, b.t - a.t);
+      const k = Math.max(0, Math.min(1, (target - a.t) / span));
+      const px = a.p[0] + (b.p[0] - a.p[0]) * k;
+      const pz = a.p[2] + (b.p[2] - a.p[2]) * k;
+      const yawA = a.r[1], yawB = b.r[1];
+      // Yaw lerp — short way around
+      let dy = yawB - yawA;
+      if (dy >  Math.PI) dy -= 2 * Math.PI;
+      if (dy < -Math.PI) dy += 2 * Math.PI;
+      const yaw = yawA + dy * k;
+      const pitch = (a.r[0] || 0) + ((b.r[0] || 0) - (a.r[0] || 0)) * k;
+      this._camera.position.set(px, 1.6, pz);
+      this._camera.rotation.set(0, 0, 0);
+      this._camera.rotation.order = 'YXZ';
+      this._camera.rotation.y = yaw;
+      this._camera.rotation.x = pitch;
+      this._renderer.render(this._scene, this._camera);
+      this._raf = requestAnimationFrame(renderFrame);
+    };
+    renderFrame();
+  },
+
+  stop() {
+    if (this._raf) cancelAnimationFrame(this._raf);
+    this._raf = null;
+    const c = document.getElementById('killcam-canvas');
+    if (c) c.style.display = 'none';
+    const t = document.getElementById('killcam-tag');
+    if (t) t.style.display = 'none';
+    document.getElementById('overlay-respawn')?.classList.remove('killcam-active');
+    document.getElementById('respawn-title') && (document.getElementById('respawn-title').textContent = 'YOU DIED');
   },
 };
 
@@ -2284,6 +2633,8 @@ const NetworkManager = {
       }
     });
     s.on('you_hit',             d => App.onYouHit(d));
+    s.on('killcam_data',        d => App.onKillcamData(d));
+    s.on('match_chat',          d => App.onMatchChat(d));
     s.on('kill_event',          d => App.onKillEvent(d));
     s.on('respawn',             d => App.onRespawn(d));
     s.on('opponent_respawn',    d => GameEngine.onOpponentRespawn(d));
@@ -2666,6 +3017,12 @@ const App = {
     UIManager.showReloadIndicator(false);
 
     GameEngine.buildArena(data.coverBoxes);
+    GameEngine._coverBoxes = data.coverBoxes; // cached for killcam scene
+    // Reset the in-game chat log per match.
+    const log = document.getElementById('game-chat-log');
+    if (log) log.innerHTML = '';
+    const box = document.getElementById('game-chat');
+    if (box) box.style.display = 'none';
     const spawnIdx = data.players[this.myId]?.spawnIndex ?? 0;
     GameEngine.start(data.spawnPoints[spawnIdx]);
     UIManager.show('game');
@@ -2677,11 +3034,33 @@ const App = {
     AudioManager.stopMusic();
   },
 
-  onYouHit({ health }) {
+  onYouHit({ health, fatal }) {
+    // Death-screen invulnerability: once you're dead, drop any further
+    // damage events that arrive before the server stops sending them.
+    if (GameEngine.isDead && !fatal) return;
     this.myHealth = health;
     UIManager.updateHealth(health);
     UIManager.flashDamageVignette();
     AudioManager.playDamage();
+  },
+
+  onKillcamData(data) {
+    // Play the killcam during the respawn countdown. The respawn overlay
+    // is already showing — we just slide a Three.js POV behind it.
+    Killcam.play(data, GameEngine._coverBoxes);
+  },
+
+  onMatchChat({ from, body, isYou }) {
+    UIManager.pushGameChat({ from, body, isYou });
+  },
+
+  sendMatchChat(text) {
+    const s = NetworkManager.socket;
+    if (!s) return;
+    const trimmed = String(text || '').slice(0, 200);
+    if (!trimmed) return;
+    s.emit('match_chat', { body: trimmed });
+    UIManager.pushGameChat({ from: this.myUsername || 'You', body: trimmed, isYou: true });
   },
 
   onKillEvent(data) {

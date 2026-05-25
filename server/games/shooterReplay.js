@@ -61,22 +61,49 @@ function log(matchId, type, data = {}) {
 }
 
 // Movement snapshot — throttled. Returns true if the snapshot was recorded.
-function maybeMoveSnapshot(matchId, socketId, position, intervalMs) {
+// `rotation` is optional but used by the killcam to reconstruct POV.
+function maybeMoveSnapshot(matchId, socketId, position, intervalMs, rotation) {
   const r = recorders.get(matchId);
   if (!r) return false;
   const last = r.lastMoveSnap[socketId] || 0;
   const t = nowMs();
   if (t - last < intervalMs) return false;
   r.lastMoveSnap[socketId] = t;
-  log(matchId, 'movement', {
+  const evt = {
     s: socketId,
     p: [
       Math.round(position.x * 100) / 100,
       Math.round(position.y * 100) / 100,
       Math.round(position.z * 100) / 100,
     ],
-  });
+  };
+  if (rotation && typeof rotation.y === 'number') {
+    evt.r = [
+      Math.round((rotation.x || 0) * 1000) / 1000,
+      Math.round((rotation.y || 0) * 1000) / 1000,
+    ];
+  }
+  log(matchId, 'movement', evt);
   return true;
+}
+
+// Pull the last `windowMs` of events for a specific player (the killer), used
+// to build a killcam packet sent to the victim. Returns events with their
+// relative timestamps (`t`) preserved so the client can replay at real time.
+function getRecentForKillcam(matchId, killerSocketId, windowMs = 3000) {
+  const r = recorders.get(matchId);
+  if (!r) return null;
+  const cutoff = (r.events.length ? r.events[r.events.length - 1].t : 0) - windowMs;
+  const out = [];
+  for (let i = r.events.length - 1; i >= 0; i--) {
+    const e = r.events[i];
+    if (e.t < cutoff) break;
+    // Only include events for the killer's POV (movement, shots, hits, kill).
+    if (e.s && e.s !== killerSocketId && e.type !== 'kill') continue;
+    if (e.type === 'kill' && e.killer !== killerSocketId) continue;
+    out.unshift(e);
+  }
+  return out;
 }
 
 function getSuspiciousCount(matchId) {
@@ -120,6 +147,7 @@ async function flush(matchId, dbMatchId, extraSummary = {}) {
 function discard(matchId) { recorders.delete(matchId); }
 
 module.exports = {
-  start, log, maybeMoveSnapshot, flush, discard, getSuspiciousCount,
+  start, log, maybeMoveSnapshot, getRecentForKillcam,
+  flush, discard, getSuspiciousCount,
   MAX_EVENTS_PER_MATCH,
 };

@@ -434,7 +434,9 @@ function attach(io) {
       }
 
       // Throttled replay snapshot (every MOVEMENT_SNAPSHOT_INTERVAL_MS).
-      Replay.maybeMoveSnapshot(match.id, socket.id, state.position, MOVEMENT_SNAPSHOT_INTERVAL_MS);
+      // Rotation is included so the killcam can replay the killer's POV.
+      Replay.maybeMoveSnapshot(match.id, socket.id, state.position,
+        MOVEMENT_SNAPSHOT_INTERVAL_MS, state.rotation);
 
       const oppSock = match.playerIds.find(id => id !== socket.id);
       if (oppSock) ns.to(oppSock).emit('opponent_move', {
@@ -576,6 +578,15 @@ function attach(io) {
       state.shotsHit++;
       if (didHead) state.headshots = (state.headshots || 0) + 1;
       oppState.health = Math.max(0, oppState.health - totalDmg);
+
+      // ── Death-time invulnerability ────────────────────────────────────
+      // Flip `respawning` to true the instant health hits 0 so any other
+      // shot landing in the same tick (different ray, queued packet) is
+      // a no-op for damage. Was previously only set AFTER the kill emit,
+      // leaving a tiny race window where a dead player could be re-killed.
+      const fatal = oppState.health <= 0;
+      if (fatal) oppState.respawning = true;
+
       Replay.log(match.id, didHead ? 'headshot' : 'bodyshot', {
         s: socket.id, target: oppSock, w: wKey, dmg: totalDmg, oppHp: oppState.health,
       });
@@ -583,9 +594,15 @@ function attach(io) {
         s: socket.id, target: oppSock, dmg: totalDmg,
       });
       socket.emit('hit_result', { hit: true, headshot: didHead, damage: totalDmg, ammo: wState.ammo, weapon: wKey });
-      ns.to(oppSock).emit('you_hit', { health: oppState.health, headshot: didHead });
+      // Only inform the victim of damage if they were not already dead.
+      // (If `fatal` then `you_hit` would arrive on the death screen.)
+      if (!fatal) {
+        ns.to(oppSock).emit('you_hit', { health: oppState.health, headshot: didHead });
+      } else {
+        ns.to(oppSock).emit('you_hit', { health: 0, headshot: didHead, fatal: true });
+      }
 
-      if (oppState.health <= 0) {
+      if (fatal) {
         state.kills++;
         oppState.deaths++;
         const winnerSock = state.kills >= KILLS_TO_WIN ? socket.id : null;
@@ -606,13 +623,33 @@ function attach(io) {
         ns.to(socket.id).emit('kill_event', killPayload);
         ns.to(oppSock).emit('kill_event', killPayload);
 
+        // ── Killcam packet ─────────────────────────────────────────────
+        // Send the victim the last 3 seconds of the killer's recorded
+        // events so the client can play back the moment of death from
+        // the killer's POV during the respawn countdown.
+        try {
+          const killcam = Replay.getRecentForKillcam(match.id, socket.id, 3000);
+          if (killcam && killcam.length) {
+            ns.to(oppSock).emit('killcam_data', {
+              killerSocketId: socket.id,
+              killerName: players.get(socket.id)?.username || '?',
+              startedAtRel: killcam[0]?.t ?? 0,
+              endsAtRel:    killcam[killcam.length - 1]?.t ?? 0,
+              events: killcam,
+              weapon: wKey,
+              headshot: didHead,
+            });
+          }
+        } catch (e) {
+          console.error('[shooter] killcam build failed', e);
+        }
+
         if (winnerSock) {
           endMatch(io, match.id, winnerSock, 'kills');
           return;
         }
 
-        // Respawn opponent
-        oppState.respawning = true;
+        // Respawn opponent (already flagged respawning above)
         const spawnIdx = match.playerIds.indexOf(oppSock);
         const spawn = { ...match.spawnPoints[spawnIdx] };
         setTimeout(() => {
@@ -661,6 +698,24 @@ function attach(io) {
         Replay.log(match.id, 'reload_complete', { s: socket.id, w: wKey, ammo: W.mag });
         socket.emit('reload_complete', { ammo: W.mag, weapon: wKey });
       }, W.reloadMs);
+    });
+
+    // ── In-game chat (between the two players in a live match) ──────
+    socket.on('match_chat', ({ body } = {}) => {
+      const p = players.get(socket.id);
+      if (!p?.currentMatch) return;
+      const match = matches.get(p.currentMatch);
+      if (!match || match.ended) return;
+      const text = String(body || '').trim().slice(0, 200);
+      if (!text) return;
+      const oppSock = match.playerIds.find(id => id !== socket.id);
+      if (!oppSock) return;
+      // Only deliver to the opponent — sender echoes locally.
+      ns.to(oppSock).emit('match_chat', {
+        from: p.username || 'Opponent',
+        body: text,
+        isYou: false,
+      });
     });
 
     socket.on('disconnect', () => {
