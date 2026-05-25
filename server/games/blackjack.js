@@ -117,6 +117,83 @@ async function start(userId, betAmount) {
   });
 }
 
+/** Double-down: doubles bet, takes exactly 1 card, stands automatically.
+ *  Requires: hand is active, only 2 player cards so far, sufficient balance. */
+async function doubleDown(userId, handId) {
+  return withTx(async (client) => {
+    const { rows } = await client.query(
+      `SELECT * FROM blackjack_hands
+        WHERE id = $1 AND user_id = $2 FOR UPDATE`,
+      [handId, userId]
+    );
+    if (!rows.length) throw new Error('hand_not_found');
+    const hand = rows[0];
+    if (hand.status !== 'active') throw new Error('hand_not_active');
+    if (hand.player_cards.length !== 2) throw new Error('double_only_on_first_two');
+
+    const extra = Number(hand.bet_amount);
+    // Charge the extra bet
+    await adjustBalance(userId, -extra, 'bet', {
+      refType: 'blackjack', refId: hand.session_id + ':double', client,
+    });
+
+    // Take exactly one card
+    const deck   = hand.deck.slice();
+    const player = hand.player_cards.slice();
+    player.push(deck.pop());
+
+    const pv = handValue(player);
+    let status, outcome, payout = 0;
+    const newBet = Number(hand.bet_amount) * 2;
+
+    if (pv > 21) {
+      status = 'player_bust'; outcome = 'lose';
+    } else {
+      // Auto-stand: dealer plays
+      const dealer = hand.dealer_cards.slice();
+      while (handValue(dealer) < 17) dealer.push(deck.pop());
+      const dv = handValue(dealer);
+      if (dv > 21 || pv > dv)      { status = 'won';  outcome = 'win';  payout = newBet * 2; }
+      else if (pv === dv)          { status = 'push'; outcome = 'push'; payout = newBet; }
+      else                         { status = 'lost'; outcome = 'lose'; payout = 0; }
+
+      await client.query(
+        `UPDATE blackjack_hands
+            SET deck=$1::jsonb, dealer_cards=$2::jsonb, player_cards=$3::jsonb,
+                bet_amount=$4, status=$5, outcome=$6, payout=$7, finished_at=NOW()
+          WHERE id=$8`,
+        [JSON.stringify(deck), JSON.stringify(dealer), JSON.stringify(player),
+         newBet, status, outcome, payout, handId]
+      );
+    }
+
+    // Bust path: dealer never plays
+    if (status === 'player_bust') {
+      await client.query(
+        `UPDATE blackjack_hands
+            SET deck=$1::jsonb, player_cards=$2::jsonb, bet_amount=$3,
+                status=$4, outcome=$5, payout=$6, finished_at=NOW()
+          WHERE id=$7`,
+        [JSON.stringify(deck), JSON.stringify(player), newBet, status, outcome, payout, handId]
+      );
+    }
+
+    await client.query(`UPDATE game_sessions SET status='finished', finished_at=NOW(), bet_amount=$1 WHERE id=$2`,
+                       [newBet, hand.session_id]);
+
+    if (payout > 0) {
+      const reason = outcome === 'push' ? 'refund' : 'blackjack_payout';
+      await adjustBalance(userId, payout, reason, {
+        refType: 'blackjack', refId: hand.session_id + ':doublepay', client,
+        metadata: { outcome, doubled: true },
+      });
+    }
+
+    const fresh = (await client.query('SELECT * FROM blackjack_hands WHERE id=$1', [handId])).rows[0];
+    return publicView(fresh, false);
+  });
+}
+
 /** Player hits. */
 async function hit(userId, handId) {
   return withTx(async (client) => {
@@ -216,4 +293,4 @@ async function getActive(userId) {
   return publicView(rows[0], true);
 }
 
-module.exports = { start, hit, stand, getActive };
+module.exports = { start, hit, stand, doubleDown, getActive };

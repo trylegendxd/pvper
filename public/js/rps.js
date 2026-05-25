@@ -7,11 +7,23 @@
   const lobbyView = $('lobby-view');
   const matchView = $('match-view');
 
-  const socket = io('/rps', { withCredentials: true });
+  const socket = io('/rps', { withCredentials: true, transports: ['websocket','polling'] });
   let myMatchId = null, mySide = null, myChoiceLocked = false;
 
+  socket.on('connect', () => {
+    $('lobby-status').textContent = 'Connected — ready to find a match.';
+  });
   socket.on('connect_error', err => {
-    $('lobby-status').textContent = 'Connection error: ' + err.message;
+    const msg = err.message === 'not_authenticated'
+      ? 'Session expired — please log in again.'
+      : 'Connection error: ' + err.message;
+    $('lobby-status').textContent = msg;
+    if (err.message === 'not_authenticated') {
+      setTimeout(() => location.href = '/login.html', 1500);
+    }
+  });
+  socket.on('rps_ready', () => {
+    $('lobby-status').textContent = 'Connected — ready to find a match.';
   });
 
   $('find-btn').addEventListener('click', () => {

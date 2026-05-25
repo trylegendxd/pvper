@@ -2016,8 +2016,20 @@ const NetworkManager = {
   init() {
     // Connect to the dedicated /shooter namespace exposed by the platform server.
     // Session cookie auth is handled by the server's Socket.IO middleware.
-    this.socket = io('/shooter', { withCredentials: true });
+    this.socket = io('/shooter', { withCredentials: true, transports: ['websocket','polling'] });
     const s = this.socket;
+    s.on('connect_error', err => {
+      if (err.message === 'not_authenticated') {
+        location.href = '/login.html';
+      } else {
+        alert('Connection error: ' + err.message);
+      }
+    });
+    s.on('match_error', d => { alert('Could not start match: ' + (d?.error || 'unknown')); });
+
+    // Stash the initial lobby snapshot in case App.login() hasn't attached its handler yet
+    this._initialLobbies = null;
+    s.on('shooter_ready', d => { this._initialLobbies = d?.lobbies || []; });
     s.on('lobby_update',        d => UIManager.renderLobbyCards(d));
     s.on('waiting_room_update', d => UIManager.renderWaitingPlayers(d));
     s.on('match_start',         d => App.onMatchStart(d));
@@ -2223,12 +2235,20 @@ const App = {
     document.getElementById('header-username').textContent = user.username;
     UIManager.updateBalance(user.balance);
 
-    // The shooter socket emits 'shooter_ready' once connected — it has the lobbies.
-    // If it hasn't arrived yet, render an empty grid and let lobby_update fill it.
-    NetworkManager.socket.once('shooter_ready', ({ lobbies }) => {
+    // Use the snapshot stashed in NetworkManager (or wait for the next one)
+    const renderInitial = () => {
       this.myId = NetworkManager.socket.id;
-      UIManager.renderLobbyCards(lobbies || []);
-    });
+      UIManager.renderLobbyCards(NetworkManager._initialLobbies || []);
+    };
+    if (NetworkManager._initialLobbies) renderInitial();
+    else NetworkManager.socket.once('shooter_ready', renderInitial);
+
+    // Refresh balance from the wallet API (in case it changed in another tab)
+    try {
+      const me = await fetch('/api/auth/me', { credentials:'same-origin' }).then(r => r.json());
+      if (me?.user) UIManager.updateBalance(me.user.balance);
+    } catch (_) {}
+
     UIManager.show('lobby');
     AudioManager.playMusic();
   },

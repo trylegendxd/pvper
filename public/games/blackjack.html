@@ -6,39 +6,84 @@
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/css/styles.css">
 <style>
-  .table { background: #143a23; border: 6px solid #0d2716; border-radius: 12px;
-           padding: 28px; min-height: 380px; display:flex; flex-direction:column; gap:24px; }
-  .seat { display:flex; flex-direction:column; gap:8px; align-items:center; }
-  .seat h3 { color:#fff; font-size:14px; letter-spacing:2px; }
-  .cards { display:flex; gap:10px; min-height: 120px; align-items:center; }
+  .table {
+    background: radial-gradient(ellipse at top, #1b5a35 0%, #0e3a22 70%, #0a2615 100%);
+    border: 6px solid #0d2716; border-radius: 14px;
+    padding: 28px 24px 22px; min-height: 460px;
+    display:flex; flex-direction:column; gap:22px;
+    box-shadow: inset 0 0 60px rgba(0,0,0,.4);
+    position: relative;
+  }
+  .seat { display:flex; flex-direction:column; gap:10px; align-items:center; }
+  .seat h3 { color:#fff; font-size:13px; letter-spacing:3px; opacity:.9; }
+  .cards { display:flex; gap:10px; min-height: 124px; align-items:center; }
+
+  /* ── Card ─────────────────────────────────────────────────────── */
   .card-face {
-    width: 78px; height: 108px; border-radius: 6px;
+    width: 80px; height: 112px; border-radius: 7px;
     background: #fff; color: #000; padding: 8px;
     display:flex; flex-direction:column; justify-content:space-between;
-    font-family: serif; font-weight: 700; font-size: 22px;
-    box-shadow: 0 4px 8px rgba(0,0,0,.3);
+    font-family: 'Georgia', serif; font-weight: 700; font-size: 22px;
+    box-shadow: 0 6px 14px rgba(0,0,0,.45);
+    position: relative;
+    transform-origin: top center;
+    animation: dealIn .35s cubic-bezier(.22,1.18,.34,1) backwards;
+  }
+  .card-face.flipping { animation: flipReveal .45s cubic-bezier(.22,1.18,.34,1) backwards; }
+  @keyframes dealIn {
+    from { transform: translate(-80px, -80px) rotate(-12deg); opacity: 0; }
+    to   { transform: translate(0,0) rotate(0); opacity: 1; }
+  }
+  @keyframes flipReveal {
+    from { transform: rotateY(180deg); }
+    to   { transform: rotateY(0); }
   }
   .card-face.hidden {
-    background: repeating-linear-gradient(45deg,#3a1d6b 0 8px,#5a3a8c 8px 16px);
+    background:
+      linear-gradient(135deg, rgba(255,255,255,.08) 0 50%, transparent 50%),
+      repeating-linear-gradient(45deg,#3a1d6b 0 10px,#5a3a8c 10px 20px);
     color: transparent;
+    border: 2px solid #2a1255;
   }
   .card-face .bot { transform: rotate(180deg); align-self: flex-end; }
   .card-face.red { color: #c0142d; }
-  .seat .val { color:#dceede; font-size:18px; letter-spacing:1px; }
-  .controls { display:flex; gap:10px; justify-content:center; margin-top:10px; }
+  .seat .val { color:#dceede; font-size:18px; letter-spacing:1px; font-weight:600; min-height: 24px; }
+
+  .controls { display:flex; gap:10px; justify-content:center; margin-top:6px; flex-wrap:wrap; }
   .bet-row { display:flex;gap:10px; align-items:flex-end;}
-  .bet-row input { width:120px;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:3px;font-family:var(--font);font-size:15px;outline:none; }
-  .banner { text-align:center;font-size:24px;letter-spacing:4px;font-weight:700;color:#fff;min-height:36px; }
-  .banner.win  { color: var(--green); }
-  .banner.lose { color: var(--red); }
-  .banner.push { color: var(--gold); }
+  .bet-row input { width:120px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.2);color:#fff;padding:8px 10px;border-radius:3px;font-family:var(--font);font-size:15px;outline:none; }
+  .bet-row label { color: #cdd; font-size: 11px; letter-spacing: 1px; }
+
+  .banner {
+    text-align:center; font-size:26px; letter-spacing:4px; font-weight:700;
+    color:#fff; min-height:36px;
+    text-shadow: 0 2px 6px rgba(0,0,0,.5);
+  }
+  .banner.win  { color: #4cf09e; }
+  .banner.lose { color: #ff6f7a; }
+  .banner.push { color: #ffd84a; }
+
+  .chip-suggest { display: flex; gap: 8px; justify-content: center; margin-top: 6px; }
+  .chip-suggest button {
+    background: rgba(0,0,0,.3); color: #fff; border: 1px solid rgba(255,255,255,.2);
+    padding: 6px 12px; border-radius: 3px; cursor: pointer; font-family: var(--font);
+    font-size: 12px; letter-spacing: 1px;
+  }
+  .chip-suggest button:hover { background: rgba(0,0,0,.5); border-color: #fff; }
+
+  /* Dealer is up top, big spacing */
+  .center-line {
+    text-align:center; color: rgba(255,255,255,.4); font-size: 11px;
+    letter-spacing: 4px; padding: 6px 0; border-top: 1px dashed rgba(255,255,255,.15);
+    border-bottom: 1px dashed rgba(255,255,255,.15);
+  }
 </style>
 </head>
 <body>
 <div class="topbar" id="topbar"></div>
 <div class="container">
   <h1 class="page">BLACKJACK</h1>
-  <p class="subtitle">Dealer hits to 17 · Blackjack pays 3:2 · Push refunds</p>
+  <p class="subtitle">Dealer hits to 17 · Blackjack pays 3:2 · Push refunds · Double on first two cards.</p>
 
   <div class="table" id="table">
     <div class="seat" id="dealer-seat">
@@ -46,19 +91,14 @@
       <div class="cards" id="dealer-cards"></div>
       <div class="val" id="dealer-val"></div>
     </div>
+    <div class="center-line">— TABLE —</div>
     <div class="banner" id="banner"></div>
     <div class="seat" id="player-seat">
       <h3 id="player-name">PLAYER</h3>
       <div class="cards" id="player-cards"></div>
       <div class="val" id="player-val"></div>
     </div>
-    <div class="controls" id="controls">
-      <div class="bet-row">
-        <div><label style="font-size:11px;color:#cdd; letter-spacing:1px;">BET</label>
-          <input id="bet" type="number" min="1" value="25"></div>
-        <button class="btn" id="deal-btn">DEAL</button>
-      </div>
-    </div>
+    <div class="controls" id="controls"></div>
   </div>
 </div>
 <div class="legal-footer">Credits are fictional play-money credits only and have no real-world monetary value.</div>

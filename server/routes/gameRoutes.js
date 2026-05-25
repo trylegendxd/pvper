@@ -10,8 +10,14 @@ const router = express.Router();
 // ── ROULETTE ──────────────────────────────────────────────────────────────
 router.post('/roulette/spin', requireAuth, async (req, res) => {
   try {
-    const { betType, betValue, betAmount } = req.body || {};
-    const result = await roulette.spin(req.session.userId, betType, betValue, betAmount);
+    const body = req.body || {};
+    // Accept either { bets: [...] } (preferred) or single { betType, ... } (legacy)
+    let bets = Array.isArray(body.bets) ? body.bets : null;
+    if (!bets) {
+      const { betType, betValue, betAmount } = body;
+      bets = [{ betType, betValue, betAmount }];
+    }
+    const result = await roulette.spinMulti(req.session.userId, bets);
     res.json({ ok: true, ...result });
   } catch (e) {
     res.status(400).json({ error: e.message || 'spin_failed' });
@@ -55,6 +61,15 @@ router.post('/blackjack/stand', requireAuth, async (req, res) => {
     res.json({ ok: true, hand });
   } catch (e) {
     res.status(400).json({ error: e.message || 'stand_failed' });
+  }
+});
+router.post('/blackjack/double', requireAuth, async (req, res) => {
+  try {
+    const { handId } = req.body || {};
+    const hand = await blackjack.doubleDown(req.session.userId, handId);
+    res.json({ ok: true, hand });
+  } catch (e) {
+    res.status(400).json({ error: e.message || 'double_failed' });
   }
 });
 router.get('/blackjack/active', requireAuth, async (req, res) => {
