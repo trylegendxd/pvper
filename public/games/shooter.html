@@ -257,9 +257,18 @@ input:focus { border-color:var(--accent); }
 }
 @keyframes scopeIn { from { opacity:0;transform:scale(1.05);} to { opacity:1;transform:scale(1);} }
 
-/* ── Killcam tag overrides ─────────────────────────────────────────── */
-#overlay-respawn.killcam-active { background:#000; }
-#overlay-respawn.killcam-active h2 { color:#ff3030;text-shadow:0 0 8px #f00; }
+/* ── Killcam takeover ─────────────────────────────────────────────── */
+#overlay-respawn.killcam-active { background:transparent !important; backdrop-filter:none !important; }
+#overlay-respawn.killcam-active h2 {
+  color:#ff3030;text-shadow:0 0 10px #f00, 0 0 2px #000;
+  font-size:28px; margin-top:24px;
+}
+#overlay-respawn.killcam-active #respawn-countdown {
+  text-shadow:0 0 6px #000, 0 0 12px #000;
+}
+#overlay-respawn.killcam-active #respawn-sub {
+  text-shadow:0 0 4px #000;
+}
 
 /* ── In-game chat box ─────────────────────────────────────────────── */
 #game-chat-input:focus { outline:1px solid var(--accent);background:rgba(0,0,0,.75); }
@@ -423,12 +432,18 @@ input:focus { border-color:var(--accent); }
     </div>
   </div>
   <div class="game-overlay" id="overlay-respawn">
-    <h2 id="respawn-title">YOU DIED</h2>
-    <div id="respawn-countdown">3</div>
-    <p id="respawn-sub" style="color:#888;font-size:13px;letter-spacing:1px;">Respawning...</p>
-    <!-- Killcam canvas overlays the death screen for the first ~3s. -->
-    <canvas id="killcam-canvas" style="position:absolute;inset:0;width:100%;height:100%;display:none;z-index:-1;"></canvas>
-    <div id="killcam-tag" style="position:absolute;bottom:24px;left:0;right:0;text-align:center;font-size:12px;letter-spacing:2px;color:#f33;display:none;">KILLCAM · POV of <span id="killcam-name">?</span></div>
+    <!-- Killcam canvas — fills the overlay BEHIND the text. -->
+    <canvas id="killcam-canvas" style="position:absolute;inset:0;width:100%;height:100%;display:none;z-index:0;"></canvas>
+    <!-- Vignette over the killcam for that "kill replay" look. -->
+    <div id="killcam-vignette" style="position:absolute;inset:0;pointer-events:none;display:none;z-index:1;
+        background:radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,.85) 100%);"></div>
+    <h2 id="respawn-title" style="position:relative;z-index:2;">YOU DIED</h2>
+    <div id="respawn-countdown" style="position:relative;z-index:2;">3</div>
+    <p id="respawn-sub" style="position:relative;z-index:2;color:#888;font-size:13px;letter-spacing:1px;">Respawning...</p>
+    <div id="killcam-tag" style="position:absolute;bottom:24px;left:0;right:0;text-align:center;font-size:13px;letter-spacing:3px;color:#fff;display:none;z-index:2;text-shadow:0 0 8px #f00;">
+      <span style="display:inline-block;width:9px;height:9px;background:#f33;border-radius:50%;animation:pulse 1s ease infinite alternate;margin-right:8px;vertical-align:middle;"></span>
+      KILLCAM · POV of <span id="killcam-name" style="color:#fc6;">?</span>
+    </div>
   </div>
 
   <!-- Sniper scope overlay -->
@@ -1463,7 +1478,8 @@ const GameEngine = {
   _bindInput(canvas) {
     const GAME_KEYS = new Set([
       'KeyW','KeyS','KeyA','KeyD','ShiftLeft','ShiftRight','KeyR','Space',
-      'Digit1','Digit2','Digit3','Digit4','KeyC',
+      'Digit1','Digit2','Digit3','Digit4',
+      'ControlLeft','ControlRight', // crouch
     ]);
 
     window.addEventListener('keydown', e => {
@@ -1479,7 +1495,11 @@ const GameEngine = {
       if (e.code === 'Digit2') this.switchWeapon('pistol');
       if (e.code === 'Digit3') this.switchWeapon('shotgun');
       if (e.code === 'Digit4') this.switchWeapon('sniper');
-      if (e.code === 'KeyC')   this.crouching = !this.crouching;
+      if (e.code === 'ControlLeft' || e.code === 'ControlRight') {
+        // Crouch is hold-to-crouch on Ctrl; toggle stays via the existing
+        // settings/HUD if any. Ctrl is more standard than C.
+        this.crouching = true;
+      }
       if (e.code === 'Space' && this.pointerLocked && this._grounded && !this.crouching) {
         this._yVel = 4.5;
         this._grounded = false;
@@ -1487,6 +1507,9 @@ const GameEngine = {
     });
     window.addEventListener('keyup', e => {
       this._keys[e.code] = false;
+      if (e.code === 'ControlLeft' || e.code === 'ControlRight') {
+        this.crouching = false;
+      }
     });
 
     // ── In-game chat hotkey (T) ──────────────────────────────────────
@@ -1768,7 +1791,10 @@ const GameEngine = {
       while (yawDiff >  Math.PI) yawDiff -= 2 * Math.PI;
       while (yawDiff < -Math.PI) yawDiff += 2 * Math.PI;
       this._oppCurYaw += yawDiff * Math.min(1, dt * 12);
-      this.opponentGroup.rotation.y = this._oppCurYaw;
+      // Opponent's model "front" points +Z by construction, but the camera
+      // yaw convention has yaw=0 facing -Z. Rotate the model 180° so the
+      // body faces the same direction the opponent is looking.
+      this.opponentGroup.rotation.y = this._oppCurYaw + Math.PI;
 
       // Leg-swing animation when opponent moves
       const moveSpeed = prev.distanceTo(this._oppCurPos) / Math.max(dt, 0.001);
@@ -2477,97 +2503,209 @@ function escapeHtml(s) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//  KILLCAM  — plays back the killer's last 3s in a small Three.js
-//  scene rendered on top of the death overlay.
+//  KILLCAM  — plays back the killer's last 3s in a Three.js scene
+//  rendered behind the death overlay.
 // ══════════════════════════════════════════════════════════════
 const Killcam = {
   _scene: null, _camera: null, _renderer: null, _raf: null,
-  _start: 0, _data: null,
+  _start: 0, _data: null, _victim: null, _muzzleFlash: null,
+  _lastShotProcessed: -1, _cleanupMeshes: [],
 
-  // Build (lazily) a tiny scene that re-uses the same map cover the live
-  // game built. We don't try to render every visual detail — the goal is
-  // a recognisable POV path, not a perfect replay.
-  _ensureScene(coverBoxes) {
-    if (this._scene) return;
+  // Build a richer scene each time so we can drop the victim avatar
+  // at the right position. We rebuild on every play() call.
+  _buildScene(coverBoxes, victimSpawnPos) {
     const canvas = document.getElementById('killcam-canvas');
-    if (!canvas || !window.THREE) return;
-    this._renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: true });
+    if (!canvas || !window.THREE) return false;
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
+    if (!this._renderer) {
+      this._renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+    }
+    this._renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     this._renderer.setSize(window.innerWidth, window.innerHeight, false);
+
+    // Tear down any previous scene.
+    for (const m of this._cleanupMeshes) {
+      m.geometry?.dispose?.();
+      if (Array.isArray(m.material)) m.material.forEach(x => x.dispose?.());
+      else m.material?.dispose?.();
+    }
+    this._cleanupMeshes = [];
     this._scene = new THREE.Scene();
-    this._scene.background = new THREE.Color(0x111111);
-    // Lighting
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x202028, 0.9);
+
+    // Sky-ish background (dark dusk, more cinematic than gray).
+    this._scene.background = new THREE.Color(0x12161e);
+    this._scene.fog = new THREE.Fog(0x12161e, 25, 55);
+
+    // Lighting — hemi for ambient gradient + warm directional for shape.
+    const hemi = new THREE.HemisphereLight(0x9ab4cc, 0x2a2418, 1.0);
     this._scene.add(hemi);
-    const dir = new THREE.DirectionalLight(0xffffff, 0.6);
-    dir.position.set(8, 14, 6);
+    const dir = new THREE.DirectionalLight(0xffe7c2, 1.1);
+    dir.position.set(10, 18, 6);
     this._scene.add(dir);
-    // Floor
+    const fill = new THREE.DirectionalLight(0x7090ff, 0.35);
+    fill.position.set(-8, 12, -10);
+    this._scene.add(fill);
+
+    // Floor (matches the live arena's earthy tone — not gray).
+    const floorGeo = new THREE.PlaneGeometry(50, 50, 1, 1);
     const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(40, 40),
-      new THREE.MeshLambertMaterial({ color: 0x2a2f36 })
+      floorGeo,
+      new THREE.MeshLambertMaterial({ color: 0x3a2e22 })
     );
     floor.rotation.x = -Math.PI / 2;
-    this._scene.add(floor);
-    // Cover boxes from the live match.
+    this._scene.add(floor); this._cleanupMeshes.push(floor);
+
+    // Grid texture overlay on the floor — gives it tangible scale.
+    const grid = new THREE.GridHelper(50, 25, 0x554433, 0x2a2218);
+    grid.position.y = 0.01;
+    this._scene.add(grid);
+
+    // Arena walls so the scene doesn't feel like an empty plane.
+    const wallMat = new THREE.MeshLambertMaterial({ color: 0x2c333c });
+    const walls = [
+      { x:0,  z:-20, w:42, h:3, d:0.5 },
+      { x:0,  z: 20, w:42, h:3, d:0.5 },
+      { x:-20,z: 0,  w:0.5,h:3, d:42  },
+      { x: 20,z: 0,  w:0.5,h:3, d:42  },
+    ];
+    for (const w of walls) {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w.w, w.h, w.d), wallMat);
+      m.position.set(w.x, w.h / 2, w.z);
+      this._scene.add(m); this._cleanupMeshes.push(m);
+    }
+
+    // Cover boxes — colored, with a slight rim for definition.
+    const coverMat = new THREE.MeshLambertMaterial({ color: 0x5a6470 });
     for (const c of (coverBoxes || [])) {
       const m = new THREE.Mesh(
         new THREE.BoxGeometry(c.size.w, c.size.h, c.size.d),
-        new THREE.MeshLambertMaterial({ color: 0x586068 })
+        coverMat
       );
-      m.position.set(c.position.x, c.position.h ? c.position.h/2 : c.size.h/2, c.position.z);
-      this._scene.add(m);
+      m.position.set(c.position.x, c.size.h / 2, c.position.z);
+      this._scene.add(m); this._cleanupMeshes.push(m);
     }
+
+    // Victim avatar — placeholder humanoid at the death position so the
+    // player can SEE the moment of death from the killer's POV.
+    if (victimSpawnPos) {
+      const victim = new THREE.Group();
+      const skin = new THREE.MeshLambertMaterial({ color: 0xd8a373 });
+      const body = new THREE.MeshLambertMaterial({ color: 0xc94545 });
+      const torso = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.9, 0.35), body);
+      torso.position.y = 1.0;
+      const head  = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, 0.35), skin);
+      head.position.y = 1.65;
+      const legs = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.85, 0.35), new THREE.MeshLambertMaterial({ color: 0x2f2f2f }));
+      legs.position.y = 0.43;
+      victim.add(torso, head, legs);
+      victim.position.set(victimSpawnPos.x, 0, victimSpawnPos.z);
+      // Slight tilt so it reads as "killed".
+      victim.rotation.z = 0.05;
+      this._scene.add(victim);
+      this._victim = victim;
+      this._cleanupMeshes.push(torso, head, legs);
+    } else {
+      this._victim = null;
+    }
+
+    // Muzzle flash placeholder — toggled on shot_fired events.
+    const flash = new THREE.PointLight(0xffaa55, 0, 6, 2);
+    this._scene.add(flash);
+    this._muzzleFlash = flash;
+
     this._camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 200);
+    this._camera.rotation.order = 'YXZ';
+    return true;
   },
 
-  // data = { killerName, events, weapon, headshot }
-  play(data, coverBoxes) {
+  _shortAngleLerp(a, b, k) {
+    let dy = b - a;
+    while (dy >  Math.PI) dy -= 2 * Math.PI;
+    while (dy < -Math.PI) dy += 2 * Math.PI;
+    return a + dy * k;
+  },
+
+  // data = { killerName, killerSocketId, events, weapon, headshot }
+  play(data, coverBoxes, victimDeathPos) {
     if (!data || !data.events?.length) return;
     this._data = data;
-    this._ensureScene(coverBoxes);
-    if (!this._renderer) return;
+
+    // Build movement keyframes — killer's POV. Fall back to bare position
+    // if rotation is missing (only true for replays recorded before the
+    // rotation field was added).
+    const allMoves = data.events.filter(e => e.type === 'movement' && e.p);
+    if (!allMoves.length) return;
+    // If we have no rotation, derive yaw from movement direction frame-to-frame.
+    for (let i = 0; i < allMoves.length; i++) {
+      if (allMoves[i].r) continue;
+      const next = allMoves[i + 1] || allMoves[i - 1];
+      const dx = (next?.p?.[0] || allMoves[i].p[0]) - allMoves[i].p[0];
+      const dz = (next?.p?.[2] || allMoves[i].p[2]) - allMoves[i].p[2];
+      const yaw = Math.atan2(-dx, -dz); // match the in-game yaw convention
+      allMoves[i].r = [0, yaw];
+    }
+
+    if (!this._buildScene(coverBoxes, victimDeathPos)) return;
 
     const canvas = document.getElementById('killcam-canvas');
     canvas.style.display = '';
+    document.getElementById('killcam-vignette').style.display = '';
     const tag = document.getElementById('killcam-tag');
     document.getElementById('killcam-name').textContent = data.killerName || '?';
     tag.style.display = '';
     document.getElementById('overlay-respawn').classList.add('killcam-active');
     document.getElementById('respawn-title').textContent = 'KILLCAM';
 
-    // Build sorted movement keyframes for the killer's POV.
-    const moves = data.events.filter(e => e.type === 'movement' && e.r);
-    if (!moves.length) { this.stop(); return; }
-    const tFirst = moves[0].t;
-    const tLast  = moves[moves.length - 1].t;
-    const duration = Math.max(500, tLast - tFirst);
+    const tFirst = allMoves[0].t;
+    const tLast  = allMoves[allMoves.length - 1].t;
+    const duration = Math.max(800, tLast - tFirst);
     this._start = performance.now();
+    this._lastShotProcessed = -1;
+
+    // Pre-compute shot event times relative to tFirst.
+    const shots = data.events
+      .filter(e => e.type === 'shot_fired' || e.type === 'kill' || e.type === 'headshot' || e.type === 'bodyshot')
+      .map(e => ({ t: e.t - tFirst, type: e.type }));
 
     const renderFrame = () => {
       const elapsed = performance.now() - this._start;
-      if (elapsed > duration + 200) { this.stop(); return; }
-      // Find the surrounding keyframes for the current time.
+      if (elapsed > duration + 400) { this.stop(); return; }
       const target = tFirst + Math.min(elapsed, duration);
+      // Find surrounding keyframes
       let i = 0;
-      while (i < moves.length - 1 && moves[i + 1].t <= target) i++;
-      const a = moves[i];
-      const b = moves[Math.min(i + 1, moves.length - 1)];
+      while (i < allMoves.length - 1 && allMoves[i + 1].t <= target) i++;
+      const a = allMoves[i];
+      const b = allMoves[Math.min(i + 1, allMoves.length - 1)];
       const span = Math.max(1, b.t - a.t);
       const k = Math.max(0, Math.min(1, (target - a.t) / span));
       const px = a.p[0] + (b.p[0] - a.p[0]) * k;
       const pz = a.p[2] + (b.p[2] - a.p[2]) * k;
-      const yawA = a.r[1], yawB = b.r[1];
-      // Yaw lerp — short way around
-      let dy = yawB - yawA;
-      if (dy >  Math.PI) dy -= 2 * Math.PI;
-      if (dy < -Math.PI) dy += 2 * Math.PI;
-      const yaw = yawA + dy * k;
+      const yaw   = this._shortAngleLerp(a.r[1] || 0, b.r[1] || 0, k);
       const pitch = (a.r[0] || 0) + ((b.r[0] || 0) - (a.r[0] || 0)) * k;
-      this._camera.position.set(px, 1.6, pz);
-      this._camera.rotation.set(0, 0, 0);
-      this._camera.rotation.order = 'YXZ';
-      this._camera.rotation.y = yaw;
-      this._camera.rotation.x = pitch;
+      // Account for the same 180° model/camera convention fix used live:
+      // killer's camera yaw=0 looks -Z, but we want yaw to map directly
+      // to view direction in the killcam. Use yaw + π so the perspective
+      // matches what the killer actually saw.
+      this._camera.position.set(px, 1.55, pz);
+      this._camera.rotation.set(pitch, yaw + Math.PI, 0);
+
+      // Trigger muzzle flash on shot events that have just occurred.
+      for (const s of shots) {
+        if (s.t <= elapsed && s.t > this._lastShotProcessed) {
+          if (s.type === 'shot_fired') {
+            this._muzzleFlash.position.set(px, 1.5, pz);
+            this._muzzleFlash.intensity = 4;
+          }
+        }
+      }
+      this._lastShotProcessed = elapsed;
+      // Decay muzzle flash quickly.
+      if (this._muzzleFlash.intensity > 0) {
+        this._muzzleFlash.intensity *= 0.86;
+        if (this._muzzleFlash.intensity < 0.05) this._muzzleFlash.intensity = 0;
+      }
+
       this._renderer.render(this._scene, this._camera);
       this._raf = requestAnimationFrame(renderFrame);
     };
@@ -2577,12 +2715,12 @@ const Killcam = {
   stop() {
     if (this._raf) cancelAnimationFrame(this._raf);
     this._raf = null;
-    const c = document.getElementById('killcam-canvas');
-    if (c) c.style.display = 'none';
-    const t = document.getElementById('killcam-tag');
-    if (t) t.style.display = 'none';
+    const c = document.getElementById('killcam-canvas');     if (c) c.style.display = 'none';
+    const v = document.getElementById('killcam-vignette');   if (v) v.style.display = 'none';
+    const t = document.getElementById('killcam-tag');        if (t) t.style.display = 'none';
     document.getElementById('overlay-respawn')?.classList.remove('killcam-active');
-    document.getElementById('respawn-title') && (document.getElementById('respawn-title').textContent = 'YOU DIED');
+    const title = document.getElementById('respawn-title');
+    if (title) title.textContent = 'YOU DIED';
   },
 };
 
@@ -3047,7 +3185,12 @@ const App = {
   onKillcamData(data) {
     // Play the killcam during the respawn countdown. The respawn overlay
     // is already showing — we just slide a Three.js POV behind it.
-    Killcam.play(data, GameEngine._coverBoxes);
+    // Capture the victim's last known position so we can place a body
+    // avatar at the point of death.
+    const victimPos = GameEngine.pos
+      ? { x: GameEngine.pos.x, y: 0, z: GameEngine.pos.z }
+      : null;
+    Killcam.play(data, GameEngine._coverBoxes, victimPos);
   },
 
   onMatchChat({ from, body, isYou }) {
