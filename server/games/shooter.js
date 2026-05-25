@@ -24,9 +24,10 @@ const HOUSE_FEE_PERCENT  = Math.min(50, Math.max(0, Number(process.env.HOUSE_FEE
 
 // Weapon configs — must mirror client's WEAPONS
 const WEAPONS = {
-  rifle:   { fireMs: 105, mag: 30, dmg: 22, headDmg: 100, reloadMs: 2000, pellets: 1, spread: 0.0  },
-  pistol:  { fireMs: 180, mag: 12, dmg: 34, headDmg: 100, reloadMs: 1500, pellets: 1, spread: 0.0  },
-  shotgun: { fireMs: 700, mag: 6,  dmg: 16, headDmg: 60,  reloadMs: 2500, pellets: 6, spread: 0.10 },
+  rifle:   { fireMs: 105,  mag: 30, dmg: 22, headDmg: 100, reloadMs: 2000, pellets: 1, spread: 0.0  },
+  pistol:  { fireMs: 180,  mag: 12, dmg: 34, headDmg: 100, reloadMs: 1500, pellets: 1, spread: 0.0  },
+  shotgun: { fireMs: 700,  mag: 6,  dmg: 16, headDmg: 60,  reloadMs: 2500, pellets: 6, spread: 0.10 },
+  sniper:  { fireMs: 1500, mag: 5,  dmg: 50, headDmg: 100, reloadMs: 3500, pellets: 1, spread: 0.0  },
 };
 const DEFAULT_WEAPON = 'rifle';
 
