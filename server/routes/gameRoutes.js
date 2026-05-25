@@ -1,8 +1,9 @@
-// server/routes/gameRoutes.js — HTTP endpoints for roulette/blackjack + history
+// server/routes/gameRoutes.js — HTTP endpoints for roulette/blackjack/mines + history
 const express = require('express');
 const requireAuth = require('../middleware/requireAuth');
 const roulette  = require('../games/roulette');
 const blackjack = require('../games/blackjack');
+const mines     = require('../games/mines');
 const { pool }  = require('../db');
 
 const router = express.Router();
@@ -11,7 +12,6 @@ const router = express.Router();
 router.post('/roulette/spin', requireAuth, async (req, res) => {
   try {
     const body = req.body || {};
-    // Accept either { bets: [...] } (preferred) or single { betType, ... } (legacy)
     let bets = Array.isArray(body.bets) ? body.bets : null;
     if (!bets) {
       const { betType, betValue, betAmount } = body;
@@ -75,6 +75,39 @@ router.post('/blackjack/double', requireAuth, async (req, res) => {
 router.get('/blackjack/active', requireAuth, async (req, res) => {
   const hand = await blackjack.getActive(req.session.userId);
   res.json({ hand });
+});
+
+// ── MINES ─────────────────────────────────────────────────────────────────
+router.post('/mines/start', requireAuth, async (req, res) => {
+  try {
+    const { betAmount, mineCount } = req.body || {};
+    const result = await mines.startGame(req.session.userId, betAmount, mineCount);
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    res.status(400).json({ error: e.message || 'start_failed' });
+  }
+});
+
+router.post('/mines/reveal', requireAuth, async (req, res) => {
+  try {
+    const { sessionId, tileIndex } = req.body || {};
+    if (sessionId == null || tileIndex == null) throw new Error('missing_params');
+    const result = await mines.revealTile(req.session.userId, sessionId, Number(tileIndex));
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    res.status(400).json({ error: e.message || 'reveal_failed' });
+  }
+});
+
+router.post('/mines/cashout', requireAuth, async (req, res) => {
+  try {
+    const { sessionId } = req.body || {};
+    if (!sessionId) throw new Error('missing_session');
+    const result = await mines.cashOut(req.session.userId, sessionId);
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    res.status(400).json({ error: e.message || 'cashout_failed' });
+  }
 });
 
 module.exports = router;
