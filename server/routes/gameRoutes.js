@@ -70,9 +70,15 @@ router.get('/roulette/history', requireAuth, async (req, res) => {
 // ── BLACKJACK ─────────────────────────────────────────────────────────────
 router.post('/blackjack/start', requireAuth, async (req, res) => {
   try {
-    const { betAmount } = req.body || {};
-    const hand = await blackjack.start(req.session.userId, betAmount);
-    res.json({ ok: true, hand });
+    const body = req.body || {};
+    // Multi-hand: { bets: [25, 50, 100] } — atomically opens up to 3 hands.
+    if (Array.isArray(body.bets) && body.bets.length) {
+      const hands = await blackjack.startBatch(req.session.userId, body.bets);
+      return res.json({ ok: true, hands });
+    }
+    // Single-hand (back-compat): { betAmount }
+    const hand = await blackjack.start(req.session.userId, body.betAmount);
+    res.json({ ok: true, hand, hands: [hand] });
   } catch (e) {
     res.status(400).json({ error: e.message || 'start_failed' });
   }
@@ -105,8 +111,9 @@ router.post('/blackjack/double', requireAuth, async (req, res) => {
   }
 });
 router.get('/blackjack/active', requireAuth, async (req, res) => {
-  const hand = await blackjack.getActive(req.session.userId);
-  res.json({ hand });
+  const hands = await blackjack.getActive(req.session.userId);
+  // Keep `hand` for any old client that still uses it (first active).
+  res.json({ hands, hand: hands[0] || null });
 });
 
 // ── MINES ─────────────────────────────────────────────────────────────────

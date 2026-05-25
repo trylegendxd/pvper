@@ -50,70 +50,96 @@ function publicView(hand, hideDealerHole = true) {
   };
 }
 
-/** Start a new hand, deduct bet. */
-async function start(userId, betAmount) {
+// Hard cap so a single user can't open dozens of simultaneous hands.
+const MAX_ACTIVE_HANDS = 3;
+
+async function _startOne(client, userId, betAmount) {
   betAmount = Math.floor(Number(betAmount));
   if (!Number.isFinite(betAmount) || betAmount <= 0) throw new Error('invalid_bet_amount');
 
+  const active = await client.query(
+    `SELECT COUNT(*)::int AS n FROM blackjack_hands WHERE user_id = $1 AND status = 'active'`,
+    [userId]
+  );
+  if ((active.rows[0]?.n || 0) >= MAX_ACTIVE_HANDS) throw new Error('too_many_active_hands');
+
+  const { rows: gs } = await client.query(
+    `INSERT INTO game_sessions (game_type, status, bet_amount, pot_amount)
+     VALUES ('blackjack','active',$1,$1)
+     RETURNING id`,
+    [betAmount]
+  );
+  const sessionId = gs[0].id;
+
+  await adjustBalance(userId, -betAmount, 'bet', {
+    refType: 'blackjack', refId: sessionId, client,
+  });
+
+  let deck = newDeck();
+  const player = [deck.pop(), deck.pop()];
+  const dealer = [deck.pop(), deck.pop()];
+
+  let status  = 'active';
+  let outcome = null;
+  let payout  = 0;
+
+  if (isBlackjack(player)) {
+    if (isBlackjack(dealer)) {
+      status = 'push'; outcome = 'push'; payout = betAmount;
+    } else {
+      status = 'player_blackjack'; outcome = 'blackjack';
+      payout = Math.floor(betAmount * 2.5);
+    }
+  }
+
+  const { rows } = await client.query(
+    `INSERT INTO blackjack_hands
+       (session_id, user_id, bet_amount, deck, player_cards, dealer_cards, status, outcome, payout, finished_at)
+     VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7,$8,$9, CASE WHEN $7 = 'active' THEN NULL ELSE NOW() END)
+     RETURNING *`,
+    [sessionId, userId, betAmount,
+     JSON.stringify(deck), JSON.stringify(player), JSON.stringify(dealer),
+     status, outcome, payout]
+  );
+  const hand = rows[0];
+
+  if (payout > 0) {
+    const reason = outcome === 'push' ? 'refund' : 'blackjack_payout';
+    await adjustBalance(userId, payout, reason, {
+      refType: 'blackjack', refId: sessionId, client,
+      metadata: { outcome },
+    });
+  }
+  if (status !== 'active') {
+    await client.query(`UPDATE game_sessions SET status='finished', finished_at=NOW() WHERE id=$1`, [sessionId]);
+  }
+  return publicView(hand, status === 'active');
+}
+
+/** Start a single hand (kept for backwards compatibility). */
+async function start(userId, betAmount) {
+  return withTx(async (client) => _startOne(client, userId, betAmount));
+}
+
+/** Start up to MAX_ACTIVE_HANDS hands atomically.
+ *  bets: array of positive integers, length 1..MAX_ACTIVE_HANDS.
+ *  If any bet fails (e.g. balance), the whole batch rolls back. */
+async function startBatch(userId, bets) {
+  if (!Array.isArray(bets) || bets.length === 0) throw new Error('invalid_bet_amount');
+  if (bets.length > MAX_ACTIVE_HANDS) throw new Error('too_many_hands');
   return withTx(async (client) => {
-    // No more than one active hand per user
+    // Pre-check active count once so we fail fast with a clear error.
     const active = await client.query(
-      `SELECT 1 FROM blackjack_hands WHERE user_id = $1 AND status = 'active' LIMIT 1`,
+      `SELECT COUNT(*)::int AS n FROM blackjack_hands WHERE user_id = $1 AND status = 'active'`,
       [userId]
     );
-    if (active.rows.length) throw new Error('hand_already_active');
+    if ((active.rows[0]?.n || 0) + bets.length > MAX_ACTIVE_HANDS) throw new Error('too_many_active_hands');
 
-    const { rows: gs } = await client.query(
-      `INSERT INTO game_sessions (game_type, status, bet_amount, pot_amount)
-       VALUES ('blackjack','active',$1,$1)
-       RETURNING id`,
-      [betAmount]
-    );
-    const sessionId = gs[0].id;
-
-    await adjustBalance(userId, -betAmount, 'bet', {
-      refType: 'blackjack', refId: sessionId, client,
-    });
-
-    let deck = newDeck();
-    const player = [deck.pop(), deck.pop()];
-    const dealer = [deck.pop(), deck.pop()];
-
-    let status  = 'active';
-    let outcome = null;
-    let payout  = 0;
-
-    if (isBlackjack(player)) {
-      if (isBlackjack(dealer)) {
-        status = 'push'; outcome = 'push'; payout = betAmount;
-      } else {
-        status = 'player_blackjack'; outcome = 'blackjack';
-        payout = Math.floor(betAmount * 2.5);
-      }
+    const out = [];
+    for (const b of bets) {
+      out.push(await _startOne(client, userId, b));
     }
-
-    const { rows } = await client.query(
-      `INSERT INTO blackjack_hands
-         (session_id, user_id, bet_amount, deck, player_cards, dealer_cards, status, outcome, payout, finished_at)
-       VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7,$8,$9, CASE WHEN $7 = 'active' THEN NULL ELSE NOW() END)
-       RETURNING *`,
-      [sessionId, userId, betAmount,
-       JSON.stringify(deck), JSON.stringify(player), JSON.stringify(dealer),
-       status, outcome, payout]
-    );
-    const hand = rows[0];
-
-    if (payout > 0) {
-      const reason = outcome === 'push' ? 'refund' : 'blackjack_payout';
-      await adjustBalance(userId, payout, reason, {
-        refType: 'blackjack', refId: sessionId, client,
-        metadata: { outcome },
-      });
-    }
-    if (status !== 'active') {
-      await client.query(`UPDATE game_sessions SET status='finished', finished_at=NOW() WHERE id=$1`, [sessionId]);
-    }
-    return publicView(hand, status === 'active');
+    return out;
   });
 }
 
@@ -282,15 +308,16 @@ async function stand(userId, handId) {
   });
 }
 
+/** Returns ALL active hands for the user (newest first), up to MAX_ACTIVE_HANDS. */
 async function getActive(userId) {
   const { rows } = await pool.query(
     `SELECT * FROM blackjack_hands
       WHERE user_id = $1 AND status = 'active'
-   ORDER BY created_at DESC LIMIT 1`,
-    [userId]
+   ORDER BY created_at ASC
+      LIMIT $2`,
+    [userId, MAX_ACTIVE_HANDS]
   );
-  if (!rows.length) return null;
-  return publicView(rows[0], true);
+  return rows.map(r => publicView(r, true));
 }
 
-module.exports = { start, hit, stand, doubleDown, getActive };
+module.exports = { start, startBatch, hit, stand, doubleDown, getActive, MAX_ACTIVE_HANDS };
