@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Hub · FPS Arena</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+<div class="topbar" id="topbar"></div>
+<div class="container">
+  <h1 class="page">GAME HUB</h1>
+  <p class="subtitle">Pick a game. All credits are play-money only.</p>
+
+  <div class="game-grid">
+    <a class="game-card shooter" href="/games/shooter.html">
+      <div class="icon">🎯</div>
+      <h3>SHOOTER ARENA</h3>
+      <p>1v1 first-person shooter. Bet credits, first to 5 kills wins the pot.</p>
+    </a>
+    <a class="game-card rps" href="/games/rps.html">
+      <div class="icon">✊</div>
+      <h3>ROCK PAPER SCISSORS</h3>
+      <p>Best of 3 PvP. Match by bet amount, winner takes both stakes.</p>
+    </a>
+    <a class="game-card roulette" href="/games/roulette.html">
+      <div class="icon">🎡</div>
+      <h3>ROULETTE</h3>
+      <p>Bet red/black, odd/even, ranges or a single number against the house.</p>
+    </a>
+    <a class="game-card blackjack" href="/games/blackjack.html">
+      <div class="icon">🂡</div>
+      <h3>BLACKJACK</h3>
+      <p>Beat the dealer. Blackjack pays 3:2, push refunds.</p>
+    </a>
+    <a class="game-card wallet" href="/wallet.html">
+      <div class="icon">💳</div>
+      <h3>WALLET</h3>
+      <p>Balance and transaction history.</p>
+    </a>
+    <a class="game-card admin" href="/admin.html" id="admin-card" style="display:none">
+      <div class="icon">🛠️</div>
+      <h3>ADMIN PANEL</h3>
+      <p>Manage users, wallets and sessions.</p>
+    </a>
+  </div>
+</div>
+<div class="legal-footer">Credits are fictional play-money credits only and have no real-world monetary value.</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/auth.js"></script>
+<script>
+(async () => {
+  const user = await renderTopbar();
+  if (user?.is_admin) document.getElementById('admin-card').style.display = '';
+})();
+</script>
+</body>
+</html>

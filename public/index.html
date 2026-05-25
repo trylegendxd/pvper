@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FPS Arena</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+<script src="/js/api.js"></script>
+<script>
+  // Send guests to login, members to dashboard
+  (async () => {
+    try {
+      const { user } = await api('/api/auth/me');
+      location.replace(user ? '/dashboard.html' : '/login.html');
+    } catch (_) { location.replace('/login.html'); }
+  })();
+</script>
+</body>
+</html>

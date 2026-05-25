@@ -1,0 +1,10 @@
+node_modules/
+.env
+.env.local
+*.log
+npm-debug.log*
+.DS_Store
+
+# Local Claude/Superpowers state — not source code
+.superpowers/
+.claude/

@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Admin · FPS Arena</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/styles.css">
+<style>
+  .tabs { display:flex; gap:4px; margin: 12px 0 18px; }
+  .tabs button {
+    background: var(--bg3); border: 1px solid var(--border); color: var(--text);
+    padding: 8px 16px; font-size: 12px; letter-spacing: 1.5px; cursor:pointer;
+    border-radius: 3px;
+  }
+  .tabs button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .panel { display:none; }
+  .panel.active { display:block; }
+  table.history th { font-size: 10px; }
+  table.history td { font-size: 12px; font-family: monospace; }
+  .adj-row { display:flex; gap:8px; align-items:center; }
+  .adj-row input { background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:3px;font-family:var(--font);font-size:13px;width:120px;outline:none; }
+</style>
+</head>
+<body>
+<div class="topbar" id="topbar"></div>
+<div class="container">
+  <h1 class="page">ADMIN PANEL</h1>
+  <p class="subtitle">Manage users, wallets, sessions and audit logs.</p>
+
+  <div class="tabs">
+    <button data-tab="users"     class="active">Users</button>
+    <button data-tab="tx">Transactions</button>
+    <button data-tab="shooter">Shooter</button>
+    <button data-tab="rps">RPS</button>
+    <button data-tab="roulette">Roulette</button>
+    <button data-tab="blackjack">Blackjack</button>
+    <button data-tab="audit">Audit</button>
+  </div>
+
+  <div id="panel-users" class="panel active card"><div id="users"></div></div>
+  <div id="panel-tx"        class="panel card"><div id="tx"></div></div>
+  <div id="panel-shooter"   class="panel card"><div id="shooter"></div></div>
+  <div id="panel-rps"       class="panel card"><div id="rps"></div></div>
+  <div id="panel-roulette"  class="panel card"><div id="roulette"></div></div>
+  <div id="panel-blackjack" class="panel card"><div id="blackjack"></div></div>
+  <div id="panel-audit"     class="panel card"><div id="audit"></div></div>
+</div>
+<div class="legal-footer">Credits are fictional play-money credits only and have no real-world monetary value.</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/auth.js"></script>
+<script>
+(async () => {
+  const user = await renderTopbar();
+  if (!user) return;
+  if (!user.is_admin) { document.querySelector('.container').innerHTML = '<p class="error">Forbidden.</p>'; return; }
+
+  document.querySelectorAll('.tabs button').forEach(b => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('.tabs button').forEach(x => x.classList.remove('active'));
+      document.querySelectorAll('.panel').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      document.getElementById('panel-' + b.dataset.tab).classList.add('active');
+      loaders[b.dataset.tab]?.();
+    });
+  });
+
+  const loaders = {
+    async users() {
+      const { users } = await api('/api/admin/users');
+      document.getElementById('users').innerHTML = `
+        <table class="history">
+          <thead><tr><th>Username</th><th>Admin</th><th>Balance</th><th>Created</th><th>Adjust</th></tr></thead>
+          <tbody>${users.map(u => `
+            <tr>
+              <td>${escapeHtml(u.username)}</td>
+              <td>${u.is_admin ? '✓' : ''}</td>
+              <td style="color:var(--gold)">${u.balance}</td>
+              <td>${new Date(u.created_at).toLocaleDateString()}</td>
+              <td>
+                <div class="adj-row">
+                  <input type="number" placeholder="±amount" data-amt-for="${u.id}">
+                  <input type="text"   placeholder="reason"  data-reason-for="${u.id}">
+                  <button class="btn small" onclick="adminAdjust('${u.id}')">APPLY</button>
+                </div>
+              </td>
+            </tr>`).join('')}</tbody>
+        </table>`;
+    },
+    async tx() {
+      const { transactions } = await api('/api/admin/wallet/transactions');
+      document.getElementById('tx').innerHTML = renderTable(transactions,
+        ['created_at','user_id','reason','ref_type','ref_id','amount','balance_after']);
+    },
+    async shooter() {
+      const { sessions } = await api('/api/admin/games/shooter');
+      document.getElementById('shooter').innerHTML = renderTable(sessions,
+        ['started_at','lobby_id','bet_amount','player_a_id','player_b_id','winner_id','status','result_reason']);
+    },
+    async rps() {
+      const { matches } = await api('/api/admin/games/rps');
+      document.getElementById('rps').innerHTML = renderTable(matches,
+        ['started_at','bet_amount','player_a_id','player_b_id','winner_id','status','player_a_score','player_b_score']);
+    },
+    async roulette() {
+      const { spins } = await api('/api/admin/games/roulette');
+      document.getElementById('roulette').innerHTML = renderTable(spins,
+        ['created_at','user_id','bet_type','bet_value','bet_amount','result_number','result_color','payout']);
+    },
+    async blackjack() {
+      const { hands } = await api('/api/admin/games/blackjack');
+      document.getElementById('blackjack').innerHTML = renderTable(hands,
+        ['created_at','user_id','bet_amount','status','outcome','payout']);
+    },
+    async audit() {
+      const { logs } = await api('/api/admin/audit');
+      document.getElementById('audit').innerHTML = renderTable(logs,
+        ['created_at','actor_id','action','target_id','details']);
+    },
+  };
+
+  function renderTable(rows, cols) {
+    if (!rows.length) return '<p style="color:var(--dim)">No rows.</p>';
+    return `<table class="history">
+      <thead><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map(r => `<tr>${cols.map(c => {
+        let v = r[c]; if (v == null) v = '';
+        if (typeof v === 'object') v = JSON.stringify(v);
+        if (c.endsWith('_at')) v = new Date(v).toLocaleString();
+        return `<td>${escapeHtml(String(v))}</td>`;
+      }).join('')}</tr>`).join('')}</tbody>
+    </table>`;
+  }
+
+  window.adminAdjust = async (userId) => {
+    const amt = document.querySelector(`[data-amt-for="${userId}"]`).value;
+    const reason = document.querySelector(`[data-reason-for="${userId}"]`).value || 'admin_adjust';
+    if (!amt) return alert('Enter an amount (e.g. 500 or -200).');
+    try {
+      await api('/api/admin/wallet/adjust', { method:'POST', body: { userId, amount: Number(amt), reason } });
+      await loaders.users();
+    } catch (e) { alert(e.message); }
+  };
+
+  loaders.users();
+})();
+</script>
+</body>
+</html>

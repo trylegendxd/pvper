@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Wallet · FPS Arena</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+<div class="topbar" id="topbar"></div>
+<div class="container">
+  <h1 class="page">WALLET</h1>
+  <p class="subtitle">Play-money credits only — no real-world value.</p>
+
+  <div class="card" style="margin-bottom:18px; display:flex; align-items:baseline; gap:20px;">
+    <span style="font-size:13px;color:var(--dim);letter-spacing:1px;">BALANCE</span>
+    <span id="bal" style="font-size:36px;color:var(--gold);font-weight:700">…</span>
+  </div>
+
+  <div class="card">
+    <h3 style="font-size:14px;letter-spacing:2px;color:var(--dim);margin-bottom:12px;">TRANSACTION HISTORY</h3>
+    <table class="history" id="hist">
+      <thead><tr><th>When</th><th>Reason</th><th>Game</th><th>Ref</th><th style="text-align:right">Amount</th><th style="text-align:right">Balance</th></tr></thead>
+      <tbody><tr><td colspan="6" style="color:var(--dim)">Loading…</td></tr></tbody>
+    </table>
+  </div>
+</div>
+<div class="legal-footer">Credits are fictional play-money credits only and have no real-world monetary value.</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/auth.js"></script>
+<script>
+(async () => {
+  await renderTopbar();
+  const { balance } = await api('/api/wallet/balance');
+  document.getElementById('bal').textContent = fmtCredits(balance);
+
+  const { history } = await api('/api/wallet/history?limit=200');
+  const tbody = document.querySelector('#hist tbody');
+  if (!history.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="color:var(--dim)">No transactions yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = history.map(t => `
+    <tr>
+      <td>${new Date(t.created_at).toLocaleString()}</td>
+      <td>${escapeHtml(t.reason)}</td>
+      <td>${escapeHtml(t.ref_type || '')}</td>
+      <td style="color:var(--dim);font-family:monospace;font-size:11px;">${escapeHtml(t.ref_id || '')}</td>
+      <td class="${t.amount >= 0 ? 'pos' : 'neg'}" style="text-align:right">${t.amount >= 0 ? '+' : ''}${t.amount}</td>
+      <td style="text-align:right">${t.balance_after}</td>
+    </tr>
+  `).join('');
+})();
+</script>
+</body>
+</html>

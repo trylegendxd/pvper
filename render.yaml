@@ -1,0 +1,36 @@
+# render.yaml — one-click deployment blueprint for Render.com
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: fps-arena-platform
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run migrate
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: STARTING_CREDITS
+        value: 1000
+      - key: HOUSE_FEE_PERCENT
+        value: 5
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: fps-arena-db
+          property: connectionString
+      - key: ADMIN_USER_IDS
+        value: ""
+      - key: CORS_ORIGIN
+        value: ""
+
+databases:
+  - name: fps-arena-db
+    databaseName: fps_arena
+    plan: free

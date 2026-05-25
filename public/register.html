@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Register · FPS Arena</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+<div class="form-box">
+  <h1>CREATE ACCOUNT</h1>
+  <div class="row"><label>Username (3–24, letters/digits/._-)</label><input id="u" autocomplete="username" maxlength="24"></div>
+  <div class="row"><label>Password (min 6)</label><input id="p" type="password" autocomplete="new-password"></div>
+  <button class="btn" id="go">REGISTER</button>
+  <p class="error" id="err"></p>
+  <p style="text-align:center;color:var(--dim);font-size:12px;">
+    Already have an account? <a href="/login.html">Sign in</a>
+  </p>
+</div>
+<div class="legal-footer">Credits are fictional play-money credits only and have no real-world monetary value.</div>
+
+<script src="/js/api.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+async function doRegister() {
+  $('err').textContent = '';
+  $('go').disabled = true;
+  try {
+    const u = $('u').value.trim();
+    const p = $('p').value;
+    await api('/api/auth/register', { method: 'POST', body: { username: u, password: p } });
+    location.href = '/dashboard.html';
+  } catch (e) {
+    $('err').textContent = ({
+      username_taken: 'That username is already taken.',
+      invalid_username: 'Username may be 3–24 letters/digits/. _ -',
+      invalid_password: 'Password must be at least 6 characters.',
+      rate_limited: 'Too many attempts — try again later.',
+    })[e.message] || e.message;
+    $('go').disabled = false;
+  }
+}
+$('go').addEventListener('click', doRegister);
+['u','p'].forEach(id => $(id).addEventListener('keydown', e => { if (e.key === 'Enter') doRegister(); }));
+</script>
+</body>
+</html>
