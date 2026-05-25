@@ -27,8 +27,9 @@ async function createMatch(playerAId, playerBId, betAmount) {
     );
     const sessionId = gs[0].id;
 
-    await adjustBalance(playerAId, -betAmount, 'bet', { refType: 'rps', refId: sessionId, client });
-    await adjustBalance(playerBId, -betAmount, 'bet', { refType: 'rps', refId: sessionId, client });
+    // Per-player refId so both 'bet' rows fit under the (ref_type, ref_id, reason) unique index.
+    await adjustBalance(playerAId, -betAmount, 'bet', { refType: 'rps', refId: `${sessionId}:a`, client });
+    await adjustBalance(playerBId, -betAmount, 'bet', { refType: 'rps', refId: `${sessionId}:b`, client });
 
     const { rows } = await client.query(
       `INSERT INTO rps_matches (session_id, bet_amount, player_a_id, player_b_id)
@@ -91,13 +92,13 @@ async function finishMatch(matchId, winnerUserId, reason = 'best_of_3') {
         metadata: { reason },
       });
     } else {
-      // Draw → refund both
+      // Draw → refund both (per-player refId)
       await adjustBalance(m.player_a_id, bet, 'refund', {
-        refType: 'rps', refId: m.session_id, client,
+        refType: 'rps', refId: `${m.session_id}:a`, client,
         metadata: { reason: 'draw' },
       });
       await adjustBalance(m.player_b_id, bet, 'refund', {
-        refType: 'rps', refId: m.session_id + ':b', client, // separate ref to avoid uniqueness collision
+        refType: 'rps', refId: `${m.session_id}:b`, client,
         metadata: { reason: 'draw' },
       });
     }
@@ -126,10 +127,10 @@ async function cancelMatch(matchId, reason = 'cancelled') {
 
     const bet = Number(m.bet_amount);
     await adjustBalance(m.player_a_id, bet, 'refund', {
-      refType: 'rps', refId: m.session_id, client, metadata: { reason },
+      refType: 'rps', refId: `${m.session_id}:a`, client, metadata: { reason },
     });
     await adjustBalance(m.player_b_id, bet, 'refund', {
-      refType: 'rps', refId: m.session_id + ':b', client, metadata: { reason },
+      refType: 'rps', refId: `${m.session_id}:b`, client, metadata: { reason },
     });
     await client.query(
       `UPDATE rps_matches SET status='cancelled', result_reason=$1, finished_at=NOW() WHERE id=$2`,

@@ -163,8 +163,9 @@ async function startShooterMatch(playerAUserId, playerBUserId, lobbyId, betAmoun
     );
     const sessionId = gs[0].id;
 
-    await adjustBalance(playerAUserId, -betAmount, 'bet', { refType: 'shooter', refId: sessionId, client });
-    await adjustBalance(playerBUserId, -betAmount, 'bet', { refType: 'shooter', refId: sessionId, client });
+    // Per-player refId so both bet rows fit under the wallet's UNIQUE(ref_type, ref_id, reason) index
+    await adjustBalance(playerAUserId, -betAmount, 'bet', { refType: 'shooter', refId: `${sessionId}:a`, client });
+    await adjustBalance(playerBUserId, -betAmount, 'bet', { refType: 'shooter', refId: `${sessionId}:b`, client });
 
     const { rows } = await client.query(
       `INSERT INTO shooter_sessions
@@ -202,14 +203,14 @@ async function finishShooterMatch(matchId, winnerUserId, reason = 'kills', stats
         if (e.message !== 'duplicate_transaction') throw e;
       }
     } else {
-      // No winner — refund both (e.g. timeout draw)
+      // No winner — refund both (per-player refId for uniqueness index)
       try {
         await adjustBalance(m.player_a_id, bet, 'refund',
-          { refType: 'shooter', refId: m.session_id, client, metadata: { reason } });
+          { refType: 'shooter', refId: `${m.session_id}:a`, client, metadata: { reason } });
       } catch (e) { if (e.message !== 'duplicate_transaction') throw e; }
       try {
         await adjustBalance(m.player_b_id, bet, 'refund',
-          { refType: 'shooter', refId: m.session_id + ':b', client, metadata: { reason } });
+          { refType: 'shooter', refId: `${m.session_id}:b`, client, metadata: { reason } });
       } catch (e) { if (e.message !== 'duplicate_transaction') throw e; }
     }
 
@@ -240,10 +241,10 @@ async function cancelShooterMatch(matchId, reason = 'cancelled') {
     if (m.status !== 'active') return;
     const bet = Number(m.bet_amount);
     try {
-      await adjustBalance(m.player_a_id, bet, 'refund', { refType: 'shooter', refId: m.session_id, client, metadata: { reason } });
+      await adjustBalance(m.player_a_id, bet, 'refund', { refType: 'shooter', refId: `${m.session_id}:a`, client, metadata: { reason } });
     } catch (e) { if (e.message !== 'duplicate_transaction') throw e; }
     try {
-      await adjustBalance(m.player_b_id, bet, 'refund', { refType: 'shooter', refId: m.session_id + ':b', client, metadata: { reason } });
+      await adjustBalance(m.player_b_id, bet, 'refund', { refType: 'shooter', refId: `${m.session_id}:b`, client, metadata: { reason } });
     } catch (e) { if (e.message !== 'duplicate_transaction') throw e; }
     await client.query(
       `UPDATE shooter_sessions SET status='cancelled', result_reason=$1, finished_at=NOW() WHERE id=$2`,

@@ -2255,7 +2255,19 @@ const App = {
 
   async joinLobby(id) {
     const res = await NetworkManager.joinLobby(id);
-    if (!res?.success) { alert(res?.error || 'Cannot join'); return; }
+    // Server returns { ok: true, lobby } on success or { error } on failure
+    if (!res?.ok) {
+      const friendly = {
+        insufficient_balance: 'Not enough credits for that lobby.',
+        full:                 'Lobby is already full.',
+        in_progress:          'A match is already in progress in that lobby.',
+        already_in_lobby:     'You are already in another lobby.',
+        no_lobby:             'Lobby not found.',
+        not_ready:            'Still loading — try again in a second.',
+      }[res?.error] || res?.error || 'Cannot join lobby.';
+      alert(friendly);
+      return;
+    }
     this.currentLobby = res.lobby;
     this.myVote       = null;
     document.getElementById('waiting-lobby-name').textContent = res.lobby.name;
