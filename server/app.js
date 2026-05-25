@@ -14,6 +14,7 @@ const authRoutes     = require('./routes/authRoutes');
 const walletRoutes   = require('./routes/walletRoutes');
 const gameRoutes     = require('./routes/gameRoutes');
 const adminRoutes    = require('./routes/adminRoutes');
+const friendsRoutes  = require('./routes/friendsRoutes');
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const AUDIO_DIR  = path.join(PUBLIC_DIR, 'assets', 'audio');
@@ -60,10 +61,11 @@ app.use(rateLimit({
 }));
 
 // API routes
-app.use('/api/auth',   authRoutes);
-app.use('/api/wallet', walletRoutes);
-app.use('/api/games',  gameRoutes);
-app.use('/api/admin',  adminRoutes);
+app.use('/api/auth',    authRoutes);
+app.use('/api/wallet',  walletRoutes);
+app.use('/api/games',   gameRoutes);
+app.use('/api/admin',   adminRoutes);
+app.use('/api/friends', friendsRoutes);
 
 // ── Audio endpoints (preserved from original shooter server.js) ─────────
 const SFX_RESERVED = /^(gunshot|footstep|jump|reload|hit|kill|menu)\b/i;
