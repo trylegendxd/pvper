@@ -4,9 +4,41 @@ const requireAuth = require('../middleware/requireAuth');
 const roulette  = require('../games/roulette');
 const blackjack = require('../games/blackjack');
 const mines     = require('../games/mines');
+const ranking   = require('../games/shooterRanking');
 const { pool }  = require('../db');
 
 const router = express.Router();
+
+// ── SHOOTER ranking ───────────────────────────────────────────────────────
+// Lightweight read used by the lobby/dashboard to render rank + requirements.
+router.get('/shooter/stats', requireAuth, async (req, res) => {
+  try {
+    const stats = await ranking.publicStatsFor(req.session.userId);
+    res.json({
+      ok: true,
+      ranking: stats,
+      requirements: ranking.LOBBY_REQUIREMENTS,
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message || 'stats_failed' });
+  }
+});
+
+// Top-N leaderboard by MMR — capped, public to logged-in players.
+router.get('/shooter/leaderboard', requireAuth, async (_req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT u.username, s.mmr, s.level, s.wins, s.losses, s.kills, s.deaths, s.total_matches
+        FROM shooter_player_stats s
+        JOIN users u ON u.id = s.user_id
+    ORDER BY s.mmr DESC
+       LIMIT 25
+    `);
+    res.json({ ok: true, leaderboard: rows });
+  } catch (e) {
+    res.status(400).json({ error: e.message || 'leaderboard_failed' });
+  }
+});
 
 // ── ROULETTE ──────────────────────────────────────────────────────────────
 router.post('/roulette/spin', requireAuth, async (req, res) => {

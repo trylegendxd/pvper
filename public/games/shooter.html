@@ -197,6 +197,14 @@ input:focus { border-color:var(--accent); }
 .stat-label { color:var(--dim);font-size:13px; } .stat-value { color:#fff;font-size:13px;font-weight:600; }
 .postmatch-btns { display:flex;gap:12px;width:100%; }
 .postmatch-btns button { flex:1;padding:13px 0;font-size:14px; }
+.ranking-grid { display:grid;grid-template-columns:1fr;gap:6px;width:100%;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:4px;padding:12px 16px; }
+.ranking-grid .rank-row { display:flex;justify-content:space-between;font-size:13px;letter-spacing:1px; }
+.ranking-grid .stat-value.pos { color:var(--green); }
+.ranking-grid .stat-value.neg { color:var(--red); }
+.level-up { color:#ffcc00;font-weight:700;margin-left:6px;animation:pulse 1s ease infinite alternate; }
+.killcam-note { font-size:12px;color:var(--dim);letter-spacing:1px;text-align:center; }
+.lobby-card.tier-locked { opacity:.45;cursor:not-allowed;filter:grayscale(.5); }
+.lobby-card.tier-locked .card-name { color:var(--dim); }
 
 /* ═══ SETTINGS / LEAVE OVERLAY ════════════════════════════════════════════ */
 #overlay-paused { gap:14px; }
@@ -251,6 +259,7 @@ input:focus { border-color:var(--accent); }
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px;">
         <div class="player-name" id="header-username">—</div>
         <div class="balance"><span>CREDITS </span><span id="header-balance">0</span></div>
+        <div class="rank-badge" id="header-rank" style="font-size:11px;color:var(--dim);"></div>
       </div>
     </div>
   </div>
@@ -401,6 +410,8 @@ input:focus { border-color:var(--accent); }
     <div class="credit-change"   id="pm-credit-change">+250 cr</div>
     <div class="new-balance"     id="pm-balance-row">Balance: <span id="pm-balance">1250</span> cr</div>
     <div class="stats-grid"      id="pm-stats"></div>
+    <div class="ranking-grid"    id="pm-ranking" style="display:none"></div>
+    <div class="killcam-note"    id="pm-killcam" style="display:none">🎞 Killcam data saved for this match.</div>
     <div class="postmatch-btns">
       <button class="btn-primary"   id="pm-rematch"  onclick="App.rematch()">REMATCH</button>
       <button class="btn-secondary" id="pm-lobbies"  onclick="App.goLobbies()">LOBBIES</button>
@@ -1924,30 +1935,52 @@ const UIManager = {
   renderLobbyCards(lobbies) {
     const grid    = document.getElementById('lobby-grid');
     const balance = App.playerBalance;
+    const ranking = App.ranking || null;
+    const reqs    = App.lobbyRequirements || {};
     grid.innerHTML = '';
     const betCls = { 50:'bet-50', 100:'bet-100', 250:'bet-250', 500:'bet-500' };
     const delays  = [0, 0.05, 0.1, 0.15];
 
     lobbies.forEach((l, i) => {
-      const canJoin  = balance >= l.bet && l.status === 'waiting' && l.playerCount < 2;
-      const noFunds  = balance < l.bet;
+      const noFunds = balance < l.bet;
+      const req     = reqs[l.id];
+      let tierLocked = false;
+      if (req && ranking) {
+        tierLocked = !((ranking.level || 1) >= req.level
+                    || (ranking.totalMatches || 0) >= req.matches
+                    || (ranking.mmr || 1000) >= req.mmr);
+      } else if (req && !ranking && l.id !== 'bronze') {
+        // No stats yet ⇒ only Bronze unlocked.
+        tierLocked = true;
+      }
+      const canJoin  = !tierLocked && !noFunds && l.status === 'waiting' && l.playerCount < 2;
+
       const card     = document.createElement('div');
-      card.className = `lobby-card${!canJoin ? ' disabled' : ''}${l.status==='in_progress' ? ' in-progress' : ''}`;
+      card.className = `lobby-card${!canJoin ? ' disabled' : ''}${l.status==='in_progress' ? ' in-progress' : ''}${tierLocked ? ' tier-locked' : ''}`;
       card.style.animationDelay = `${delays[i]}s`;
       const stText   = l.status === 'in_progress' ? 'In Progress' : l.playerCount === 1 ? 'Waiting' : 'Empty';
       const stCls    = l.status === 'in_progress' ? 'status-inprogress' : 'status-waiting';
+      const lockMsg  = tierLocked && req ? `<div class="tooltip">Locked — ${req.label}</div>` : '';
+      const noFundMsg = noFunds && !tierLocked ? '<div class="tooltip">Insufficient credits</div>' : '';
       card.innerHTML = `
-        <div class="card-name">${l.name}</div>
+        <div class="card-name">${l.name}${tierLocked ? ' 🔒' : ''}</div>
         <div class="card-bet ${betCls[l.bet]||'bet-50'}">${l.bet}<span class="cr"> cr</span></div>
         <div class="card-row">
           <span class="card-players">${l.playerCount}/2 players</span>
           <span class="card-status ${stCls}">${stText}</span>
         </div>
-        ${noFunds ? '<div class="tooltip">Insufficient credits</div>' : ''}
+        ${lockMsg}${noFundMsg}
       `;
       if (canJoin) card.addEventListener('click', () => App.joinLobby(l.id));
       grid.appendChild(card);
     });
+  },
+
+  updateRankBadge(ranking) {
+    const el = document.getElementById('header-rank');
+    if (!el) return;
+    if (!ranking) { el.textContent = ''; return; }
+    el.textContent = `Lvl ${ranking.level} · ${ranking.mmr} MMR`;
   },
 
   updateBalance(bal) {
@@ -2157,9 +2190,48 @@ const UIManager = {
     document.getElementById('pm-stats').innerHTML = `
       <div class="stat-row"><span class="stat-label">Kills</span><span class="stat-value">${s.kills}</span></div>
       <div class="stat-row"><span class="stat-label">Deaths</span><span class="stat-value">${s.deaths}</span></div>
+      <div class="stat-row"><span class="stat-label">Headshots</span><span class="stat-value">${s.headshots ?? 0}</span></div>
       <div class="stat-row"><span class="stat-label">Shots Fired</span><span class="stat-value">${s.shotsFired}</span></div>
       <div class="stat-row"><span class="stat-label">Accuracy</span><span class="stat-value">${s.accuracy}%</span></div>
     `;
+
+    // Ranking progression block (omitted in training mode).
+    const rankEl = document.getElementById('pm-ranking');
+    if (rankEl) {
+      if (!trainingMode && (data.ranking || data.liveStats)) {
+        const r  = data.ranking || {};
+        const ls = data.liveStats || {};
+        const mmrSign = (r.mmrChange ?? 0) >= 0 ? '+' : '';
+        const lvlUp   = r.leveledUp ? ' <span class="level-up">LEVEL UP!</span>' : '';
+        rankEl.innerHTML = `
+          <div class="rank-row"><span class="stat-label">XP Gained</span><span class="stat-value pos">+${r.xpGained ?? 0}</span></div>
+          <div class="rank-row"><span class="stat-label">MMR</span><span class="stat-value ${(r.mmrChange ?? 0) >= 0 ? 'pos' : 'neg'}">${mmrSign}${r.mmrChange ?? 0} → ${r.newMmr ?? ls.mmr ?? '?'}</span></div>
+          <div class="rank-row"><span class="stat-label">Level</span><span class="stat-value">${r.newLevel ?? ls.level ?? '?'}${lvlUp}</span></div>
+          <div class="rank-row"><span class="stat-label">Record</span><span class="stat-value">${ls.wins ?? '?'}W / ${ls.losses ?? '?'}L</span></div>
+        `;
+        rankEl.style.display = '';
+      } else {
+        rankEl.style.display = 'none';
+      }
+    }
+
+    // Killcam placeholder — the server has already saved replay events for
+    // this match; a real viewer will be wired up in a follow-up.
+    const kc = document.getElementById('pm-killcam');
+    if (kc) {
+      if (!trainingMode && data.replaySaved) {
+        kc.textContent = '🎞 Killcam data saved for this match.';
+        kc.style.display = '';
+      } else {
+        kc.style.display = 'none';
+      }
+    }
+
+    // Refresh top-of-screen rank badge with the new stats.
+    if (data.liveStats) {
+      App.ranking = data.liveStats;
+      UIManager.updateRankBadge(data.liveStats);
+    }
 
     this.show('postmatch');
   },
@@ -2188,7 +2260,11 @@ const NetworkManager = {
 
     // Stash the initial lobby snapshot in case App.login() hasn't attached its handler yet
     this._initialLobbies = null;
-    s.on('shooter_ready', d => { this._initialLobbies = d?.lobbies || []; });
+    s.on('shooter_ready', d => {
+      this._initialLobbies = d?.lobbies || [];
+      if (d?.ranking)      { App.ranking = d.ranking; UIManager.updateRankBadge(d.ranking); }
+      if (d?.requirements) { App.lobbyRequirements = d.requirements; }
+    });
     s.on('lobby_update',        d => UIManager.renderLobbyCards(d));
     s.on('waiting_room_update', d => UIManager.renderWaitingPlayers(d));
     s.on('match_start',         d => App.onMatchStart(d));
@@ -2280,6 +2356,8 @@ const App = {
   currentLobby:  null,
   myVote:        null,
   trainingMode:  false,
+  ranking:           null,   // { mmr, level, xp, totalMatches, wins, losses, ... }
+  lobbyRequirements: null,   // tier → { level, matches, mmr, label }
 
   // Match state
   matchEndTime:  0,
@@ -2416,7 +2494,7 @@ const App = {
     const res = await NetworkManager.joinLobby(id);
     // Server returns { ok: true, lobby } on success or { error } on failure
     if (!res?.ok) {
-      const friendly = {
+      let friendly = {
         insufficient_balance: 'Not enough credits for that lobby.',
         full:                 'Lobby is already full.',
         in_progress:          'A match is already in progress in that lobby.',
@@ -2424,8 +2502,15 @@ const App = {
         already_in_match:     'You are already in an active match.',
         no_lobby:             'Lobby not found.',
         not_ready:            'Still loading — try again in a second.',
-      }[res?.error] || res?.error || 'Cannot join lobby.';
-      alert(friendly);
+        ranking_unavailable:  'Ranking service unavailable — only Bronze is open right now.',
+      }[res?.error];
+      if (res?.error === 'tier_locked') {
+        const r = res.requirement;
+        friendly = r?.label
+          ? `This tier is locked. Requirements: ${r.label}.`
+          : 'You do not meet the requirements for this tier yet.';
+      }
+      alert(friendly || res?.error || 'Cannot join lobby.');
       return;
     }
     this.currentLobby = res.lobby;
