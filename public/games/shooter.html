@@ -1073,6 +1073,9 @@ const GameEngine = {
   _scoped:    false,
   _scopeFovTarget: null,   // animated target FOV; null = no animation
   _scopeFovBase:   75,
+  // True while the in-game chat input has focus. Used to suppress the
+  // pause overlay that would otherwise fire on pointer-lock release.
+  _chatOpen: false,
 
   // Footsteps / jump
   _footT:    0,
@@ -1516,36 +1519,36 @@ const GameEngine = {
     // While the chat input is focused, all game keys are ignored.
     const chatInput = document.getElementById('game-chat-input');
     if (chatInput) {
+      const closeChat = (send) => {
+        const text = send ? chatInput.value.trim() : '';
+        chatInput.value = '';
+        chatInput.style.display = 'none';
+        chatInput.blur();
+        this._chatOpen = false;
+        // Re-request pointer lock so movement resumes immediately.
+        this.requestPointerLock();
+        if (text) App.sendMatchChat(text);
+      };
       window.addEventListener('keydown', e => {
         if (!this.running) return;
         if (document.activeElement === chatInput) {
-          if (e.code === 'Enter') {
-            e.preventDefault();
-            const text = chatInput.value.trim();
-            chatInput.value = '';
-            chatInput.style.display = 'none';
-            chatInput.blur();
-            // Return focus to the canvas so movement resumes.
-            this.requestPointerLock();
-            if (text) App.sendMatchChat(text);
-          } else if (e.code === 'Escape') {
-            e.preventDefault();
-            chatInput.value = '';
-            chatInput.style.display = 'none';
-            chatInput.blur();
-            this.requestPointerLock();
-          }
-          // Swallow all other keys so they don't trigger WASD.
+          if (e.code === 'Enter')   { e.preventDefault(); closeChat(true); }
+          else if (e.code === 'Escape') { e.preventDefault(); closeChat(false); }
           e.stopPropagation();
           return;
         }
         if (e.code === 'KeyT' && this.pointerLocked) {
           e.preventDefault();
+          // IMPORTANT: set _chatOpen BEFORE releasing pointer lock so the
+          // pointerlockchange handler doesn't show the pause overlay.
+          this._chatOpen = true;
           document.exitPointerLock?.();
           chatInput.style.display = '';
-          chatInput.focus();
+          // Focus on the next tick — browsers ignore .focus() during the
+          // exact frame pointer lock releases.
+          setTimeout(() => chatInput.focus(), 0);
         }
-      }, true); // capture so we run before the WASD handler
+      }, true);
     }
 
     window.addEventListener('mousemove', e => {
@@ -1592,7 +1595,9 @@ const GameEngine = {
         UIManager.hidePause();
       } else {
         this._keys = {}; // clear all keys to prevent sticky movement
-        if (this.running) UIManager.showPause();
+        // Don't show the pause overlay if we released pointer lock for chat
+        // (the chat input is meant to take focus instead).
+        if (this.running && !this._chatOpen) UIManager.showPause();
       }
     });
 
@@ -2008,6 +2013,10 @@ const GameEngine = {
     this.running    = false;
     if (this._rafId) cancelAnimationFrame(this._rafId);
     if (document.pointerLockElement) document.exitPointerLock();
+    this._chatOpen     = false;
+    // Stop any in-progress killcam so its RAF doesn't keep running into
+    // the next screen / next match.
+    try { if (typeof Killcam !== 'undefined') Killcam.stop(); } catch (_) {}
     this.pointerLocked  = false;
     this._keys          = {};
     this._oppVisible    = false;
@@ -2628,7 +2637,19 @@ const Killcam = {
 
   // data = { killerName, killerSocketId, events, weapon, headshot }
   play(data, coverBoxes, victimDeathPos) {
+    try {
+      this._playInner(data, coverBoxes, victimDeathPos);
+    } catch (e) {
+      // Killcam is decorative — failure here must never bubble up and
+      // disturb the live game/socket. Just shut it down cleanly.
+      console.error('[killcam] failed, falling back to plain death overlay', e);
+      try { this.stop(); } catch (_) {}
+    }
+  },
+
+  _playInner(data, coverBoxes, victimDeathPos) {
     if (!data || !data.events?.length) return;
+    if (!window.THREE) return;
     this._data = data;
 
     // Build movement keyframes — killer's POV. Fall back to bare position
@@ -2669,6 +2690,13 @@ const Killcam = {
       .map(e => ({ t: e.t - tFirst, type: e.type }));
 
     const renderFrame = () => {
+      try { return renderFrameInner(); }
+      catch (e) {
+        console.error('[killcam] render frame failed', e);
+        this.stop();
+      }
+    };
+    const renderFrameInner = () => {
       const elapsed = performance.now() - this._start;
       if (elapsed > duration + 400) { this.stop(); return; }
       const target = tFirst + Math.min(elapsed, duration);
@@ -2734,15 +2762,31 @@ const NetworkManager = {
   init() {
     // Connect to the dedicated /shooter namespace exposed by the platform server.
     // Session cookie auth is handled by the server's Socket.IO middleware.
-    this.socket = io('/shooter', { withCredentials: true, transports: ['websocket','polling'] });
+    this.socket = io('/shooter', {
+      withCredentials: true,
+      transports: ['websocket','polling'],
+      reconnection: true,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 800,
+      reconnectionDelayMax: 4000,
+    });
     const s = this.socket;
+    // Transient transport blips (e.g. Render free-tier idle, brief tab
+    // pause during the killcam WebGL setup) shouldn't pop a modal —
+    // Socket.IO retries automatically. Only the terminal failure should
+    // get a user-facing alert.
     s.on('connect_error', err => {
       if (err.message === 'not_authenticated') {
         location.href = '/login.html';
-      } else {
-        alert('Connection error: ' + err.message);
+        return;
       }
+      console.warn('[shooter] connect_error', err.message);
     });
+    s.io.on('reconnect_attempt', n => console.warn('[shooter] reconnect attempt', n));
+    s.io.on('reconnect_failed', () => {
+      alert('Connection lost — please refresh the page.');
+    });
+    s.io.on('reconnect', () => console.info('[shooter] socket reconnected'));
     s.on('match_error', d => { alert('Could not start match: ' + (d?.error || 'unknown')); });
 
     // Stash the initial lobby snapshot in case App.login() hasn't attached its handler yet
