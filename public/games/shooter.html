@@ -655,8 +655,9 @@ input:focus { border-color:var(--accent); }
     <div class="map-vote-section">
       <div class="label">VOTE MAP TYPE</div>
       <div class="map-vote-btns">
-        <button id="vote-sym"  onclick="App.voteMap('symmetrical')">⬛ Symmetrical</button>
-        <button id="vote-rand" onclick="App.voteMap('random')">🔀 Random</button>
+        <button id="vote-sym"   onclick="App.voteMap('symmetrical')">⬛ Symmetrical</button>
+        <button id="vote-rand"  onclick="App.voteMap('random')">🔀 Random</button>
+        <button id="vote-depot" onclick="App.voteMap('cs_depot')">🏭 Depot</button>
       </div>
       <div class="vote-result" id="vote-result">Waiting for votes...</div>
 
@@ -1358,13 +1359,14 @@ const Bot = {
 //  look without touching the loader code.
 // ══════════════════════════════════════════════════════════════
 const WEAPON_TUNING = {
-  // FBX meshes are typically authored in cm / scaled by 100x. These
-  // values are the "looks-like-the-old-box-gun" calibration. Tune as
-  // needed — values here only affect the imported model.
-  rifle:   { src: 'Gun-AK47', scale: 0.0040, pos: [0.20, -0.20, -0.48], rot: [0,  Math.PI, 0] },
-  pistol:  { src: 'Pistol',   scale: 0.0042, pos: [0.16, -0.18, -0.36], rot: [0,  Math.PI, 0] },
-  shotgun: { src: 'ShotGun',  scale: 0.0040, pos: [0.22, -0.22, -0.50], rot: [0,  Math.PI, 0] },
-  sniper:  { src: 'Sniper',   scale: 0.0040, pos: [0.20, -0.18, -0.56], rot: [0,  Math.PI, 0] },
+  // We don't hand-tune scale anymore — every mesh is auto-fit to the
+  // `targetLen` below (longest dimension in metres). `scaleMul` is a
+  // per-weapon nudge on top of that. `pos` / `rot` are the in-hand
+  // offset relative to the camera.
+  rifle:   { src: 'Gun-AK47', targetLen: 0.55, scaleMul: 1.0, pos: [0.20, -0.20, -0.48], rot: [0,  Math.PI, 0] },
+  pistol:  { src: 'Pistol',   targetLen: 0.30, scaleMul: 1.0, pos: [0.16, -0.18, -0.36], rot: [0,  Math.PI, 0] },
+  shotgun: { src: 'ShotGun',  targetLen: 0.60, scaleMul: 1.0, pos: [0.22, -0.22, -0.50], rot: [0,  Math.PI, 0] },
+  sniper:  { src: 'Sniper',   targetLen: 0.75, scaleMul: 1.0, pos: [0.20, -0.18, -0.56], rot: [0,  Math.PI, 0] },
 };
 
 const WeaponAssets = {
@@ -1448,25 +1450,65 @@ const WeaponAssets = {
     // remain as the safety net if the user reloads the page during the
     // network swap, or if we ever want to flip back.
     for (const child of group.children) child.visible = false;
-    const clone = this.master[key].clone(true);
-    clone.scale.setScalar(t.scale);
-    clone.position.set(t.pos[0], t.pos[1], t.pos[2]);
-    clone.rotation.set(t.rot[0], t.rot[1], t.rot[2]);
-    clone.traverse(o => {
+
+    // Clone the imported model fresh — reset its transforms so we own
+    // the entire framing. (The FBX source ships every weapon laid out
+    // spatially in one file, so the cloned mesh otherwise inherits a
+    // far-from-origin position that floats it offscreen.)
+    const inner = this.master[key].clone(true);
+    inner.position.set(0, 0, 0);
+    inner.rotation.set(0, 0, 0);
+    inner.scale.set(1, 1, 1);
+    inner.updateMatrixWorld(true);
+
+    // Compute the world AABB and shift the inner mesh so its center
+    // sits at the wrapper origin. This makes scale + rotation pivot on
+    // the visible centre of the gun instead of the FBX's arbitrary
+    // local origin.
+    const bbox  = new THREE.Box3().setFromObject(inner);
+    if (bbox.isEmpty()) {
+      console.warn('[weapons]', key, 'has empty bbox — skipping');
+      return;
+    }
+    const center = bbox.getCenter(new THREE.Vector3());
+    const size   = bbox.getSize(new THREE.Vector3());
+    inner.position.sub(center);
+
+    // Auto-fit to a target physical length so any future asset (or a
+    // weird scale axis) just works.
+    const maxDim    = Math.max(size.x, size.y, size.z, 1e-4);
+    const autoScale = (t.targetLen || 0.5) / maxDim;
+    const finalScale = autoScale * (t.scaleMul || 1);
+
+    const wrapper = new THREE.Group();
+    wrapper.add(inner);
+    wrapper.scale.setScalar(finalScale);
+    wrapper.position.set(t.pos[0], t.pos[1], t.pos[2]);
+    wrapper.rotation.set(t.rot[0], t.rot[1], t.rot[2]);
+
+    // Force draw-on-top + double-sided so the gun reads in front of
+    // walls and doesn't disappear due to inverted FBX winding.
+    wrapper.traverse(o => {
       if (o.material) {
         const mats = Array.isArray(o.material) ? o.material : [o.material];
         for (const m of mats) {
-          m.depthTest = false;
+          m.depthTest  = false;
           m.depthWrite = false;
-          // Lambert lighting reads fine for the low-poly look.
+          m.side       = THREE.DoubleSide;
           if (m.shininess !== undefined) m.shininess = 0;
         }
       }
       o.renderOrder = 999;
     });
-    group.add(clone);
-    group.userData.importedClone = clone;
+    group.add(wrapper);
+    group.userData.importedClone = wrapper;
     this.loadedKeys.add(key);
+
+    // Diagnostic so the dev console reports what scale ended up applied.
+    console.info('[weapons]', key, 'fitted',
+      { autoScale: +autoScale.toFixed(4),
+        finalScale: +finalScale.toFixed(4),
+        bbox: { w:+size.x.toFixed(2), h:+size.y.toFixed(2), d:+size.z.toFixed(2) } });
   },
 };
 
@@ -1875,7 +1917,10 @@ const GameEngine = {
   },
 
   // ── Arena building (cartoon voxel style) ──────────────────────────────
-  buildArena(coverBoxes) {
+  // arenaSize is the floor side-length in metres. Old maps still use 40
+  // by default. New maps (Depot = 70) just pass the bigger size and the
+  // floor + boundary walls scale up automatically.
+  buildArena(coverBoxes, arenaSize = 40, spawnPoints = null) {
     // Clear bullet holes from previous match
     for (const h of this._bulletHoles) {
       this.scene.remove(h);
@@ -1889,20 +1934,22 @@ const GameEngine = {
     this._staticBoxes  = [];
 
     const add = (mesh) => { this.scene.add(mesh); this._arenaObjects.push(mesh); };
+    const half = arenaSize / 2;
 
     // Bright cartoon grass floor (saturated green)
     const floorMat = new THREE.MeshLambertMaterial({ color: 0x6cc04b });
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), floorMat);
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(arenaSize, arenaSize), floorMat);
     floor.rotation.x = -Math.PI / 2;
     add(floor);
 
-    // Boundary walls — saturated tan/sand
+    // Boundary walls — saturated tan/sand. Sit half a metre past the
+    // floor edge so static-box collision keeps players inside.
     const wallMat = new THREE.MeshLambertMaterial({ color: 0xd2b884 });
     const walls = [
-      { pos: [0, 1.5, -20], size: [40, 3, 0.5] },
-      { pos: [0, 1.5,  20], size: [40, 3, 0.5] },
-      { pos: [-20, 1.5, 0], size: [0.5, 3, 40] },
-      { pos: [ 20, 1.5, 0], size: [0.5, 3, 40] },
+      { pos: [0, 1.5, -half], size: [arenaSize, 3, 0.5] },
+      { pos: [0, 1.5,  half], size: [arenaSize, 3, 0.5] },
+      { pos: [-half, 1.5, 0], size: [0.5, 3, arenaSize] },
+      { pos: [ half, 1.5, 0], size: [0.5, 3, arenaSize] },
     ];
     walls.forEach(({ pos, size }) => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(...size), wallMat);
@@ -1921,13 +1968,18 @@ const GameEngine = {
       this._addStaticBox([position.x, size.h / 2, position.z], [size.w, size.h, size.d]);
     });
 
-    // Spawn pads (square, not disc)
+    // Spawn pads — placed at the actual spawn coordinates when known so
+    // bigger maps (Depot at ±31z) show their pads in the right spot.
+    const pads = spawnPoints && spawnPoints.length >= 2
+      ? [{ p: spawnPoints[0], c: 0x4b9eff }, { p: spawnPoints[1], c: 0xe63946 }]
+      : [{ p: { x:0, y:0, z: 17 }, c: 0x4b9eff },
+         { p: { x:0, y:0, z:-17 }, c: 0xe63946 }];
     const padGeo = new THREE.BoxGeometry(1.2, 0.06, 1.2);
-    const d1 = new THREE.Mesh(padGeo, new THREE.MeshLambertMaterial({ color: 0x4b9eff }));
-    d1.position.set(0, 0.03, 17);
-    const d2 = new THREE.Mesh(padGeo, new THREE.MeshLambertMaterial({ color: 0xe63946 }));
-    d2.position.set(0, 0.03, -17);
-    add(d1); add(d2);
+    pads.forEach(({ p, c }) => {
+      const pad = new THREE.Mesh(padGeo, new THREE.MeshLambertMaterial({ color: c }));
+      pad.position.set(p.x, 0.03, p.z);
+      add(pad);
+    });
   },
 
   _addStaticBox(pos, size) {
@@ -2847,8 +2899,10 @@ const UIManager = {
   },
 
   updateVoteButtons(v) {
-    document.getElementById('vote-sym').className  = v === 'symmetrical' ? 'active-sym'  : '';
-    document.getElementById('vote-rand').className = v === 'random'       ? 'active-rand' : '';
+    document.getElementById('vote-sym').className   = v === 'symmetrical' ? 'active-sym'  : '';
+    document.getElementById('vote-rand').className  = v === 'random'      ? 'active-rand' : '';
+    const depot = document.getElementById('vote-depot');
+    if (depot) depot.className = v === 'cs_depot' ? 'active-sym' : '';
   },
 
   // 10-second pre-match countdown so players have time to vote on the map.
@@ -4970,7 +5024,7 @@ const App = {
     const ml = document.getElementById('hud-mode-label');
     if (ml) { ml.textContent = 'TRAINING'; ml.style.color = '#5fa85f'; }
 
-    GameEngine.buildArena(coverBoxes);
+    GameEngine.buildArena(coverBoxes, 40, [{ x:0, y:0, z:17 }, { x:0, y:0, z:-17 }]);
     GameEngine.start(spawnA);
 
     Bot.init(spawnB);
@@ -5092,8 +5146,9 @@ const App = {
     UIManager.hideRespawn();
     UIManager.showReloadIndicator(false);
 
-    GameEngine.buildArena(data.coverBoxes);
+    GameEngine.buildArena(data.coverBoxes, data.arenaSize || 40, data.spawnPoints);
     GameEngine._coverBoxes = data.coverBoxes; // cached for killcam scene
+    GameEngine._arenaSize  = data.arenaSize || 40;
     // Reset the in-game chat log per match.
     const log = document.getElementById('game-chat-log');
     if (log) log.innerHTML = '';

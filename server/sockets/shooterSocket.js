@@ -25,7 +25,8 @@ const {
   THROWABLE_CONFIG, THROWABLE_TYPES, MAX_THROW_DIRECTION_DEVIATION,
   lobbies, matches, players,
   rayHitDistance, playerBox, headBox, coverAabb, positionAtTime,
-  symmetricalMap, randomMap, resolveMapType, lobbySnapshot,
+  symmetricalMap, randomMap, csDepotMap, buildMapByType,
+  MAP_TYPES, resolveMapType, lobbySnapshot,
   startShooterMatch, finishShooterMatch, cancelShooterMatch,
   startTeamShooterMatch, finishTeamShooterMatch, cancelTeamShooterMatch,
 } = S;
@@ -864,9 +865,13 @@ async function startPrivateMatch(io, lobby) {
     }])),
   });
 
-  // Tell every player the match started.
+  // Tell every player the match started. Team matches still use the
+  // legacy 40x40 symmetrical arena for safety — adding Depot here can
+  // come later once we have time to balance spawns for 6+ players.
   const basePayload = {
-    matchId: match.id, mapType, coverBoxes,
+    matchId: match.id, mapType,
+    mapName: 'Symmetrical', arenaSize: 40,
+    coverBoxes,
     spawnPoints: match.spawnPoints,
     endTime: match.endTime,
     weaponMode: lobby.weaponMode,
@@ -898,9 +903,12 @@ async function startMatch(io, lobbyId) {
   const p2 = players.get(p2Id);
   if (!p1 || !p2) return;
 
-  const mapType = resolveMapType(lobby.mapVotes);
-  const coverBoxes = mapType === 'symmetrical' ? symmetricalMap() : randomMap();
-  const spawnPoints = [{ x:0, y:0, z:17 }, { x:0, y:0, z:-17 }];
+  const mapType   = resolveMapType(lobby.mapVotes);
+  const mapDef    = buildMapByType(mapType);
+  const coverBoxes  = mapDef.coverBoxes;
+  const spawnPoints = mapDef.spawnPoints;
+  const arenaSize   = mapDef.arenaSize;
+  const mapName     = mapDef.mapName;
   // Per-match settings voted on in the waiting room.
   const weaponMode = resolveWeaponMode(lobby.modeVotes);
   const killsToWin = resolveRounds(lobby.roundsVotes);
@@ -953,7 +961,7 @@ async function startMatch(io, lobbyId) {
     sessionId: dbResult.sessionId,
     lobbyId,
     playerIds: [p1Id, p2Id],
-    mapType, coverBoxes, spawnPoints,
+    mapType, mapName, arenaSize, coverBoxes, spawnPoints,
     startTime: now, endTime: now + MATCH_DURATION_MS,
     status: 'active',
     gameState: { [p1Id]: mkState(0), [p2Id]: mkState(1) },
@@ -993,7 +1001,8 @@ async function startMatch(io, lobbyId) {
   broadcastLobbies(io);
 
   const basePayload = {
-    matchId: match.id, mapType, coverBoxes, spawnPoints,
+    matchId: match.id, mapType, mapName, arenaSize,
+    coverBoxes, spawnPoints,
     endTime: match.endTime,
     weaponMode, killsToWin,
     players: {
@@ -1137,7 +1146,7 @@ function attach(io) {
     socket.on('vote_map', ({ mapType } = {}) => {
       const p = players.get(socket.id);
       if (!p?.currentLobby) return;
-      if (!['symmetrical','random'].includes(mapType)) return;
+      if (!MAP_TYPES.includes(mapType)) return;
       const lobby = lobbies.get(p.currentLobby);
       if (!lobby || lobby.status === 'in_progress') return;
       lobby.mapVotes[socket.id] = mapType;

@@ -164,11 +164,109 @@ function randomMap() {
   }
   return out;
 }
+
+// ── Depot — bigger CS-style tactical layout ────────────────────────────
+// 70x70 arena with a long lane (west), a short connector (east),
+// a warehouse interior (north/south), central yard cover, and dedicated
+// spawn cover for both teams.
+function csDepotMap() {
+  return [
+    // CENTRAL YARD COVER
+    { position:{x:0, y:0, z:0},  size:{w:6, h:3.0, d:3} },
+    { position:{x:-8, y:0, z:2}, size:{w:3, h:2.2, d:3} },
+    { position:{x:8, y:0, z:-2}, size:{w:3, h:2.2, d:3} },
+    { position:{x:-3.5, y:0, z:8},  size:{w:3, h:1.4, d:2} },
+    { position:{x:3.5, y:0, z:-8}, size:{w:3, h:1.4, d:2} },
+
+    // LONG LANE — left/west side
+    { position:{x:-22, y:0, z:0},   size:{w:2.2, h:3.0, d:28} },
+    { position:{x:-14, y:0, z:14},  size:{w:3, h:2.5, d:5} },
+    { position:{x:-14, y:0, z:-14}, size:{w:3, h:2.5, d:5} },
+    { position:{x:-27, y:0, z:12},  size:{w:3, h:1.6, d:3} },
+    { position:{x:-27, y:0, z:-12}, size:{w:3, h:1.6, d:3} },
+    { position:{x:-27, y:0, z:0},   size:{w:3, h:2.2, d:4} },
+
+    // SHORT / RIGHT ROUTE — east side
+    { position:{x:21, y:0, z:8},   size:{w:3, h:3.0, d:14} },
+    { position:{x:21, y:0, z:-8},  size:{w:3, h:3.0, d:14} },
+    { position:{x:29, y:0, z:16},  size:{w:4, h:2.0, d:4} },
+    { position:{x:29, y:0, z:-16}, size:{w:4, h:2.0, d:4} },
+    { position:{x:14, y:0, z:0},   size:{w:4, h:2.5, d:4} },
+
+    // WAREHOUSE WALLS — long horizontal blocks framing the interior route
+    { position:{x:-8, y:0, z:24},  size:{w:16, h:3.2, d:2} },
+    { position:{x:8, y:0, z:24},   size:{w:10, h:3.2, d:2} },
+    { position:{x:-8, y:0, z:-24}, size:{w:10, h:3.2, d:2} },
+    { position:{x:8, y:0, z:-24},  size:{w:16, h:3.2, d:2} },
+
+    // Interior crates / warehouse approach
+    { position:{x:-4, y:0, z:18},  size:{w:4, h:2.0, d:3} },
+    { position:{x:5,  y:0, z:18},  size:{w:3, h:1.5, d:3} },
+    { position:{x:-5, y:0, z:-18}, size:{w:3, h:1.5, d:3} },
+    { position:{x:4,  y:0, z:-18}, size:{w:4, h:2.0, d:3} },
+
+    // SPAWN COVER — both team sides
+    { position:{x:0, y:0, z:29},    size:{w:7, h:2.4, d:2.5} },
+    { position:{x:-10, y:0, z:30},  size:{w:4, h:2.2, d:3} },
+    { position:{x:10, y:0, z:30},   size:{w:4, h:2.2, d:3} },
+    { position:{x:0, y:0, z:-29},   size:{w:7, h:2.4, d:2.5} },
+    { position:{x:-10, y:0, z:-30}, size:{w:4, h:2.2, d:3} },
+    { position:{x:10, y:0, z:-30},  size:{w:4, h:2.2, d:3} },
+
+    // SITE-LIKE CORNERS / EXTRA PLAY AREAS
+    { position:{x:-30, y:0, z:25}, size:{w:5, h:2.5, d:5} },
+    { position:{x:-23, y:0, z:25}, size:{w:3, h:1.4, d:4} },
+    { position:{x:30, y:0, z:-25}, size:{w:5, h:2.5, d:5} },
+    { position:{x:23, y:0, z:-25}, size:{w:3, h:1.4, d:4} },
+
+    // EXTRA CONTAINER CLUTTER
+    { position:{x:-17, y:0, z:5},  size:{w:3, h:1.8, d:6} },
+    { position:{x:17, y:0, z:-5},  size:{w:3, h:1.8, d:6} },
+    { position:{x:-2, y:0, z:14},  size:{w:2, h:1.2, d:5} },
+    { position:{x:2, y:0, z:-14},  size:{w:2, h:1.2, d:5} },
+  ];
+}
+
+// Map of mapType → { mapType, mapName, arenaSize, coverBoxes, spawnPoints }.
+// Adding a new map only needs an entry here and a vote button on the
+// client. The match start path reads everything else dynamically.
+function buildMapByType(mapType) {
+  if (mapType === 'cs_depot') return {
+    mapType: 'cs_depot',
+    mapName: 'Depot',
+    arenaSize: 70,
+    coverBoxes: csDepotMap(),
+    spawnPoints: [ { x: 0, y: 0, z: 31 }, { x: 0, y: 0, z: -31 } ],
+  };
+  if (mapType === 'random') return {
+    mapType: 'random',
+    mapName: 'Random',
+    arenaSize: 40,
+    coverBoxes: randomMap(),
+    spawnPoints: [ { x: 0, y: 0, z: 17 }, { x: 0, y: 0, z: -17 } ],
+  };
+  return {
+    mapType: 'symmetrical',
+    mapName: 'Symmetrical',
+    arenaSize: 40,
+    coverBoxes: symmetricalMap(),
+    spawnPoints: [ { x: 0, y: 0, z: 17 }, { x: 0, y: 0, z: -17 } ],
+  };
+}
+
+// All valid map vote values. Keep in sync with vote_map socket handler
+// and the frontend voting buttons.
+const MAP_TYPES = ['symmetrical', 'random', 'cs_depot'];
+
 function resolveMapType(votes) {
-  const v = Object.values(votes).filter(Boolean);
-  if (v.length === 0)                    return Math.random() < 0.5 ? 'symmetrical' : 'random';
-  if (v.every(x => x === v[0]))          return v[0];
-  return Math.random() < 0.5 ? 'symmetrical' : 'random';
+  const v = Object.values(votes).filter(x => MAP_TYPES.includes(x));
+  if (v.length === 0) {
+    // Random pick across all known maps when nobody votes.
+    return MAP_TYPES[Math.floor(Math.random() * MAP_TYPES.length)];
+  }
+  if (v.every(x => x === v[0])) return v[0];
+  // Disagreement → random pick from the votes that WERE cast.
+  return v[Math.floor(Math.random() * v.length)];
 }
 
 // Allowed weapon modes for lobby vote.
@@ -480,7 +578,8 @@ module.exports = {
   lobbies, matches, players,
   // Helpers
   rayHitDistance, playerBox, headBox, coverAabb, positionAtTime,
-  symmetricalMap, randomMap, resolveMapType, lobbySnapshot,
+  symmetricalMap, randomMap, csDepotMap, buildMapByType,
+  MAP_TYPES, resolveMapType, lobbySnapshot,
   WEAPON_MODES, ROUND_OPTIONS, resolveWeaponMode, resolveRounds,
   TEAM_SIZES, privateLobbies, privateLobbiesByCode,
   THROWABLE_CONFIG, THROWABLE_TYPES, MAX_THROW_DIRECTION_DEVIATION,
