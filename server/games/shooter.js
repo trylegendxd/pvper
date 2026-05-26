@@ -59,13 +59,19 @@ const matches = new Map();   // matchId   → live match state
 const players = new Map();   // socketId  → { id, userId, username, currentLobby, currentMatch }
 // Private (host-created) lobbies — separate from the public arena lobbies
 // so they can't collide with bronze/silver/gold/diamond IDs.
+//
 //   privateId → {
-//     id, hostUserId, hostSocketId, teamSize (1|2|3|5), bet, weaponMode, killsToWin,
-//     members: [{ socketId, userId, username, team }],
-//     status: 'waiting' | 'in_progress',
+//     id, inviteCode, hostUserId, hostSocketId,
+//     teamSize (1|2|3|5), maxPlayers, mode ('duel'|'team'),
+//     bet, weaponMode, killsToWin,
+//     members: [{ socketId, userId, username, team, ready, connected }],
+//     invitedUserIds: Set<userId>,
+//     status: 'waiting' | 'ready' | 'starting' | 'in_progress' | 'disbanded',
 //     createdAt
 //   }
 const privateLobbies = new Map();
+// Invite-code lookup for short join codes (case-insensitive).
+const privateLobbiesByCode = new Map();
 
 LOBBY_DEFS.forEach(def => lobbies.set(def.id, {
   id: def.id, name: def.name, bet: def.bet,
@@ -428,7 +434,7 @@ module.exports = {
   rayHitDistance, playerBox, headBox, coverAabb, positionAtTime,
   symmetricalMap, randomMap, resolveMapType, lobbySnapshot,
   WEAPON_MODES, ROUND_OPTIONS, resolveWeaponMode, resolveRounds,
-  TEAM_SIZES, privateLobbies,
+  TEAM_SIZES, privateLobbies, privateLobbiesByCode,
   // Wallet-aware lifecycle
   startShooterMatch, finishShooterMatch, cancelShooterMatch, refundShooterMatch,
   startTeamShooterMatch, finishTeamShooterMatch, cancelTeamShooterMatch,

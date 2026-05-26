@@ -237,38 +237,277 @@ input:focus { border-color:var(--accent); }
 .lobby-card.tier-locked { opacity:.45;cursor:not-allowed;filter:grayscale(.5); }
 .lobby-card.tier-locked .card-name { color:var(--dim); }
 
-/* ── Private lobby panel ────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════
+ * Private lobby — Fortnite-style party UI
+ * ══════════════════════════════════════════════════════════════════ */
 .private-lobby-section {
-  width:100%; max-width:900px; margin: 14px auto 0;
-  background:rgba(0,0,0,.30); border:1px solid var(--border); border-radius:6px;
-  padding:14px 16px;
+  width:100%; max-width:1100px; margin: 18px auto 0;
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(75,158,255,.10) 0%, transparent 60%),
+    linear-gradient(180deg, #161a26 0%, #0d1118 100%);
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:10px;
+  padding:18px 22px 22px;
+  box-shadow: 0 12px 36px rgba(0,0,0,.5);
 }
-.private-lobby-section .pl-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
-.pl-body { display:flex; gap:18px; flex-wrap:wrap; align-items:flex-start; }
-.pl-avatar {
-  width:120px; height:160px; flex:0 0 120px;
-  background: radial-gradient(circle at 50% 40%, rgba(255,255,255,.08), transparent 70%);
-  border:1px dashed rgba(255,255,255,.12); border-radius:6px;
+.private-lobby-section .pl-header {
+  display:flex; justify-content:space-between; align-items:center;
+  margin-bottom:14px;
+  padding-bottom:10px;
+  border-bottom:1px solid rgba(255,255,255,.07);
+}
+.private-lobby-section .pl-header .label:first-child {
+  font-size:18px; letter-spacing:4px; color:#fff; font-weight:700;
+}
+
+/* ── Create form (no lobby yet) ─────────────────────────────────── */
+.pl-hero { display:flex; gap:30px; align-items:flex-start; flex-wrap:wrap; }
+.pl-character {
+  position:relative;
+  flex:0 0 220px;
+  height:300px;
+  border-radius:10px;
+  background:
+    radial-gradient(ellipse at 50% 40%, rgba(75,158,255,.20) 0%, transparent 65%),
+    linear-gradient(180deg, rgba(255,255,255,.03), rgba(0,0,0,.4));
+  border:1px solid rgba(75,158,255,.20);
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  overflow:hidden;
+}
+.pl-char-glow {
+  position:absolute; inset:auto 0 -30% 0; height:60%;
+  background:radial-gradient(ellipse at center top, rgba(75,158,255,.45), transparent 70%);
+  pointer-events:none;
+  animation: plPulse 2.4s ease infinite alternate;
+}
+@keyframes plPulse { from { opacity:.4 } to { opacity:.8 } }
+.pl-char-emoji {
+  font-size:140px; line-height:1;
+  filter: drop-shadow(0 12px 20px rgba(0,0,0,.6));
+  z-index:1;
+}
+.pl-char-name {
+  position:absolute; bottom:14px; left:0; right:0; text-align:center;
+  font-size:13px; letter-spacing:3px; color:#fff; font-weight:700;
+  text-shadow:0 0 6px rgba(0,0,0,.8);
+}
+.pl-create-form { flex:1; min-width:300px; }
+.pl-form-title  { font-size:22px; letter-spacing:4px; margin:0 0 4px; color:#fff; }
+.pl-form-sub    { color:var(--dim); font-size:12px; letter-spacing:1px; margin:0 0 16px; }
+.pl-form-row    { display:flex; align-items:center; gap:12px; margin-bottom:10px; flex-wrap:wrap; }
+.pl-form-row label { color:var(--dim); font-size:11px; letter-spacing:2px; min-width:74px; }
+.pl-form-actions { margin-top:18px; gap:10px; }
+.pl-input {
+  background:rgba(0,0,0,.45); border:1px solid rgba(255,255,255,.12);
+  color:#fff; padding:8px 12px; border-radius:4px; font-family:inherit; font-size:14px;
+  width:140px; outline:none;
+}
+.pl-input:focus { border-color: var(--accent); }
+.pl-pill-row { display:flex; gap:6px; flex-wrap:wrap; }
+.pl-pill {
+  background:rgba(0,0,0,.4); border:1px solid rgba(255,255,255,.10);
+  color:#cdd; padding:7px 14px; border-radius:20px;
+  font-family:inherit; font-size:11px; letter-spacing:1px; cursor:pointer;
+  transition: border-color .12s, color .12s, background .12s;
+}
+.pl-pill:hover { color:#fff; }
+.pl-pill.active {
+  border-color:var(--accent); color:var(--accent); background:rgba(75,158,255,.12);
+  box-shadow:0 0 0 1px rgba(75,158,255,.20);
+}
+.pl-btn {
+  background:linear-gradient(180deg, #2a2f3c, #1a1e28);
+  border:1px solid rgba(255,255,255,.10);
+  color:#fff; padding:10px 22px; border-radius:4px;
+  font-family:inherit; font-size:13px; letter-spacing:2px; font-weight:700;
+  cursor:pointer;
+  transition: transform .08s, background .12s, border-color .12s;
+}
+.pl-btn:hover { background:linear-gradient(180deg, #3a3f50, #1a1e28); }
+.pl-btn:active { transform: translateY(1px); }
+.pl-btn.disabled, .pl-btn[disabled] { opacity:.4; cursor:not-allowed; }
+.pl-btn-primary  { background:linear-gradient(180deg, #4b9eff, #2670d0); border-color:#4b9eff; color:#fff; }
+.pl-btn-primary:hover { background:linear-gradient(180deg, #6db5ff, #2670d0); }
+.pl-btn-huge { font-size:16px; padding:14px 38px; letter-spacing:4px; }
+.pl-btn-huge.ready    { background:linear-gradient(180deg, #3fd07f, #228a4f); border-color:#3fd07f; color:#fff; }
+.pl-btn-huge.unready  { background:linear-gradient(180deg, #888, #555); border-color:#888; color:#fff; }
+.pl-btn-leave    { background:linear-gradient(180deg, #5a2a30, #3a1a20); border-color:#7a3a40; color:#ff9aa0; }
+.pl-btn-leave:hover { background:linear-gradient(180deg, #7a3a40, #3a1a20); }
+.pl-btn-tiny     { padding:4px 10px; font-size:10px; letter-spacing:1px; }
+
+/* ── Active lobby room ──────────────────────────────────────────── */
+.pl-room { display:flex; flex-direction:column; gap:14px; }
+.pl-banner {
+  text-align:center; padding:10px 14px; border-radius:5px;
+  font-size:14px; letter-spacing:5px; font-weight:700;
+  border:1px solid rgba(255,255,255,.06);
+}
+.pl-banner-waiting  { background:rgba(255,206,74,.10); color:#ffce4a; border-color:rgba(255,206,74,.25); }
+.pl-banner-ready    { background:rgba(80,220,150,.12); color:#6df0a8; border-color:rgba(80,220,150,.30); box-shadow:0 0 12px rgba(80,220,150,.18); }
+.pl-banner-starting { background:rgba(75,158,255,.15); color:#9bc6ff; border-color:rgba(75,158,255,.35); animation: plBlink 1.2s linear infinite alternate; }
+@keyframes plBlink { from { opacity:.7 } to { opacity:1 } }
+
+.pl-settings {
+  display:flex; gap:14px; flex-wrap:wrap;
+  padding:10px 12px; background:rgba(0,0,0,.30); border-radius:5px;
+  border:1px solid rgba(255,255,255,.05);
+}
+.pl-setting { display:flex; flex-direction:column; gap:3px; min-width:90px; }
+.pl-setting label { color:var(--dim); font-size:10px; letter-spacing:2px; }
+.pl-setting-readonly { color:#fff; font-size:13px; font-weight:600; letter-spacing:1px; }
+.pl-select {
+  background:rgba(0,0,0,.4); border:1px solid rgba(255,255,255,.12);
+  color:#fff; padding:5px 8px; border-radius:3px; font-family:inherit; font-size:12px;
+}
+.pl-setting-bet { width:90px; padding:5px 8px; }
+
+.pl-teams {
+  display:grid; grid-template-columns: 1fr auto 1fr; gap:14px; align-items:stretch;
+}
+.pl-team {
+  background:rgba(0,0,0,.30);
+  border-radius:6px;
+  padding:10px;
+  border:1px solid rgba(255,255,255,.05);
+}
+.pl-team-a { border-left:3px solid #4a8cff; }
+.pl-team-b { border-right:3px solid #ff5a5a; }
+.pl-team-title {
+  font-size:11px; letter-spacing:3px; color:var(--dim);
+  margin-bottom:8px;
+}
+.pl-team-a .pl-team-title { color:#7faaff; }
+.pl-team-b .pl-team-title { color:#ff9b9b; text-align:right; }
+.pl-team-vs {
   display:flex; align-items:center; justify-content:center;
-  font-size:80px; color:#9bb4ff;
+  font-size:24px; font-weight:800; letter-spacing:4px; color:var(--dim);
+  text-shadow:0 0 14px rgba(255,255,255,.10);
 }
-.pl-controls { display:flex; flex-direction:column; gap:10px; flex:1; min-width:240px; }
-.pl-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-.pl-row label { color:var(--dim); font-size:11px; letter-spacing:1px; min-width:80px; }
-.pl-row button { background:rgba(0,0,0,.4); border:1px solid var(--border); color:#fff; padding:6px 12px; border-radius:3px; font-family:inherit; font-size:12px; cursor:pointer; }
-.pl-row button.active { border-color:var(--accent); color:var(--accent); background:rgba(75,158,255,.1); }
-.pl-row button:hover:not(.active) { background:rgba(255,255,255,.06); }
-.pl-row input { background:rgba(0,0,0,.4); border:1px solid var(--border); color:#fff; padding:6px 10px; border-radius:3px; font-family:inherit; font-size:13px; width:120px; }
-.pl-primary { background:var(--accent) !important; color:#000 !important; font-weight:700; padding:8px 18px !important; letter-spacing:2px; }
-.pl-slots { display:flex; gap:10px; flex-wrap:wrap; margin-top:6px; }
-.pl-slot { display:flex; flex-direction:column; align-items:center; gap:4px; min-width:100px; padding:10px; border:1px solid var(--border); border-radius:4px; background:rgba(0,0,0,.2); }
-.pl-slot .slot-team-a { color:#5b9bff; font-size:10px; letter-spacing:1px; }
-.pl-slot .slot-team-b { color:#ff6c6c; font-size:10px; letter-spacing:1px; }
-.pl-slot .slot-name { color:#fff; font-size:13px; }
-.pl-slot.empty { opacity:.45; border-style:dashed; }
-.pl-invite-list { max-height:160px; overflow-y:auto; display:flex; flex-direction:column; gap:4px; }
-.pl-invite-row { display:flex; justify-content:space-between; align-items:center; padding:5px 8px; background:rgba(0,0,0,.25); border-radius:3px; font-size:12px; }
-.pl-invite-row button { padding:3px 9px; font-size:11px; }
+.pl-slots-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap:10px; }
+.pl-slot {
+  position:relative;
+  background:rgba(0,0,0,.35);
+  border-radius:5px;
+  padding:12px 8px;
+  display:flex; flex-direction:column; align-items:center; gap:4px;
+  border:1px solid rgba(255,255,255,.06);
+  transition: border-color .12s, background .12s, transform .12s;
+}
+.pl-slot.pl-team-a { border-color:rgba(75,158,255,.20); }
+.pl-slot.pl-team-b { border-color:rgba(255,90,90,.20); }
+.pl-slot.is-ready  { border-color:#3fd07f; box-shadow:0 0 0 1px rgba(80,220,150,.30) inset; }
+.pl-slot.is-host   { background:rgba(255,206,74,.06); border-color:rgba(255,206,74,.35); }
+.pl-slot.is-me     { outline:1px solid rgba(255,255,255,.25); }
+.pl-slot.is-offline { opacity:.55; filter:grayscale(.4); }
+.pl-slot-avatar {
+  position:relative;
+  width:48px; height:48px; border-radius:50%;
+  background:linear-gradient(180deg, #4a5566, #2a3140);
+  display:flex; align-items:center; justify-content:center;
+  font-weight:700; font-size:22px; color:#fff;
+  text-shadow:0 2px 4px rgba(0,0,0,.6);
+}
+.pl-slot.pl-team-a .pl-slot-avatar { background:linear-gradient(180deg, #4a8cff, #2c5cb0); }
+.pl-slot.pl-team-b .pl-slot-avatar { background:linear-gradient(180deg, #ff5a5a, #b03434); }
+.pl-slot-empty .pl-slot-avatar { background:rgba(255,255,255,.04); border:1px dashed rgba(255,255,255,.18); color:rgba(255,255,255,.3); font-size:20px; }
+.pl-slot-crown {
+  position:absolute; top:-6px; right:-8px;
+  font-size:18px;
+  text-shadow:0 0 8px rgba(255,206,74,.55);
+  transform: rotate(8deg);
+}
+.pl-slot-check {
+  position:absolute; bottom:-2px; right:-2px;
+  width:18px; height:18px; border-radius:50%;
+  background:#3fd07f; color:#fff;
+  font-size:12px; font-weight:800;
+  display:flex; align-items:center; justify-content:center;
+  box-shadow:0 0 8px rgba(80,220,150,.55), 0 2px 4px rgba(0,0,0,.5);
+}
+.pl-slot-name { font-size:12px; color:#fff; font-weight:600; letter-spacing:1px; }
+.pl-slot-you  { color:var(--accent); font-weight:400; }
+.pl-slot-state { font-size:10px; letter-spacing:2px; color:var(--dim); }
+.pl-slot.is-ready .pl-slot-state  { color:#6df0a8; }
+.pl-slot.is-host  .pl-slot-state  { color:#ffce4a; }
+.pl-slot-empty .pl-slot-name      { color:var(--dim); }
+.pl-slot-actions {
+  position:absolute; top:4px; right:4px;
+  display:flex; gap:2px;
+  opacity:0; transition: opacity .12s;
+}
+.pl-slot:hover .pl-slot-actions { opacity:1; }
+.pl-slot-actions button {
+  background:rgba(0,0,0,.65); border:1px solid rgba(255,255,255,.20);
+  color:#fff; width:22px; height:22px; padding:0; border-radius:4px;
+  font-size:11px; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+}
+.pl-slot-actions button:hover { background:rgba(255,255,255,.10); }
+.pl-slot-kick:hover { background:#7a2030 !important; border-color:#e63946; color:#ff9aa0; }
+.pl-slot-xfer:hover { background:#6a4a10 !important; border-color:#ffce4a; }
+
+.pl-actions {
+  display:grid; grid-template-columns: 1fr auto 1fr; gap:18px; align-items:center;
+  padding:14px 4px 6px;
+}
+.pl-action-left  { justify-self:flex-start; }
+.pl-action-right { justify-self:flex-end; }
+.pl-code {
+  display:flex; align-items:center; gap:8px;
+  background:rgba(0,0,0,.35); padding:8px 12px;
+  border:1px solid rgba(255,255,255,.10);
+  border-radius:5px;
+}
+.pl-code-label { font-size:10px; letter-spacing:2px; color:var(--dim); }
+.pl-code-value {
+  font-family: monospace; font-size:16px; letter-spacing:3px; color:var(--accent);
+  text-shadow:0 0 6px rgba(75,158,255,.40);
+}
+.pl-start-reason { text-align:center; font-size:11px; color:#ffce4a; margin-top:4px; letter-spacing:1px; }
+
+.pl-friends {
+  background:rgba(0,0,0,.30); padding:12px 14px;
+  border-radius:5px; border:1px solid rgba(255,255,255,.05);
+}
+.pl-friends-title { font-size:11px; letter-spacing:3px; color:var(--dim); margin-bottom:8px; }
+.pl-friends-list  { display:flex; gap:6px; flex-wrap:wrap; }
+.pl-friend-row {
+  display:flex; align-items:center; gap:8px;
+  padding:5px 10px;
+  background:rgba(0,0,0,.30);
+  border:1px solid rgba(255,255,255,.06);
+  border-radius:18px;
+  font-size:12px;
+}
+.pl-friend-row.offline { opacity:.55; }
+.pl-friend-dot { width:8px; height:8px; border-radius:50%; background:#555; }
+.pl-friend-dot.on { background:#3fd07f; box-shadow:0 0 6px rgba(63,208,127,.6); }
+.pl-friend-invite {
+  background:rgba(75,158,255,.18); border:1px solid rgba(75,158,255,.40);
+  color:#9bc6ff; padding:2px 9px; border-radius:12px;
+  font-size:10px; letter-spacing:1px; cursor:pointer;
+}
+.pl-friend-invite:hover { background:rgba(75,158,255,.32); }
+.pl-friend-empty { color:var(--dim); font-size:12px; }
+
+.pl-toast {
+  position:fixed; bottom:20px; left:50%; transform:translateX(-50%) translateY(20px);
+  background:rgba(20,24,32,.95);
+  border:1px solid rgba(75,158,255,.35);
+  color:#fff; padding:10px 18px; border-radius:5px;
+  font-size:13px; letter-spacing:1px;
+  opacity:0; transition: opacity .2s ease, transform .2s ease;
+  z-index:9999;
+  box-shadow:0 8px 24px rgba(0,0,0,.6);
+}
+.pl-toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+
+@media (max-width: 820px) {
+  .pl-teams { grid-template-columns: 1fr; }
+  .pl-team-vs { display:none; }
+  .pl-actions { grid-template-columns: 1fr; gap:10px; }
+  .pl-action-left, .pl-action-right { justify-self:center; }
+}
 
 /* ── Incoming lobby invite toast ─────────────────────────────── */
 .lobby-invite-toast {
@@ -2724,148 +2963,364 @@ const UIManager = {
 //  PRIVATE LOBBY  — host-created lobbies with friend invites.
 // ══════════════════════════════════════════════════════════════
 const PrivateLobby = {
-  // null when not in a lobby; { id, hostUserId, teamSize, bet, weaponMode, killsToWin, status, members } otherwise
-  state: null,
-  // Local form state for the "create" view.
+  state: null,           // null = not in a lobby; otherwise the server snapshot
   formTeamSize: 1,
   formBet: 50,
   formMode: 'all',
   formRounds: 5,
-  // Chat namespace socket — used to deliver invites between players
-  // even when the dashboard isn't open.
   chatSocket: null,
   friends: [],
+  onlineFriends: new Set(),   // userIds online (from /chat presence)
 
   init() {
     this.chatSocket = io('/chat', { withCredentials: true, transports: ['websocket','polling'] });
+    this.chatSocket.on('connect', () => { /* presence_snapshot will follow */ });
+    this.chatSocket.on('presence_snapshot', d => { this.onlineFriends = new Set(d?.online || []); this.render(); });
+    this.chatSocket.on('presence_update',   d => {
+      if (!d) return;
+      if (d.online) this.onlineFriends.add(d.userId);
+      else          this.onlineFriends.delete(d.userId);
+      this.render();
+    });
     this.chatSocket.on('lobby_invite', d => this.onIncomingInvite(d));
-    // Pull friend list so we can render the invite UI.
+
     api('/api/friends').then(r => { this.friends = r.friends || []; this.render(); }).catch(() => {});
-    // Listen to shooter-namespace lobby events.
+
     const s = NetworkManager.socket;
     if (s) {
       s.on('private_lobby_update',    d => { this.state = d; this.render(); });
-      s.on('private_lobby_disbanded', () => { this.state = null; this.render(); });
+      s.on('private_lobby_disbanded', d => {
+        this.state = null;
+        this.render();
+        this.notify(`Lobby disbanded${d?.reason ? ` (${d.reason})` : ''}.`);
+      });
+      s.on('host_transferred', d => {
+        this.notify(`Host transferred to ${d?.newHostUsername || 'another player'}.`);
+      });
+      s.on('kicked_from_lobby', () => {
+        this.state = null; this.render();
+        this.notify('You were removed from the lobby.');
+      });
+      s.on('invite_declined', d => {
+        this.notify(`${d?.fromUsername || 'A friend'} declined your invite.`);
+      });
+      s.on('match_error', d => this.notify('Could not start match: ' + (d?.error || 'unknown')));
     }
+
     this.render();
   },
 
+  notify(msg) {
+    const t = document.createElement('div');
+    t.className = 'pl-toast';
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.classList.add('show'), 10);
+    setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 250); }, 4000);
+  },
+
+  // ── Rendering ────────────────────────────────────────────────────────
   render() {
     const root = document.getElementById('pl-body');
     if (!root) return;
-    if (!this.state) {
-      // Create view
-      const sizes = [1, 2, 3, 5];
-      const modes = ['all', 'rifle', 'pistol', 'shotgun', 'sniper'];
-      const rounds = [3, 5, 7];
-      root.innerHTML = `
-        <div class="pl-avatar">🧑‍🚀</div>
-        <div class="pl-controls">
-          <div class="pl-row"><label>SIZE</label>${sizes.map(n =>
-            `<button data-size="${n}" class="${this.formTeamSize === n ? 'active' : ''}">${n}v${n}</button>`
-          ).join('')}</div>
-          <div class="pl-row"><label>WEAPONS</label>${modes.map(m =>
-            `<button data-mode="${m}" class="${this.formMode === m ? 'active' : ''}">${m}</button>`
-          ).join('')}</div>
-          <div class="pl-row"><label>ROUNDS</label>${rounds.map(r =>
-            `<button data-rounds="${r}" class="${this.formRounds === r ? 'active' : ''}">First to ${r}</button>`
-          ).join('')}</div>
-          <div class="pl-row"><label>BET (cr)</label>
-            <input id="pl-bet" type="number" min="1" step="1" value="${this.formBet}">
+    if (!this.state) { this.renderCreate(root); return; }
+    this.renderLobby(root);
+  },
+
+  renderCreate(root) {
+    const sizes = [1, 2, 3, 5];
+    const modes = ['all', 'rifle', 'pistol', 'shotgun', 'sniper'];
+    const rounds = [3, 5, 7];
+    root.innerHTML = `
+      <div class="pl-hero">
+        <div class="pl-character">
+          <div class="pl-char-glow"></div>
+          <div class="pl-char-emoji">🧑‍🚀</div>
+          <div class="pl-char-name">${escapeHtml(App.myUsername || 'YOU')}</div>
+        </div>
+        <div class="pl-create-form">
+          <h2 class="pl-form-title">CREATE A PARTY</h2>
+          <p class="pl-form-sub">Invite friends · play together or against each other.</p>
+
+          <div class="pl-form-row">
+            <label>MODE</label>
+            <div class="pl-pill-row">
+              ${sizes.map(n => `<button data-size="${n}" class="pl-pill ${this.formTeamSize === n ? 'active' : ''}">
+                ${n === 1 ? 'DUEL · 1v1' : `${n}v${n}`}
+              </button>`).join('')}
+            </div>
           </div>
-          <div class="pl-row" style="margin-top:6px;">
-            <button class="pl-primary" id="pl-create">CREATE LOBBY</button>
+
+          <div class="pl-form-row">
+            <label>WEAPONS</label>
+            <div class="pl-pill-row">
+              ${modes.map(m => `<button data-mode="${m}" class="pl-pill ${this.formMode === m ? 'active' : ''}">${m.toUpperCase()}</button>`).join('')}
+            </div>
+          </div>
+
+          <div class="pl-form-row">
+            <label>FIRST TO</label>
+            <div class="pl-pill-row">
+              ${rounds.map(r => `<button data-rounds="${r}" class="pl-pill ${this.formRounds === r ? 'active' : ''}">${r} kills</button>`).join('')}
+            </div>
+          </div>
+
+          <div class="pl-form-row">
+            <label>BET (CR)</label>
+            <input id="pl-bet" class="pl-input" type="number" min="1" step="1" value="${this.formBet}">
+          </div>
+
+          <div class="pl-form-row pl-form-actions">
+            <button class="pl-btn pl-btn-primary" id="pl-create">CREATE PARTY</button>
+            <button class="pl-btn" id="pl-join-code">JOIN BY CODE</button>
           </div>
         </div>
-      `;
-      root.querySelectorAll('[data-size]').forEach(b => b.addEventListener('click', () => {
-        this.formTeamSize = Number(b.dataset.size); this.render();
-      }));
-      root.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => {
-        this.formMode = b.dataset.mode; this.render();
-      }));
-      root.querySelectorAll('[data-rounds]').forEach(b => b.addEventListener('click', () => {
-        this.formRounds = Number(b.dataset.rounds); this.render();
-      }));
-      root.querySelector('#pl-bet')?.addEventListener('input', e => {
-        this.formBet = Math.max(1, Math.floor(Number(e.target.value) || 1));
-      });
-      root.querySelector('#pl-create')?.addEventListener('click', () => this.create());
-      return;
+      </div>
+    `;
+    root.querySelectorAll('[data-size]').forEach(b => b.addEventListener('click', () => {
+      this.formTeamSize = Number(b.dataset.size); this.render();
+    }));
+    root.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => {
+      this.formMode = b.dataset.mode; this.render();
+    }));
+    root.querySelectorAll('[data-rounds]').forEach(b => b.addEventListener('click', () => {
+      this.formRounds = Number(b.dataset.rounds); this.render();
+    }));
+    root.querySelector('#pl-bet')?.addEventListener('input', e => {
+      this.formBet = Math.max(1, Math.floor(Number(e.target.value) || 1));
+    });
+    root.querySelector('#pl-create')?.addEventListener('click', () => this.create());
+    root.querySelector('#pl-join-code')?.addEventListener('click', () => this.promptJoinCode());
+  },
+
+  renderLobby(root) {
+    const L = this.state;
+    const isHost = L.hostUserId === App.userId;
+    const me = L.members.find(m => m.userId === App.userId);
+    const myReady = !!me?.ready;
+    const need = L.maxPlayers;
+    const teamA = L.members.filter(m => m.team === 'a');
+    const teamB = L.members.filter(m => m.team === 'b');
+
+    // Status banner
+    let banner, bannerCls;
+    if (L.status === 'starting' || L.status === 'in_progress') {
+      banner = 'STARTING MATCH…'; bannerCls = 'starting';
+    } else if (!L.derived.filled) {
+      banner = `WAITING FOR PLAYERS · ${L.members.length}/${need}`; bannerCls = 'waiting';
+    } else if (!L.derived.allReady) {
+      banner = 'WAITING FOR READY'; bannerCls = 'waiting';
+    } else if (!L.derived.balanced) {
+      banner = 'TEAMS UNBALANCED'; bannerCls = 'waiting';
+    } else {
+      banner = 'READY · HOST CAN START'; bannerCls = 'ready';
     }
 
-    // Waiting view
-    const ttl = this.state.teamSize * 2;
-    const filled = this.state.members.length;
-    const teamA = this.state.members.filter(m => m.team === 'a');
-    const teamB = this.state.members.filter(m => m.team === 'b');
+    // Slot helpers
     const padSlots = (arr, n, team) => {
       const out = arr.slice();
       while (out.length < n) out.push({ empty: true, team });
       return out;
     };
-    const renderSlot = (m) => m.empty
-      ? `<div class="pl-slot empty">
-           <span class="${m.team === 'a' ? 'slot-team-a' : 'slot-team-b'}">TEAM ${m.team.toUpperCase()}</span>
-           <span class="slot-name">— empty —</span>
-         </div>`
-      : `<div class="pl-slot">
-           <span class="${m.team === 'a' ? 'slot-team-a' : 'slot-team-b'}">TEAM ${m.team.toUpperCase()}</span>
-           <span class="slot-name">${escapeHtml(m.username)}</span>
-         </div>`;
-    const isHost = this.state.hostUserId === App.userId;
-    const canStart = isHost && filled === ttl;
+    const renderSlot = (m, team) => {
+      if (m.empty) {
+        return `<div class="pl-slot pl-slot-empty pl-team-${team}">
+          <div class="pl-slot-avatar">+</div>
+          <div class="pl-slot-name">EMPTY</div>
+          <div class="pl-slot-state">slot open</div>
+        </div>`;
+      }
+      const isMe   = m.userId === App.userId;
+      const offline = !m.connected;
+      const kickBtn = isHost && !m.isHost
+        ? `<button class="pl-slot-kick" data-kick="${m.userId}" title="Kick">×</button>` : '';
+      const xferBtn = isHost && !m.isHost
+        ? `<button class="pl-slot-xfer" data-xfer="${m.userId}" title="Make host">👑</button>` : '';
+      const moveBtn = (isHost || isMe)
+        ? `<button class="pl-slot-move" data-move="${m.userId}" data-target="${team === 'a' ? 'b' : 'a'}" title="Switch team">⇄</button>` : '';
+      return `<div class="pl-slot pl-slot-filled pl-team-${team} ${m.isHost ? 'is-host' : ''} ${m.ready ? 'is-ready' : ''} ${isMe ? 'is-me' : ''} ${offline ? 'is-offline' : ''}">
+        <div class="pl-slot-avatar">${escapeHtml(m.username.slice(0,1).toUpperCase())}
+          ${m.isHost ? '<span class="pl-slot-crown">👑</span>' : ''}
+          ${m.ready ? '<span class="pl-slot-check">✓</span>' : ''}
+        </div>
+        <div class="pl-slot-name">${escapeHtml(m.username)}${isMe ? ' <span class="pl-slot-you">(you)</span>' : ''}</div>
+        <div class="pl-slot-state">${m.isHost ? 'HOST' : (m.ready ? 'READY' : 'NOT READY')}${offline ? ' · offline' : ''}</div>
+        <div class="pl-slot-actions">
+          ${moveBtn}${xferBtn}${kickBtn}
+        </div>
+      </div>`;
+    };
 
-    // Friends not already in the lobby = invitable.
-    const inLobby = new Set(this.state.members.map(m => m.userId));
-    const inviteRows = this.friends.filter(f => !inLobby.has(f.userId)).map(f =>
-      `<div class="pl-invite-row">
-         <span>${escapeHtml(f.username)}</span>
-         <button data-invite="${f.userId}">INVITE</button>
-       </div>`
-    ).join('') || `<div class="pl-invite-row" style="opacity:.6;">Add friends in the dashboard to invite them.</div>`;
+    // Friends invite list (online first, then offline; only if host)
+    const inLobby = new Set(L.members.map(m => m.userId));
+    const friendsSorted = this.friends
+      .filter(f => !inLobby.has(f.userId))
+      .sort((a, b) => Number(this.onlineFriends.has(b.userId)) - Number(this.onlineFriends.has(a.userId)));
+    const friendList = friendsSorted.map(f => {
+      const on = this.onlineFriends.has(f.userId);
+      return `<div class="pl-friend-row ${on ? 'online' : 'offline'}">
+        <span class="pl-friend-dot ${on ? 'on' : 'off'}"></span>
+        <span class="pl-friend-name">${escapeHtml(f.username)}</span>
+        ${isHost ? `<button class="pl-friend-invite" data-invite="${f.userId}">INVITE</button>` : ''}
+      </div>`;
+    }).join('') || `<div class="pl-friend-empty">${isHost ? 'No friends yet — add some in the dashboard.' : '—'}</div>`;
+
+    // Start button — disabled w/ reason
+    let startDisabled = true, startLabel = 'START MATCH', startReason = '';
+    if (isHost) {
+      if (L.status === 'starting' || L.status === 'in_progress') { startLabel = 'STARTING…'; startReason = ''; }
+      else if (!L.derived.filled)     { startReason = `Need ${need - L.members.length} more`; }
+      else if (!L.derived.balanced)   { startReason = 'Teams unbalanced'; }
+      else if (!L.derived.allReady)   { startReason = 'Not all players ready'; }
+      else                            { startDisabled = false; }
+    }
 
     root.innerHTML = `
-      <div class="pl-avatar">🧑‍🚀</div>
-      <div class="pl-controls">
-        <div style="font-size:12px;color:var(--dim);letter-spacing:2px;">
-          ${this.state.teamSize}v${this.state.teamSize} · ${this.state.weaponMode.toUpperCase()} · FIRST TO ${this.state.killsToWin} · BET ${this.state.bet} cr · ${filled}/${ttl}
+      <div class="pl-room">
+        <!-- Status banner -->
+        <div class="pl-banner pl-banner-${bannerCls}">${banner}</div>
+
+        <!-- Settings strip -->
+        <div class="pl-settings">
+          ${this.settingsControlHTML(isHost, 'teamSize', `${L.teamSize === 1 ? 'DUEL · 1v1' : `${L.teamSize}v${L.teamSize}`}`,
+            [{ value:1, label:'1v1' },{ value:2, label:'2v2' },{ value:3, label:'3v3' },{ value:5, label:'5v5' }])}
+          ${this.settingsControlHTML(isHost, 'weaponMode', L.weaponMode.toUpperCase(),
+            [{ value:'all', label:'ALL' },{ value:'rifle', label:'RIFLE' },{ value:'pistol', label:'PISTOL' },{ value:'shotgun', label:'SHOTGUN' },{ value:'sniper', label:'SNIPER' }])}
+          ${this.settingsControlHTML(isHost, 'killsToWin', `FIRST TO ${L.killsToWin}`,
+            [{ value:3, label:'3' },{ value:5, label:'5' },{ value:7, label:'7' }])}
+          <div class="pl-setting">
+            <label>BET</label>
+            ${isHost
+              ? `<input class="pl-input pl-setting-bet" id="pl-bet-edit" type="number" min="1" step="1" value="${L.bet}">`
+              : `<span class="pl-setting-readonly">${L.bet} cr</span>`}
+          </div>
         </div>
-        <div class="pl-slots">
-          ${padSlots(teamA, this.state.teamSize, 'a').map(renderSlot).join('')}
-          ${padSlots(teamB, this.state.teamSize, 'b').map(renderSlot).join('')}
+
+        <!-- Team boards -->
+        <div class="pl-teams">
+          <div class="pl-team pl-team-a">
+            <div class="pl-team-title">TEAM A</div>
+            <div class="pl-slots-grid">
+              ${padSlots(teamA, L.teamSize, 'a').map(m => renderSlot(m, 'a')).join('')}
+            </div>
+          </div>
+          <div class="pl-team-vs">VS</div>
+          <div class="pl-team pl-team-b">
+            <div class="pl-team-title">TEAM B</div>
+            <div class="pl-slots-grid">
+              ${padSlots(teamB, L.teamSize, 'b').map(m => renderSlot(m, 'b')).join('')}
+            </div>
+          </div>
         </div>
-        ${isHost ? `
-          <div style="margin-top:4px;font-size:11px;color:var(--dim);letter-spacing:1px;">FRIENDS</div>
-          <div class="pl-invite-list">${inviteRows}</div>` : ''}
-        <div class="pl-row" style="margin-top:6px;">
-          ${isHost ? `<button class="pl-primary" id="pl-start" ${canStart ? '' : 'disabled'}>START MATCH</button>` : ''}
-          <button id="pl-leave">LEAVE LOBBY</button>
+
+        <!-- Action row -->
+        <div class="pl-actions">
+          <div class="pl-action-left">
+            <div class="pl-code">
+              <span class="pl-code-label">CODE</span>
+              <code class="pl-code-value">${escapeHtml(L.code || '------')}</code>
+              <button class="pl-btn pl-btn-tiny" id="pl-copy-code">COPY</button>
+            </div>
+          </div>
+          <div class="pl-action-center">
+            ${isHost
+              ? `<button class="pl-btn pl-btn-huge ${startDisabled ? 'disabled' : ''}" id="pl-start" ${startDisabled ? 'disabled' : ''}>${startLabel}</button>
+                 ${startReason ? `<div class="pl-start-reason">${escapeHtml(startReason)}</div>` : ''}`
+              : `<button class="pl-btn pl-btn-huge ${myReady ? 'unready' : 'ready'}" id="pl-toggle-ready">
+                   ${myReady ? 'UNREADY' : 'READY UP'}
+                 </button>`}
+          </div>
+          <div class="pl-action-right">
+            <button class="pl-btn pl-btn-leave" id="pl-leave">LEAVE LOBBY</button>
+          </div>
+        </div>
+
+        <!-- Friends panel -->
+        <div class="pl-friends">
+          <div class="pl-friends-title">FRIENDS ${isHost ? '· invite to lobby' : ''}</div>
+          <div class="pl-friends-list">${friendList}</div>
         </div>
       </div>
     `;
+
+    // Wire up events
+    root.querySelector('#pl-leave')?.addEventListener('click', () => this.leave());
+    root.querySelector('#pl-copy-code')?.addEventListener('click', (e) => {
+      navigator.clipboard?.writeText(L.code || '').then(() => {
+        e.target.textContent = 'COPIED ✓'; setTimeout(() => { e.target.textContent = 'COPY'; }, 1500);
+      }).catch(() => this.notify('Could not copy.'));
+    });
     if (isHost) {
+      root.querySelector('#pl-start')?.addEventListener('click', () => this.start());
+      root.querySelector('#pl-bet-edit')?.addEventListener('change', (e) => {
+        const v = Math.max(1, Math.floor(Number(e.target.value) || 1));
+        this.changeSettings({ bet: v });
+      });
+      root.querySelectorAll('[data-setting]').forEach(el => el.addEventListener('change', () => {
+        const key = el.dataset.setting;
+        const v = el.value;
+        this.changeSettings({ [key]: (key === 'weaponMode' ? v : Number(v)) });
+      }));
       root.querySelectorAll('[data-invite]').forEach(b => b.addEventListener('click', () => {
         const friendUserId = b.dataset.invite;
         b.disabled = true; b.textContent = '…';
         NetworkManager.socket.emit('invite_to_lobby', { friendUserId }, (res) => {
-          if (res?.error) { alert('Invite failed: ' + res.error); b.disabled = false; b.textContent = 'INVITE'; }
+          if (res?.error) { this.notify('Invite failed: ' + this.friendlyError(res.error)); b.disabled = false; b.textContent = 'INVITE'; }
           else            { b.textContent = 'SENT ✓'; }
         });
       }));
-      root.querySelector('#pl-start')?.addEventListener('click', () => {
-        NetworkManager.socket.emit('start_private_match', null, (res) => {
-          if (res?.error) alert('Start failed: ' + res.error);
+      root.querySelectorAll('[data-kick]').forEach(b => b.addEventListener('click', () => {
+        NetworkManager.socket.emit('kick_member', { userId: b.dataset.kick }, (res) => {
+          if (res?.error) this.notify('Kick failed: ' + res.error);
+        });
+      }));
+      root.querySelectorAll('[data-xfer]').forEach(b => b.addEventListener('click', () => {
+        if (!confirm('Transfer host to this player?')) return;
+        NetworkManager.socket.emit('transfer_host', { userId: b.dataset.xfer }, (res) => {
+          if (res?.error) this.notify('Transfer failed: ' + res.error);
+        });
+      }));
+    } else {
+      root.querySelector('#pl-toggle-ready')?.addEventListener('click', () => {
+        NetworkManager.socket.emit('set_ready', { ready: !myReady }, (res) => {
+          if (res?.error) this.notify('Could not ready: ' + res.error);
         });
       });
     }
-    root.querySelector('#pl-leave')?.addEventListener('click', () => {
-      NetworkManager.socket.emit('leave_private_lobby', null, () => {
-        this.state = null; this.render();
+    // Team-switch is available to everyone (host or self only).
+    root.querySelectorAll('[data-move]').forEach(b => b.addEventListener('click', () => {
+      const targetUid = b.dataset.move;
+      const target    = b.dataset.target;
+      // Only allow if it's me (anyone can switch themselves).
+      if (targetUid !== App.userId) {
+        this.notify('Only the player can switch their own team.');
+        return;
+      }
+      NetworkManager.socket.emit('switch_team', { team: target }, (res) => {
+        if (res?.error) this.notify('Switch failed: ' + res.error);
       });
-    });
+    }));
   },
 
+  // Settings select that's editable for the host, read-only otherwise.
+  settingsControlHTML(isHost, key, valueLabel, options) {
+    if (!isHost) {
+      return `<div class="pl-setting"><label>${this.labelFor(key)}</label><span class="pl-setting-readonly">${valueLabel}</span></div>`;
+    }
+    const opts = options.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
+    const current = this.state[key];
+    return `<div class="pl-setting"><label>${this.labelFor(key)}</label>
+      <select data-setting="${key}" class="pl-select">${opts}</select></div>`
+      .replace(`<option value="${current}">`, `<option value="${current}" selected>`);
+  },
+
+  labelFor(key) {
+    return ({
+      teamSize: 'MODE', weaponMode: 'WEAPONS', killsToWin: 'ROUNDS', bet: 'BET',
+    })[key] || key.toUpperCase();
+  },
+
+  // ── Actions ──────────────────────────────────────────────────────────
   create() {
     const bet = Math.max(1, Math.floor(Number(this.formBet) || 1));
     NetworkManager.socket.emit('create_private_lobby', {
@@ -2874,32 +3329,90 @@ const PrivateLobby = {
       weaponMode: this.formMode,
       killsToWin: this.formRounds,
     }, (res) => {
-      if (res?.error) { alert('Create failed: ' + res.error); return; }
-      this.state = res.lobby;
-      this.render();
+      if (res?.error) { this.notify('Create failed: ' + this.friendlyError(res.error)); return; }
+      this.state = res.lobby; this.render();
     });
   },
 
+  leave() {
+    NetworkManager.socket.emit('leave_private_lobby', null, () => {
+      this.state = null; this.render();
+    });
+  },
+
+  start() {
+    NetworkManager.socket.emit('start_private_match', null, (res) => {
+      if (res?.error) this.notify('Start failed: ' + this.friendlyError(res.error));
+    });
+  },
+
+  changeSettings(settings) {
+    NetworkManager.socket.emit('change_lobby_settings', settings, (res) => {
+      if (res?.error) this.notify('Setting change failed: ' + this.friendlyError(res.error));
+    });
+  },
+
+  promptJoinCode() {
+    const code = prompt('Enter lobby code:');
+    if (!code) return;
+    NetworkManager.socket.emit('join_by_code', { code: code.trim() }, (res) => {
+      if (res?.error) { this.notify('Join failed: ' + this.friendlyError(res.error)); return; }
+      this.state = res.lobby; this.render();
+    });
+  },
+
+  friendlyError(code) {
+    return ({
+      already_in_lobby:    'You are already in a lobby.',
+      busy:                'You are already in a match or public lobby.',
+      not_host:            'Only the host can do that.',
+      already_started:     'The match has already started.',
+      lobby_full:          'That lobby is already full.',
+      lobby_not_full:      'Need more players.',
+      no_lobby:            'Lobby not found.',
+      not_friends:         'You can only invite friends.',
+      bad_code:            'Invalid lobby code.',
+      bad_team:            'Invalid team.',
+      team_full:           'That team is already full.',
+      teams_unbalanced:    'Teams are not balanced yet.',
+      not_all_ready:       'Not every player is ready.',
+      member_broke:        'A player no longer has enough credits.',
+      member_disconnected: 'A player just disconnected.',
+      insufficient_balance:'Not enough credits.',
+      cant_invite_self:    'Cannot invite yourself.',
+      cant_kick_self:      'Cannot kick yourself.',
+      too_many_members:    'Cannot shrink lobby below current member count.',
+    })[code] || code;
+  },
+
+  // ── Incoming invite (toast) ──────────────────────────────────────────
   onIncomingInvite(d) {
     if (!d?.lobbyId) return;
     const toast = document.createElement('div');
     toast.className = 'lobby-invite-toast';
+    const sizeText = d.teamSize === 1 ? 'DUEL · 1v1' : `${d.teamSize}v${d.teamSize}`;
     toast.innerHTML = `
       <h4>LOBBY INVITE</h4>
-      <div class="msg"><b>${escapeHtml(d.fromUsername)}</b> invites you to a ${d.teamSize}v${d.teamSize} ${escapeHtml(d.weaponMode)} match (first to ${d.killsToWin}, ${d.bet} cr bet).</div>
-      <div class="row"><button class="decline">DECLINE</button><button class="accept">ACCEPT</button></div>
+      <div class="msg"><b>${escapeHtml(d.fromUsername)}</b> invites you to a ${sizeText} ${escapeHtml(d.weaponMode || 'all')} match.</div>
+      <div class="msg" style="font-size:11px;color:var(--dim);">First to ${d.killsToWin} · ${d.bet} cr bet</div>
+      <div class="row">
+        <button class="decline">DECLINE</button>
+        <button class="accept">ACCEPT</button>
+      </div>
     `;
     document.body.appendChild(toast);
     const close = () => toast.remove();
-    toast.querySelector('.decline').addEventListener('click', close);
+    toast.querySelector('.decline').addEventListener('click', () => {
+      NetworkManager.socket.emit('decline_invite', { lobbyId: d.lobbyId, fromUserId: d.fromUserId });
+      close();
+    });
     toast.querySelector('.accept').addEventListener('click', () => {
-      NetworkManager.socket.emit('accept_invite', { lobbyId: d.lobbyId }, (res) => {
+      NetworkManager.socket.emit('accept_invite', { lobbyId: d.lobbyId, code: d.code }, (res) => {
         close();
-        if (res?.error) alert('Join failed: ' + res.error);
-        else            this.state = res.lobby, this.render();
+        if (res?.error) this.notify('Join failed: ' + this.friendlyError(res.error));
+        else            { this.state = res.lobby; this.render(); }
       });
     });
-    // Auto-dismiss after 30s.
     setTimeout(close, 30000);
   },
 };

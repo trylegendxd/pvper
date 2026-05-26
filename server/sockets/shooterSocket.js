@@ -21,7 +21,7 @@ const {
   POSITION_HISTORY_MS, MOVEMENT_SNAPSHOT_INTERVAL_MS,
   MAX_SHOT_DIRECTION_DEVIATION,
   WEAPON_MODES, ROUND_OPTIONS, resolveWeaponMode, resolveRounds,
-  TEAM_SIZES, privateLobbies,
+  TEAM_SIZES, privateLobbies, privateLobbiesByCode,
   lobbies, matches, players,
   rayHitDistance, playerBox, headBox, coverAabb, positionAtTime,
   symmetricalMap, randomMap, resolveMapType, lobbySnapshot,
@@ -274,17 +274,54 @@ function endTeamMatch(io, match, winnerArg, reason) {
 }
 
 // ── Private lobby helpers ───────────────────────────────────────────────
+// Short, readable invite codes — 6 chars from an unambiguous alphabet
+// (no 0/O/1/I) so users can read & type them aloud.
+function generateInviteCode() {
+  const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  for (let attempt = 0; attempt < 50; attempt++) {
+    let code = '';
+    for (let i = 0; i < 6; i++) code += A[Math.floor(Math.random() * A.length)];
+    if (!privateLobbiesByCode.has(code)) return code;
+  }
+  // Astronomically unlikely fallback.
+  return 'P' + Date.now().toString(36).toUpperCase().slice(-5);
+}
+
+// Lobby is "ready" when every required slot is filled, teams are balanced,
+// AND every non-host member has flipped ready=true. Host can still start
+// without their own ready flag set (their click on START is the implicit ready).
+function lobbyReadiness(lobby) {
+  const need = lobby.teamSize * 2;
+  const filled = lobby.members.length === need;
+  const aCount = lobby.members.filter(m => m.team === 'a').length;
+  const bCount = lobby.members.filter(m => m.team === 'b').length;
+  const balanced = aCount === lobby.teamSize && bCount === lobby.teamSize;
+  const others = lobby.members.filter(m => m.userId !== lobby.hostUserId);
+  const allReady = others.length === 0 || others.every(m => m.ready);
+  return { filled, balanced, allReady, allOk: filled && balanced && allReady };
+}
+
 function snapshotPrivate(lobby) {
+  const { filled, balanced, allReady } = lobbyReadiness(lobby);
   return {
     id: lobby.id,
+    code: lobby.inviteCode,
     hostUserId: lobby.hostUserId,
     teamSize: lobby.teamSize,
+    maxPlayers: lobby.teamSize * 2,
+    mode: lobby.mode,
     bet: lobby.bet,
     weaponMode: lobby.weaponMode,
     killsToWin: lobby.killsToWin,
     status: lobby.status,
+    derived: { filled, balanced, allReady },
     members: lobby.members.map(m => ({
-      userId: m.userId, username: m.username, team: m.team,
+      userId: m.userId,
+      username: m.username,
+      team: m.team,
+      ready: !!m.ready,
+      isHost: m.userId === lobby.hostUserId,
+      connected: !!(m.socketId && players.has(m.socketId)),
     })),
   };
 }
@@ -293,26 +330,61 @@ function broadcastPrivateLobbyUpdate(io, lobby) {
   io.of('/shooter').to('priv:' + lobby.id).emit('private_lobby_update', snapshotPrivate(lobby));
 }
 
-function handleLeavePrivate(socket) {
+// Settings change → clear ready states for everyone except the host (the
+// host implicitly accepts whatever they just chose). Used whenever the
+// host changes bet / mode / size / kills / etc.
+function unreadyNonHost(lobby) {
+  for (const m of lobby.members) {
+    if (m.userId !== lobby.hostUserId) m.ready = false;
+  }
+}
+
+// Disband a private lobby and notify all members.
+function disbandPrivateLobby(io, lobby, reason) {
+  if (!lobby) return;
+  io.of('/shooter').to('priv:' + lobby.id).emit('private_lobby_disbanded', { reason });
+  for (const m of lobby.members) {
+    const p = m.socketId ? players.get(m.socketId) : null;
+    if (p) p.privateLobby = null;
+    const sock = io.of('/shooter').sockets.get(m.socketId);
+    sock?.leave('priv:' + lobby.id);
+  }
+  privateLobbies.delete(lobby.id);
+  if (lobby.inviteCode) privateLobbiesByCode.delete(lobby.inviteCode);
+}
+
+function handleLeavePrivate(socket, reason = 'left') {
   const me = players.get(socket.id);
   if (!me?.privateLobby) return;
   const lobby = privateLobbies.get(me.privateLobby);
   me.privateLobby = null;
   socket.leave('priv:' + (lobby?.id || ''));
   if (!lobby) return;
-  // If a player leaves while the lobby is waiting, just drop them.
-  if (lobby.status === 'waiting') {
-    lobby.members = lobby.members.filter(m => m.socketId !== socket.id);
-    if (!lobby.members.length || lobby.hostUserId === me.userId) {
-      // Host left OR lobby empty — disband.
-      privateLobbies.delete(lobby.id);
-      socket.server.of('/shooter').to('priv:' + lobby.id).emit('private_lobby_disbanded', { reason: 'host_left' });
-    } else {
-      broadcastPrivateLobbyUpdate(socket.server.of('/shooter').server, lobby);
-    }
+  // Only handle pre-match leaves here. In-match disconnects go through
+  // the existing match handleLeave forfeit path.
+  if (lobby.status !== 'waiting' && lobby.status !== 'ready') return;
+
+  const wasHost = lobby.hostUserId === me.userId;
+  lobby.members = lobby.members.filter(m => m.socketId !== socket.id);
+
+  if (!lobby.members.length) {
+    disbandPrivateLobby(socket.server, lobby, reason);
+    return;
   }
-  // If the match was already in progress, the match-end forfeit path
-  // will handle the rest via handleLeave.
+  if (wasHost) {
+    // Transfer host to the first remaining member.
+    const next = lobby.members[0];
+    lobby.hostUserId   = next.userId;
+    lobby.hostSocketId = next.socketId;
+    // Settings changed effectively (new host) — clear ready states.
+    unreadyNonHost(lobby);
+    socket.server.of('/shooter').to('priv:' + lobby.id).emit('host_transferred', {
+      newHostUserId: next.userId, newHostUsername: next.username,
+    });
+  }
+  // Lobby moves back to 'waiting' if it was already 'ready' but now needs players.
+  if (lobby.status === 'ready') lobby.status = 'waiting';
+  broadcastPrivateLobbyUpdate(socket.server, lobby);
 }
 
 // startPrivateMatch — boots a team-aware match from a filled private lobby.
@@ -338,7 +410,8 @@ async function startPrivateMatch(io, lobby) {
     console.error('[shooter] private match escrow failed', e);
     for (const m of allMembers) ns.to(m.socketId).emit('match_error', { error: e.message });
     privateLobbies.delete(lobby.id);
-    return;
+    if (lobby.inviteCode) privateLobbiesByCode.delete(lobby.inviteCode);
+    throw e;
   }
 
   // Build spawn points: pair them across the map, alternating sides.
@@ -431,6 +504,7 @@ async function startPrivateMatch(io, lobby) {
   }, MATCH_DURATION_MS);
 
   privateLobbies.delete(lobby.id);
+  if (lobby.inviteCode) privateLobbiesByCode.delete(lobby.inviteCode);
 }
 
 async function startMatch(io, lobbyId) {
@@ -680,29 +754,38 @@ function attach(io) {
         const me = players.get(socket.id);
         if (!me) return cb?.({ error: 'not_ready' });
         if (me.privateLobby) return cb?.({ error: 'already_in_lobby' });
+        if (me.currentLobby || me.currentMatch) return cb?.({ error: 'busy' });
         const ts = Number(teamSize);
         if (!TEAM_SIZES.includes(ts)) return cb?.({ error: 'bad_team_size' });
         const b  = Math.max(1, Math.floor(Number(bet) || 50));
         const wm = WEAPON_MODES.includes(weaponMode) ? weaponMode : 'all';
         const kw = ROUND_OPTIONS.includes(Number(killsToWin)) ? Number(killsToWin) : 5;
-        // Sanity: host must have the bet on hand to escrow later.
+        // Host must have the bet on hand to escrow later.
         const bal = await getBalance(me.userId);
         if (bal < b) return cb?.({ error: 'insufficient_balance' });
 
-        const lobbyId = 'p-' + Math.random().toString(36).slice(2, 10);
+        const lobbyId   = 'p-' + Math.random().toString(36).slice(2, 10);
+        const inviteCode = generateInviteCode();
         const lobby = {
           id: lobbyId,
+          inviteCode,
           hostUserId: me.userId,
           hostSocketId: socket.id,
           teamSize: ts,
+          mode: ts === 1 ? 'duel' : 'team',
           bet: b,
           weaponMode: wm,
           killsToWin: kw,
-          members: [{ socketId: socket.id, userId: me.userId, username: me.username, team: 'a' }],
+          members: [{
+            socketId: socket.id, userId: me.userId, username: me.username,
+            team: 'a', ready: true, // host is implicitly ready
+          }],
+          invitedUserIds: new Set(),
           status: 'waiting',
           createdAt: Date.now(),
         };
         privateLobbies.set(lobbyId, lobby);
+        privateLobbiesByCode.set(inviteCode, lobbyId);
         me.privateLobby = lobbyId;
         socket.join('priv:' + lobbyId);
         cb?.({ ok: true, lobby: snapshotPrivate(lobby) });
@@ -712,17 +795,19 @@ function attach(io) {
       }
     });
 
-    // Sends an invite to a friend via the /chat namespace.
+    // Send invite to a friend via the /chat namespace.
     socket.on('invite_to_lobby', async ({ friendUserId } = {}, cb) => {
       try {
         const me = players.get(socket.id);
         if (!me?.privateLobby) return cb?.({ error: 'not_in_lobby' });
         const lobby = privateLobbies.get(me.privateLobby);
-        if (!lobby || lobby.hostUserId !== me.userId) return cb?.({ error: 'not_host' });
-        if (lobby.status !== 'waiting') return cb?.({ error: 'already_started' });
+        if (!lobby) return cb?.({ error: 'no_lobby' });
+        if (lobby.hostUserId !== me.userId) return cb?.({ error: 'not_host' });
+        if (lobby.status !== 'waiting' && lobby.status !== 'ready') return cb?.({ error: 'already_started' });
         if (lobby.members.length >= lobby.teamSize * 2) return cb?.({ error: 'lobby_full' });
+        if (friendUserId === me.userId) return cb?.({ error: 'cant_invite_self' });
+        if (lobby.members.some(m => m.userId === friendUserId)) return cb?.({ error: 'already_in_lobby' });
 
-        // Verify friendship.
         const [a, b] = me.userId < friendUserId ? [me.userId, friendUserId] : [friendUserId, me.userId];
         const { rows } = await pool.query(
           `SELECT 1 FROM friendships WHERE user_a=$1 AND user_b=$2 AND status='accepted'`,
@@ -730,12 +815,14 @@ function attach(io) {
         );
         if (!rows.length) return cb?.({ error: 'not_friends' });
 
-        // Send via the /chat namespace's per-user room (u:<userId>).
+        lobby.invitedUserIds.add(friendUserId);
         io.of('/chat').to(`u:${friendUserId}`).emit('lobby_invite', {
           lobbyId: lobby.id,
+          code: lobby.inviteCode,
           fromUserId: me.userId,
           fromUsername: me.username,
           teamSize: lobby.teamSize,
+          mode: lobby.mode,
           bet: lobby.bet,
           weaponMode: lobby.weaponMode,
           killsToWin: lobby.killsToWin,
@@ -744,25 +831,36 @@ function attach(io) {
       } catch (e) { cb?.({ error: e.message || 'invite_failed' }); }
     });
 
-    socket.on('accept_invite', async ({ lobbyId } = {}, cb) => {
+    // Joined via the invite toast (lobbyId supplied) or by code.
+    socket.on('accept_invite', async ({ lobbyId, code } = {}, cb) => {
       try {
         const me = players.get(socket.id);
         if (!me) return cb?.({ error: 'not_ready' });
         if (me.privateLobby) return cb?.({ error: 'already_in_lobby' });
         if (me.currentLobby || me.currentMatch) return cb?.({ error: 'busy' });
-        const lobby = privateLobbies.get(lobbyId);
+
+        // Resolve the lobby — code wins if both supplied.
+        let lobby = null;
+        if (code) {
+          const id = privateLobbiesByCode.get(String(code).toUpperCase());
+          if (id) lobby = privateLobbies.get(id);
+        }
+        if (!lobby && lobbyId) lobby = privateLobbies.get(lobbyId);
         if (!lobby) return cb?.({ error: 'no_lobby' });
-        if (lobby.status !== 'waiting') return cb?.({ error: 'already_started' });
+        if (lobby.status !== 'waiting' && lobby.status !== 'ready') return cb?.({ error: 'already_started' });
         if (lobby.members.length >= lobby.teamSize * 2) return cb?.({ error: 'lobby_full' });
 
         const bal = await getBalance(me.userId);
         if (bal < lobby.bet) return cb?.({ error: 'insufficient_balance' });
 
-        // Auto-team: first half of joiners on team A, rest on team B.
         const teamA = lobby.members.filter(m => m.team === 'a').length;
         const teamB = lobby.members.filter(m => m.team === 'b').length;
-        const team = teamA <= teamB ? 'a' : 'b';
-        lobby.members.push({ socketId: socket.id, userId: me.userId, username: me.username, team });
+        const team  = teamA <= teamB ? 'a' : 'b';
+        lobby.members.push({
+          socketId: socket.id, userId: me.userId, username: me.username,
+          team, ready: false,
+        });
+        lobby.invitedUserIds.delete(me.userId);
         me.privateLobby = lobby.id;
         socket.join('priv:' + lobby.id);
         cb?.({ ok: true, lobby: snapshotPrivate(lobby) });
@@ -770,11 +868,200 @@ function attach(io) {
       } catch (e) { cb?.({ error: e.message || 'join_failed' }); }
     });
 
+    // Friend tapped Decline on the toast — let the host know if possible.
+    socket.on('decline_invite', ({ lobbyId, fromUserId } = {}) => {
+      try {
+        const me = players.get(socket.id);
+        if (!me) return;
+        const lobby = lobbyId ? privateLobbies.get(lobbyId) : null;
+        if (!lobby) return;
+        lobby.invitedUserIds.delete(me.userId);
+        // Tell every host-side socket in this lobby's room.
+        io.of('/shooter').to('priv:' + lobby.id).emit('invite_declined', {
+          fromUserId: me.userId, fromUsername: me.username,
+        });
+      } catch (_) {}
+    });
+
+    // Join by short code (typed in the lobby UI).
+    socket.on('join_by_code', async ({ code } = {}, cb) => {
+      try {
+        const me = players.get(socket.id);
+        if (!me) return cb?.({ error: 'not_ready' });
+        if (me.privateLobby) return cb?.({ error: 'already_in_lobby' });
+        if (me.currentLobby || me.currentMatch) return cb?.({ error: 'busy' });
+        const C = String(code || '').trim().toUpperCase();
+        if (!C) return cb?.({ error: 'bad_code' });
+        const id = privateLobbiesByCode.get(C);
+        if (!id) return cb?.({ error: 'no_lobby' });
+        // Reuse accept_invite logic by faking the call.
+        socket.emit;
+        return new Promise((resolve) => {
+          // Inline the accept logic so the code path is shared.
+          (async () => {
+            const lobby = privateLobbies.get(id);
+            if (!lobby) return cb?.({ error: 'no_lobby' });
+            if (lobby.status !== 'waiting' && lobby.status !== 'ready') return cb?.({ error: 'already_started' });
+            if (lobby.members.length >= lobby.teamSize * 2) return cb?.({ error: 'lobby_full' });
+            const bal = await getBalance(me.userId);
+            if (bal < lobby.bet) return cb?.({ error: 'insufficient_balance' });
+            const tA = lobby.members.filter(m => m.team === 'a').length;
+            const tB = lobby.members.filter(m => m.team === 'b').length;
+            const team = tA <= tB ? 'a' : 'b';
+            lobby.members.push({
+              socketId: socket.id, userId: me.userId, username: me.username,
+              team, ready: false,
+            });
+            me.privateLobby = lobby.id;
+            socket.join('priv:' + lobby.id);
+            cb?.({ ok: true, lobby: snapshotPrivate(lobby) });
+            broadcastPrivateLobbyUpdate(io, lobby);
+            resolve();
+          })().catch(e => cb?.({ error: e.message || 'join_failed' }));
+        });
+      } catch (e) { cb?.({ error: e.message || 'join_failed' }); }
+    });
+
     socket.on('leave_private_lobby', (_, cb) => {
-      handleLeavePrivate(socket);
+      handleLeavePrivate(socket, 'left');
       cb?.({ ok: true });
     });
 
+    // Ready / unready toggle (any member).
+    socket.on('set_ready', ({ ready } = {}, cb) => {
+      const me = players.get(socket.id);
+      if (!me?.privateLobby) return cb?.({ error: 'not_in_lobby' });
+      const lobby = privateLobbies.get(me.privateLobby);
+      if (!lobby) return cb?.({ error: 'no_lobby' });
+      if (lobby.status !== 'waiting' && lobby.status !== 'ready') return cb?.({ error: 'already_started' });
+      const mem = lobby.members.find(m => m.userId === me.userId);
+      if (!mem) return cb?.({ error: 'not_member' });
+      mem.ready = !!ready;
+      // Update derived status.
+      const { allOk } = lobbyReadiness(lobby);
+      lobby.status = allOk ? 'ready' : 'waiting';
+      cb?.({ ok: true });
+      broadcastPrivateLobbyUpdate(io, lobby);
+    });
+
+    // Switch teams (any non-host while waiting; host can also move themselves).
+    socket.on('switch_team', ({ team } = {}, cb) => {
+      const me = players.get(socket.id);
+      if (!me?.privateLobby) return cb?.({ error: 'not_in_lobby' });
+      const lobby = privateLobbies.get(me.privateLobby);
+      if (!lobby) return cb?.({ error: 'no_lobby' });
+      if (lobby.status !== 'waiting' && lobby.status !== 'ready') return cb?.({ error: 'already_started' });
+      if (team !== 'a' && team !== 'b') return cb?.({ error: 'bad_team' });
+      const mem = lobby.members.find(m => m.userId === me.userId);
+      if (!mem) return cb?.({ error: 'not_member' });
+      if (mem.team === team) return cb?.({ ok: true });
+      const sideCount = lobby.members.filter(m => m.team === team).length;
+      if (sideCount >= lobby.teamSize) return cb?.({ error: 'team_full' });
+      mem.team  = team;
+      mem.ready = false;
+      // Other side stays as-is. Settings change = unready everyone non-host
+      // on this team swap as well, since composition changed.
+      unreadyNonHost(lobby);
+      lobby.status = 'waiting';
+      cb?.({ ok: true });
+      broadcastPrivateLobbyUpdate(io, lobby);
+    });
+
+    // Host changes any lobby setting. Resets ready states for non-host.
+    socket.on('change_lobby_settings', async (settings = {}, cb) => {
+      try {
+        const me = players.get(socket.id);
+        if (!me?.privateLobby) return cb?.({ error: 'not_in_lobby' });
+        const lobby = privateLobbies.get(me.privateLobby);
+        if (!lobby) return cb?.({ error: 'no_lobby' });
+        if (lobby.hostUserId !== me.userId) return cb?.({ error: 'not_host' });
+        if (lobby.status !== 'waiting' && lobby.status !== 'ready') return cb?.({ error: 'already_started' });
+
+        let changed = false;
+        if (settings.teamSize != null) {
+          const ts = Number(settings.teamSize);
+          if (!TEAM_SIZES.includes(ts)) return cb?.({ error: 'bad_team_size' });
+          // Shrinking below current member count is not allowed.
+          if (lobby.members.length > ts * 2) return cb?.({ error: 'too_many_members' });
+          if (ts !== lobby.teamSize) {
+            lobby.teamSize = ts;
+            lobby.mode     = ts === 1 ? 'duel' : 'team';
+            changed = true;
+          }
+        }
+        if (settings.weaponMode != null) {
+          if (!WEAPON_MODES.includes(settings.weaponMode)) return cb?.({ error: 'bad_weapon_mode' });
+          if (settings.weaponMode !== lobby.weaponMode) {
+            lobby.weaponMode = settings.weaponMode; changed = true;
+          }
+        }
+        if (settings.killsToWin != null) {
+          const kw = Number(settings.killsToWin);
+          if (!ROUND_OPTIONS.includes(kw)) return cb?.({ error: 'bad_kills' });
+          if (kw !== lobby.killsToWin) { lobby.killsToWin = kw; changed = true; }
+        }
+        if (settings.bet != null) {
+          const b = Math.max(1, Math.floor(Number(settings.bet)));
+          if (!Number.isFinite(b) || b <= 0) return cb?.({ error: 'bad_bet' });
+          if (b !== lobby.bet) { lobby.bet = b; changed = true; }
+        }
+        if (changed) {
+          unreadyNonHost(lobby);
+          lobby.status = 'waiting';
+        }
+        cb?.({ ok: true });
+        broadcastPrivateLobbyUpdate(io, lobby);
+      } catch (e) { cb?.({ error: e.message || 'change_failed' }); }
+    });
+
+    // Host kicks a member.
+    socket.on('kick_member', ({ userId } = {}, cb) => {
+      const me = players.get(socket.id);
+      if (!me?.privateLobby) return cb?.({ error: 'not_in_lobby' });
+      const lobby = privateLobbies.get(me.privateLobby);
+      if (!lobby) return cb?.({ error: 'no_lobby' });
+      if (lobby.hostUserId !== me.userId) return cb?.({ error: 'not_host' });
+      if (lobby.status !== 'waiting' && lobby.status !== 'ready') return cb?.({ error: 'already_started' });
+      if (userId === me.userId) return cb?.({ error: 'cant_kick_self' });
+      const idx = lobby.members.findIndex(m => m.userId === userId);
+      if (idx < 0) return cb?.({ error: 'not_member' });
+      const kicked = lobby.members[idx];
+      lobby.members.splice(idx, 1);
+      const kp = players.get(kicked.socketId);
+      if (kp) kp.privateLobby = null;
+      const ksock = io.of('/shooter').sockets.get(kicked.socketId);
+      ksock?.leave('priv:' + lobby.id);
+      ksock?.emit('kicked_from_lobby', { reason: 'host_kicked' });
+      lobby.status = 'waiting';
+      cb?.({ ok: true });
+      broadcastPrivateLobbyUpdate(io, lobby);
+    });
+
+    // Host transfers leadership to another member.
+    socket.on('transfer_host', ({ userId } = {}, cb) => {
+      const me = players.get(socket.id);
+      if (!me?.privateLobby) return cb?.({ error: 'not_in_lobby' });
+      const lobby = privateLobbies.get(me.privateLobby);
+      if (!lobby) return cb?.({ error: 'no_lobby' });
+      if (lobby.hostUserId !== me.userId) return cb?.({ error: 'not_host' });
+      if (lobby.status !== 'waiting' && lobby.status !== 'ready') return cb?.({ error: 'already_started' });
+      const target = lobby.members.find(m => m.userId === userId);
+      if (!target || target.userId === me.userId) return cb?.({ error: 'bad_target' });
+      lobby.hostUserId = target.userId;
+      lobby.hostSocketId = target.socketId;
+      // New host is implicitly ready; clear ready for the OLD host.
+      const oldHost = lobby.members.find(m => m.userId === me.userId);
+      if (oldHost) oldHost.ready = false;
+      target.ready = true;
+      lobby.status = 'waiting';
+      cb?.({ ok: true });
+      io.of('/shooter').to('priv:' + lobby.id).emit('host_transferred', {
+        newHostUserId: target.userId, newHostUsername: target.username,
+      });
+      broadcastPrivateLobbyUpdate(io, lobby);
+    });
+
+    // Host fires Start. Final validation + balance recheck before escrow.
     socket.on('start_private_match', async (_, cb) => {
       try {
         const me = players.get(socket.id);
@@ -782,11 +1069,39 @@ function attach(io) {
         const lobby = privateLobbies.get(me.privateLobby);
         if (!lobby) return cb?.({ error: 'no_lobby' });
         if (lobby.hostUserId !== me.userId) return cb?.({ error: 'not_host' });
-        if (lobby.status !== 'waiting') return cb?.({ error: 'already_started' });
+        if (lobby.status !== 'waiting' && lobby.status !== 'ready') return cb?.({ error: 'already_started' });
         const need = lobby.teamSize * 2;
         if (lobby.members.length !== need) return cb?.({ error: 'lobby_not_full', need });
+
+        const { balanced, allReady } = lobbyReadiness(lobby);
+        if (!balanced) return cb?.({ error: 'teams_unbalanced' });
+        if (!allReady) return cb?.({ error: 'not_all_ready' });
+
+        // Verify every member is connected and has the bet on hand.
+        for (const m of lobby.members) {
+          if (!m.socketId || !players.has(m.socketId)) {
+            return cb?.({ error: 'member_disconnected', userId: m.userId, username: m.username });
+          }
+          const bal = await getBalance(m.userId);
+          if (bal < lobby.bet) {
+            return cb?.({ error: 'member_broke', userId: m.userId, username: m.username });
+          }
+        }
+
+        // All clear — mark starting and hand off to the existing engine.
+        lobby.status = 'starting';
+        broadcastPrivateLobbyUpdate(io, lobby);
         cb?.({ ok: true });
-        startPrivateMatch(io, lobby);
+        try {
+          await startPrivateMatch(io, lobby);
+        } catch (e) {
+          // Roll back the lobby state so the host can retry.
+          console.error('[shooter] startPrivateMatch failed', e);
+          lobby.status = 'waiting';
+          unreadyNonHost(lobby);
+          io.of('/shooter').to('priv:' + lobby.id).emit('match_error', { error: e.message || 'start_failed' });
+          broadcastPrivateLobbyUpdate(io, lobby);
+        }
       } catch (e) { cb?.({ error: e.message || 'start_failed' }); }
     });
 
