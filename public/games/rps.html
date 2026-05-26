@@ -3,43 +3,269 @@
 <head>
 <meta charset="UTF-8">
 <title>Rock Paper Scissors · FPS Arena</title>
-<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/css/styles.css">
 <style>
-  .rps-board { display:flex; flex-direction:column; gap:18px; }
-  .rps-stage { background: var(--bg2); border:1px solid var(--border); border-radius:5px; padding:24px; }
-  .player-row { display:flex; justify-content:space-between; align-items:center; padding:12px 0; }
-  .player-row .name { font-size:18px; color:#fff; letter-spacing:1px; }
-  .player-row .score { font-size:32px; color:var(--accent); font-weight:700; }
-  .choices { display:flex; gap:18px; justify-content:center; margin-top:24px; }
-  .choice-btn {
-    background: var(--bg3); border:2px solid var(--border); padding:24px;
-    border-radius:5px; cursor:pointer; font-size:48px; min-width: 110px; text-align:center;
-    transition: border-color .12s, transform .1s;
+  :root {
+    --rps-bg-a: #1a1532;
+    --rps-bg-b: #3a2147;
+    --rps-accent: #ffce4a;
+    --rps-good: #4cf09e;
+    --rps-bad:  #ff6f7a;
   }
-  .choice-btn:hover:not([disabled]) { border-color: var(--accent); transform: translateY(-2px); }
-  .choice-btn.selected { border-color: var(--accent); background: rgba(75,158,255,.12); }
-  .choice-btn[disabled] { opacity: .45; cursor: not-allowed; }
-  .status { text-align:center; color:var(--dim); font-size:14px; letter-spacing:1px; min-height:18px; margin-top:14px; }
-  .countdown { color:var(--gold); font-weight:700; }
-  .result-banner { font-size:36px; letter-spacing:5px; text-align:center; font-weight:700; padding:18px 0; }
-  .result-banner.win  { color: var(--green); }
-  .result-banner.lose { color: var(--red); }
-  .result-banner.draw { color: var(--dim); }
+
+  /* ── Stage ─────────────────────────────────────────────── */
+  .rps-stage {
+    position: relative;
+    background:
+      radial-gradient(ellipse at 50% 0%, rgba(255,206,74,.10) 0%, transparent 60%),
+      radial-gradient(ellipse at 50% 100%, rgba(108,43,255,.18) 0%, transparent 60%),
+      linear-gradient(180deg, var(--rps-bg-a) 0%, var(--rps-bg-b) 100%);
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 10px;
+    padding: 18px 18px 22px;
+    min-height: 540px;
+    overflow: hidden;
+    box-shadow: 0 12px 30px rgba(0,0,0,.5), inset 0 0 80px rgba(0,0,0,.35);
+  }
+  .rps-stage::before {
+    /* Subtle radial scanlines pattern for depth. */
+    content:''; position:absolute; inset:0; pointer-events:none;
+    background:
+      repeating-linear-gradient(0deg, rgba(255,255,255,.015) 0 2px, transparent 2px 4px);
+  }
+
+  /* ── Top bar: two player nameplates with score pips ─────── */
+  .rps-top {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 4px 6px 12px;
+    border-bottom: 1px dashed rgba(255,255,255,.12);
+    margin-bottom: 12px;
+    position: relative; z-index: 1;
+  }
+  .name-card { display: flex; flex-direction: column; gap: 4px; min-width: 0; max-width: 38%; }
+  .name-card.right { align-items: flex-end; text-align: right; }
+  .name-card .name {
+    font-size: 17px; letter-spacing: 2px; color: #fff; font-weight: 700;
+    text-shadow: 0 0 6px rgba(255,255,255,.15);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .name-card .pips { display: flex; gap: 6px; }
+  .pip {
+    width: 14px; height: 14px; border-radius: 50%;
+    background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.18);
+    transition: background .25s ease, box-shadow .25s ease, transform .25s cubic-bezier(.34,1.56,.64,1);
+  }
+  .pip.lit { background: var(--rps-accent); box-shadow: 0 0 10px var(--rps-accent); transform: scale(1.15); }
+
+  .vs-tag {
+    font-size: 30px; font-weight: 800; letter-spacing: 4px;
+    color: var(--rps-accent);
+    text-shadow: 0 0 14px rgba(255,206,74,.5);
+    padding: 0 16px;
+  }
+
+  /* ── Center arena: the two hands face off ───────────────── */
+  .arena {
+    position: relative;
+    display: flex; justify-content: center; align-items: center;
+    gap: 60px;
+    margin-top: 22px;
+    min-height: 240px;
+    z-index: 1;
+  }
+  .hand {
+    font-size: 130px;
+    line-height: 1;
+    user-select: none;
+    text-shadow: 0 8px 24px rgba(0,0,0,.6), 0 0 16px rgba(255,206,74,.18);
+    will-change: transform;
+    transform-origin: 50% 0%;
+  }
+  .hand.left  { transform: scaleX(-1); }
+  .hand.right { /* default */ }
+
+  /* Pump animation — wrist comes down 3 times, the 4th is the reveal. */
+  @keyframes pumpL {
+    0%   { transform: scaleX(-1) translateY(-30%) rotate(8deg); }
+    20%  { transform: scaleX(-1) translateY(10%)  rotate(-2deg); }
+    40%  { transform: scaleX(-1) translateY(-30%) rotate(8deg); }
+    60%  { transform: scaleX(-1) translateY(10%)  rotate(-2deg); }
+    80%  { transform: scaleX(-1) translateY(-30%) rotate(8deg); }
+    100% { transform: scaleX(-1) translateY(20%)  rotate(0deg);  }
+  }
+  @keyframes pumpR {
+    0%   { transform: translateY(-30%) rotate(-8deg); }
+    20%  { transform: translateY(10%)  rotate(2deg); }
+    40%  { transform: translateY(-30%) rotate(-8deg); }
+    60%  { transform: translateY(10%)  rotate(2deg); }
+    80%  { transform: translateY(-30%) rotate(-8deg); }
+    100% { transform: translateY(20%)  rotate(0deg); }
+  }
+  .hand.pumping.left  { animation: pumpL 1.6s cubic-bezier(.34,1.4,.64,1) forwards; }
+  .hand.pumping.right { animation: pumpR 1.6s cubic-bezier(.34,1.4,.64,1) forwards; }
+
+  /* Reveal-slam pulse on result. */
+  @keyframes slam {
+    0%   { transform: var(--base, none); }
+    35%  { transform: scale(.86); filter: brightness(1.6); }
+    65%  { transform: scale(1.15); }
+    100% { transform: scale(1);  filter: none; }
+  }
+  .hand.left.revealed,
+  .hand.right.revealed { animation: slam .55s ease forwards; }
+
+  .arena .winner-glow {
+    position: absolute; width: 240px; height: 240px;
+    border-radius: 50%;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .25s ease;
+  }
+  .arena .winner-glow.left  { left: calc(50% - 200px); background: radial-gradient(circle, var(--rps-good) 0%, transparent 60%); }
+  .arena .winner-glow.right { left: calc(50% + 0px);   background: radial-gradient(circle, var(--rps-good) 0%, transparent 60%); }
+  .arena .winner-glow.show  { opacity: .35; }
+  .arena .loser-fade { opacity: .35; filter: grayscale(.6); }
+
+  /* Big result word in the middle (between hands, behind/over them). */
+  .center-word {
+    position: absolute;
+    left: 0; right: 0; top: 50%;
+    transform: translateY(-50%);
+    text-align: center;
+    font-size: 48px; letter-spacing: 8px; font-weight: 800;
+    color: #fff;
+    text-shadow: 0 0 18px rgba(0,0,0,.6), 0 0 6px rgba(255,255,255,.2);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .15s ease, transform .25s ease;
+  }
+  .center-word.show { opacity: 1; }
+  .center-word.win  { color: var(--rps-good); text-shadow: 0 0 18px var(--rps-good); }
+  .center-word.lose { color: var(--rps-bad);  text-shadow: 0 0 18px var(--rps-bad); }
+  .center-word.tie  { color: #cdd; }
+
+  /* ── Bottom: timer, status, choice picker ─────────────── */
+  .round-line {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 12px; margin-top: 8px;
+    background: rgba(0,0,0,.25); border-radius: 4px;
+    font-size: 13px; letter-spacing: 2px; color: rgba(255,255,255,.75);
+    position: relative; z-index: 1;
+  }
+  .round-line .timer { color: var(--rps-accent); font-size: 22px; font-weight: 700; }
+  .round-line .timer.warn { color: var(--rps-bad); animation: blink .5s linear infinite alternate; }
+  @keyframes blink { from { opacity: 1; } to { opacity: .5; } }
+
+  .choice-row {
+    display: flex; justify-content: center; gap: 22px; margin-top: 22px;
+    position: relative; z-index: 1;
+  }
+  .choice-btn {
+    width: 120px; height: 120px; border-radius: 50%;
+    background: rgba(0,0,0,.35);
+    border: 3px solid rgba(255,255,255,.18);
+    font-size: 56px; cursor: pointer;
+    color: #fff;
+    box-shadow: 0 6px 0 rgba(0,0,0,.4);
+    transition: transform .12s, border-color .12s, background .12s;
+    user-select: none;
+    display: flex; align-items: center; justify-content: center;
+    font-family: inherit;
+  }
+  .choice-btn:hover:not([disabled]) {
+    transform: translateY(-4px); border-color: var(--rps-accent);
+    background: rgba(255,206,74,.08);
+  }
+  .choice-btn.selected {
+    border-color: var(--rps-accent);
+    background: rgba(255,206,74,.18);
+    box-shadow: 0 0 0 4px rgba(255,206,74,.25), 0 6px 0 rgba(0,0,0,.4);
+  }
+  .choice-btn[disabled] { opacity: .35; cursor: not-allowed; }
+
+  /* ── VS intro overlay ─────────────────────────────────── */
+  .vs-intro {
+    position: absolute; inset: 0;
+    background: rgba(0,0,0,.78);
+    display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 14px;
+    z-index: 5;
+    animation: introFade .45s ease;
+  }
+  .vs-intro .row {
+    display: flex; align-items: center; gap: 30px;
+    font-size: 22px; letter-spacing: 3px;
+  }
+  .vs-intro .you  { color: var(--rps-good); }
+  .vs-intro .opp  { color: var(--rps-bad); }
+  .vs-intro .vs   {
+    font-size: 56px; font-weight: 800; color: var(--rps-accent);
+    text-shadow: 0 0 22px rgba(255,206,74,.55);
+    animation: vsThrob .9s ease infinite alternate;
+  }
+  @keyframes vsThrob { from { transform: scale(1); } to { transform: scale(1.08); } }
+  @keyframes introFade { from { opacity: 0; } to { opacity: 1; } }
+
+  /* ── Find-match panel ─────────────────────────────────── */
+  .find-card {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 5px;
+    padding: 22px;
+  }
   .bet-row { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; }
   .bet-row label { font-size:11px;color:var(--dim);letter-spacing:1px; }
-  .bet-row input { background:var(--bg3); border:1px solid var(--border); color:var(--text); padding:9px 12px; border-radius:3px; font-family:var(--font); font-size:16px; width:140px; outline:none; }
+  .bet-row input {
+    background:var(--bg3); border:1px solid var(--border); color:var(--text);
+    padding:10px 14px; border-radius:3px; font-family:var(--font); font-size:16px;
+    width:160px; outline:none;
+  }
   .bet-row input:focus { border-color: var(--accent); }
+  .status-line { text-align:center; color:var(--dim); font-size:13px; letter-spacing:1px; min-height:18px; margin-top:14px; }
+  .countdown { color: var(--rps-accent); font-weight:700; }
+
+  /* ── End screen overlay ──────────────────────────────── */
+  .end-screen {
+    position: absolute; inset: 0;
+    background: rgba(0,0,0,.82);
+    display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 16px;
+    z-index: 6;
+    text-align: center;
+  }
+  .end-banner {
+    font-size: 56px; letter-spacing: 8px; font-weight: 800;
+    text-shadow: 0 0 22px currentColor;
+  }
+  .end-banner.win  { color: var(--rps-good); }
+  .end-banner.lose { color: var(--rps-bad);  animation: shake .35s ease 2; }
+  .end-banner.draw { color: #cdd; }
+  @keyframes shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-6px)} 75%{transform:translateX(6px)} }
+  .end-screen .end-actions { display: flex; gap: 10px; }
+  .end-screen .btn {
+    background: linear-gradient(180deg, #2a2a2a, #1a1a1a);
+    border: 1px solid #555; color: #fff;
+    padding: 10px 22px; border-radius: 4px;
+    font-family: inherit; font-size: 13px; letter-spacing: 3px;
+    cursor: pointer; text-decoration: none; display: inline-block;
+  }
+  .end-screen .btn.primary { background: linear-gradient(180deg, var(--rps-accent), #c89a30); color: #1a1a1a; border-color: var(--rps-accent); font-weight: 700; }
+
+  @media (max-width: 720px) {
+    .arena { gap: 18px; }
+    .hand { font-size: 80px; }
+    .choice-btn { width: 80px; height: 80px; font-size: 36px; }
+  }
 </style>
 </head>
 <body>
 <div class="topbar" id="topbar"></div>
 <div class="container">
   <h1 class="page">ROCK · PAPER · SCISSORS</h1>
-  <p class="subtitle">Best of 3, server-decided, real-time PvP.</p>
+  <p class="subtitle">Best of 3 · Real-time · Server-decided</p>
 
-  <div id="lobby-view" class="card">
-    <h3 style="font-size:14px;letter-spacing:2px;color:var(--dim);margin-bottom:14px;">FIND A MATCH</h3>
+  <!-- Find match panel -->
+  <div id="lobby-view" class="find-card">
+    <h3 style="font-size:13px;letter-spacing:2px;color:var(--dim);margin-bottom:14px;">FIND A MATCH</h3>
     <div class="bet-row">
       <div>
         <label>BET AMOUNT (cr)</label>
@@ -48,32 +274,64 @@
       <button class="btn purple" id="find-btn">FIND MATCH</button>
       <button class="btn secondary" id="cancel-btn" style="display:none">CANCEL</button>
     </div>
-    <p class="status" id="lobby-status"></p>
+    <p class="status-line" id="lobby-status"></p>
   </div>
 
-  <div id="match-view" class="rps-board" style="display:none">
-    <div class="rps-stage">
-      <div class="player-row">
+  <!-- Match arena -->
+  <div id="match-view" class="rps-stage" style="display:none;margin-top:18px;">
+    <!-- Top bar -->
+    <div class="rps-top">
+      <div class="name-card">
         <span class="name" id="you-name">YOU</span>
-        <span class="score" id="you-score">0</span>
+        <div class="pips" id="you-pips">
+          <span class="pip"></span><span class="pip"></span><span class="pip"></span>
+        </div>
       </div>
-      <hr style="border:none;border-top:1px solid var(--border)">
-      <div class="player-row">
+      <div class="vs-tag">VS</div>
+      <div class="name-card right">
         <span class="name" id="opp-name">OPPONENT</span>
-        <span class="score" id="opp-score">0</span>
-      </div>
-      <div class="status" id="round-status">Waiting for round…</div>
-      <div class="choices">
-        <button class="choice-btn" data-c="rock">✊</button>
-        <button class="choice-btn" data-c="paper">✋</button>
-        <button class="choice-btn" data-c="scissors">✌️</button>
+        <div class="pips" id="opp-pips">
+          <span class="pip"></span><span class="pip"></span><span class="pip"></span>
+        </div>
       </div>
     </div>
-    <div id="result" style="display:none" class="rps-stage">
-      <div class="result-banner" id="result-banner"></div>
-      <div style="text-align:center; margin-top:8px;">
-        <button class="btn" onclick="location.reload()">PLAY AGAIN</button>
-        <a class="btn secondary" href="/dashboard.html">BACK TO HUB</a>
+
+    <!-- Hand arena -->
+    <div class="arena" id="arena">
+      <div class="winner-glow left"  id="glow-left"></div>
+      <div class="winner-glow right" id="glow-right"></div>
+      <div class="hand left"  id="hand-you">✊</div>
+      <div class="center-word" id="center-word"></div>
+      <div class="hand right" id="hand-opp">✊</div>
+    </div>
+
+    <!-- Round info -->
+    <div class="round-line">
+      <span>ROUND <b id="round-num">1</b> / 3</span>
+      <span><span class="timer" id="round-timer">—</span></span>
+      <span id="round-status">Get ready…</span>
+    </div>
+
+    <!-- Choice buttons -->
+    <div class="choice-row">
+      <button class="choice-btn" data-c="rock"     title="Rock">✊</button>
+      <button class="choice-btn" data-c="paper"    title="Paper">✋</button>
+      <button class="choice-btn" data-c="scissors" title="Scissors">✌️</button>
+    </div>
+
+    <!-- VS intro overlay (shown briefly when match found) -->
+    <div class="vs-intro" id="vs-intro" style="display:none">
+      <div class="row"><span class="you" id="vs-you-name">YOU</span><span class="vs">VS</span><span class="opp" id="vs-opp-name">OPPONENT</span></div>
+      <div style="color:#cdd;letter-spacing:2px;font-size:13px;">Bet: <b id="vs-bet">— cr</b> · Best of 3</div>
+    </div>
+
+    <!-- End screen overlay -->
+    <div class="end-screen" id="end-screen" style="display:none">
+      <div class="end-banner" id="end-banner">VICTORY</div>
+      <div id="end-sub" style="color:#cdd;letter-spacing:2px;"></div>
+      <div class="end-actions">
+        <button class="btn primary" onclick="location.reload()">PLAY AGAIN</button>
+        <a class="btn" href="/dashboard.html">← HUB</a>
       </div>
     </div>
   </div>

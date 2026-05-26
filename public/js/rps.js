@@ -1,130 +1,253 @@
-// public/js/rps.js
+// public/js/rps.js — immersive RPS UI with hand-pump reveal animation
 (async () => {
   const user = await renderTopbar();
   if (!user) return;
 
   const $ = id => document.getElementById(id);
+  const HAND_EMOJI = { rock: '✊', paper: '✋', scissors: '✌️' };
+
   const lobbyView = $('lobby-view');
   const matchView = $('match-view');
 
   const socket = io('/rps', { withCredentials: true, transports: ['websocket','polling'] });
-  let myMatchId = null, mySide = null, myChoiceLocked = false;
 
-  socket.on('connect', () => {
-    $('lobby-status').textContent = 'Connected — ready to find a match.';
-  });
-  socket.on('connect_error', err => {
-    const msg = err.message === 'not_authenticated'
-      ? 'Session expired — please log in again.'
-      : 'Connection error: ' + err.message;
-    $('lobby-status').textContent = msg;
-    if (err.message === 'not_authenticated') {
-      setTimeout(() => location.href = '/login.html', 1500);
-    }
-  });
-  socket.on('rps_ready', () => {
-    $('lobby-status').textContent = 'Connected — ready to find a match.';
-  });
+  // ── State ────────────────────────────────────────────────────────
+  const S = {
+    matchId: null,
+    mySide:  null,   // 'a' | 'b'
+    myChoiceLocked: false,
+    bestOf: 3,
+    scores: { a: 0, b: 0 },
+    roundTimer: null,
+  };
 
-  $('find-btn').addEventListener('click', () => {
-    const bet = Math.floor(Number($('bet').value));
-    if (!bet || bet <= 0) { $('lobby-status').textContent = 'Enter a positive bet.'; return; }
-    $('find-btn').disabled = true;
-    $('lobby-status').textContent = 'Searching…';
-    socket.emit('find_match', { bet }, (resp) => {
-      if (resp.error) {
-        $('find-btn').disabled = false;
-        $('lobby-status').textContent = friendly(resp.error);
-        return;
-      }
-      $('cancel-btn').style.display = '';
-      $('lobby-status').textContent = resp.waiting ? 'Waiting for opponent…' : 'Match found!';
+  // ── Helpers ──────────────────────────────────────────────────────
+  function setStatus(t)      { $('lobby-status').textContent = t || ''; }
+  function setRoundStatus(t) { $('round-status').textContent = t || ''; }
+
+  function showVsIntro(youName, oppName, bet) {
+    $('vs-you-name').textContent = youName.toUpperCase();
+    $('vs-opp-name').textContent = oppName.toUpperCase();
+    $('vs-bet').textContent = bet + ' cr';
+    $('vs-intro').style.display = '';
+    setTimeout(() => { $('vs-intro').style.display = 'none'; }, 1600);
+  }
+
+  function setPips(side, score) {
+    const root = side === 'you' ? $('you-pips') : $('opp-pips');
+    root.querySelectorAll('.pip').forEach((p, i) => {
+      p.classList.toggle('lit', i < score);
     });
-  });
+  }
+  function refreshPipsForScores() {
+    const youScore = S.mySide === 'a' ? S.scores.a : S.scores.b;
+    const oppScore = S.mySide === 'a' ? S.scores.b : S.scores.a;
+    setPips('you', youScore);
+    setPips('opp', oppScore);
+  }
 
-  $('cancel-btn').addEventListener('click', () => {
-    socket.emit('cancel_find');
-    $('cancel-btn').style.display = 'none';
-    $('find-btn').disabled = false;
-    $('lobby-status').textContent = '';
+  function setHandsToFist() {
+    $('hand-you').textContent = '✊';
+    $('hand-opp').textContent = '✊';
+    ['hand-you','hand-opp'].forEach(id => {
+      const el = $(id);
+      el.classList.remove('revealed','pumping');
+      el.classList.remove('loser-fade');
+    });
+    $('center-word').classList.remove('show','win','lose','tie');
+    $('center-word').textContent = '';
+    $('glow-left').classList.remove('show');
+    $('glow-right').classList.remove('show');
+  }
+
+  function disableChoices(disabled) {
+    document.querySelectorAll('.choice-btn').forEach(b => {
+      b.disabled = !!disabled;
+      if (disabled) b.classList.remove('selected');
+    });
+  }
+
+  function pumpAndReveal(yourChoice, oppChoice, roundWinner) {
+    // Reset and start the pump
+    setHandsToFist();
+    const youEl = $('hand-you');
+    const oppEl = $('hand-opp');
+    youEl.classList.add('pumping');
+    oppEl.classList.add('pumping');
+
+    // Mid-pump: announce the chant.
+    setRoundStatus('ROCK!');
+    setTimeout(() => setRoundStatus('PAPER!'),   430);
+    setTimeout(() => setRoundStatus('SCISSORS!'), 860);
+
+    // At ~1.5s (after 3 pumps) flip emoji to the real choice and pulse.
+    setTimeout(() => {
+      youEl.textContent = HAND_EMOJI[yourChoice] || '✊';
+      oppEl.textContent = HAND_EMOJI[oppChoice]  || '✊';
+      youEl.classList.remove('pumping');
+      oppEl.classList.remove('pumping');
+      youEl.classList.add('revealed');
+      oppEl.classList.add('revealed');
+
+      // Result word + glow
+      const cw = $('center-word');
+      cw.classList.add('show');
+      if (!roundWinner) {
+        cw.classList.add('tie');
+        cw.textContent = 'TIE';
+        setRoundStatus(`Tie · ${yourChoice} vs ${oppChoice}`);
+      } else if (roundWinner === S.mySide) {
+        cw.classList.add('win');
+        cw.textContent = 'WIN';
+        $('glow-left').classList.add('show');
+        oppEl.classList.add('loser-fade');
+        setRoundStatus(`You win the round · ${yourChoice} beats ${oppChoice}`);
+      } else {
+        cw.classList.add('lose');
+        cw.textContent = 'LOSE';
+        $('glow-right').classList.add('show');
+        youEl.classList.add('loser-fade');
+        setRoundStatus(`You lose the round · ${oppChoice} beats ${yourChoice}`);
+      }
+    }, 1500);
+  }
+
+  // ── Socket events ────────────────────────────────────────────────
+  socket.on('connect',       () => setStatus('Connected — ready to find a match.'));
+  socket.on('rps_ready',     () => setStatus('Connected — ready to find a match.'));
+  socket.on('connect_error', err => {
+    if (err.message === 'not_authenticated') {
+      setStatus('Session expired — please log in again.');
+      setTimeout(() => location.href = '/login.html', 1200);
+      return;
+    }
+    setStatus('Connection error: ' + err.message);
   });
 
   socket.on('match_found', ({ matchId, you, players, bet }) => {
-    myMatchId = matchId; mySide = you;
+    S.matchId = matchId;
+    S.mySide = you;
+    S.scores = { a: 0, b: 0 };
+    S.myChoiceLocked = false;
+    const youName = you === 'a' ? players.a.username : players.b.username;
+    const oppName = you === 'a' ? players.b.username : players.a.username;
     lobbyView.style.display = 'none';
     matchView.style.display = '';
-    $('you-name').textContent = you === 'a' ? players.a.username : players.b.username;
-    $('opp-name').textContent = you === 'a' ? players.b.username : players.a.username;
-    $('you-score').textContent = '0';
-    $('opp-score').textContent = '0';
-    $('round-status').innerHTML = `Match started · bet <b>${bet} cr</b>`;
+    $('you-name').textContent = youName;
+    $('opp-name').textContent = oppName;
+    $('round-num').textContent = '1';
+    refreshPipsForScores();
+    setHandsToFist();
+    disableChoices(true);
+    setRoundStatus('Match starting…');
+    showVsIntro(youName, oppName, bet);
   });
 
   socket.on('round_start', ({ round, scores, timeoutMs }) => {
-    myChoiceLocked = false;
-    document.querySelectorAll('.choice-btn').forEach(b => { b.disabled = false; b.classList.remove('selected'); });
-    setScores(scores);
-    let s = Math.floor(timeoutMs / 1000);
-    $('round-status').innerHTML = `Round <b>${round}</b> — choose! <span class="countdown">${s}s</span>`;
-    clearInterval(window._tickTimer);
-    window._tickTimer = setInterval(() => {
-      s--; if (s < 0) return clearInterval(window._tickTimer);
-      $('round-status').innerHTML = `Round <b>${round}</b> — choose! <span class="countdown">${s}s</span>`;
+    S.scores = scores || S.scores;
+    S.myChoiceLocked = false;
+    refreshPipsForScores();
+    setHandsToFist();
+    disableChoices(false);
+    $('round-num').textContent = round;
+    let s = Math.ceil(timeoutMs / 1000);
+    const timerEl = $('round-timer');
+    timerEl.textContent = s + 's';
+    timerEl.classList.remove('warn');
+    setRoundStatus('Choose!');
+    clearInterval(S.roundTimer);
+    S.roundTimer = setInterval(() => {
+      s--;
+      if (s < 0) { clearInterval(S.roundTimer); timerEl.textContent = ''; return; }
+      timerEl.textContent = s + 's';
+      timerEl.classList.toggle('warn', s <= 3);
     }, 1000);
   });
 
   socket.on('opponent_chose', () => {
-    if (!myChoiceLocked) {
-      $('round-status').textContent = 'Opponent has chosen. Your turn!';
-    }
+    if (!S.myChoiceLocked) setRoundStatus('Opponent locked in — your turn!');
   });
 
   socket.on('your_choice_locked', ({ choice }) => {
-    $('round-status').textContent = `You chose ${choice}. Waiting for opponent…`;
+    setRoundStatus(`You chose ${choice} — waiting for opponent…`);
   });
 
   socket.on('round_result', ({ round, choices, roundWinner, scores }) => {
-    clearInterval(window._tickTimer);
-    setScores(scores);
-    const yourC = mySide === 'a' ? choices.a : choices.b;
-    const oppC  = mySide === 'a' ? choices.b : choices.a;
-    let txt;
-    if (!roundWinner)                      txt = `Tie! You: ${yourC} · Opp: ${oppC}`;
-    else if (roundWinner === mySide)       txt = `You win the round! ${yourC} beats ${oppC}`;
-    else                                   txt = `You lose the round. ${oppC} beats ${yourC}`;
-    $('round-status').textContent = txt;
+    clearInterval(S.roundTimer);
+    $('round-timer').textContent = '';
+    $('round-timer').classList.remove('warn');
+    S.scores = scores || S.scores;
+    const yourC = S.mySide === 'a' ? choices.a : choices.b;
+    const oppC  = S.mySide === 'a' ? choices.b : choices.a;
+    pumpAndReveal(yourC, oppC, roundWinner);
+    // Update pips after the reveal animation so they "count up" with the win.
+    setTimeout(refreshPipsForScores, 1700);
   });
 
   socket.on('match_end', ({ result, scores, newBalance, reason }) => {
-    setScores(scores || { a:0, b:0 });
-    const banner = $('result-banner');
-    if (result === 'win') { banner.textContent = 'VICTORY'; banner.className = 'result-banner win'; }
-    else if (result === 'lose') { banner.textContent = 'DEFEAT'; banner.className = 'result-banner lose'; }
-    else if (result === 'cancelled') { banner.textContent = 'CANCELLED'; banner.className = 'result-banner draw'; }
-    else { banner.textContent = 'DRAW'; banner.className = 'result-banner draw'; }
-    $('result').style.display = '';
-    document.querySelectorAll('.choice-btn').forEach(b => b.disabled = true);
+    clearInterval(S.roundTimer);
+    if (scores) S.scores = scores;
+    refreshPipsForScores();
+    const banner = $('end-banner');
+    const sub    = $('end-sub');
+    if (result === 'win') {
+      banner.textContent = 'VICTORY';
+      banner.className = 'end-banner win';
+      sub.textContent = newBalance != null ? `Balance: ${newBalance} cr` : '';
+    } else if (result === 'lose') {
+      banner.textContent = 'DEFEAT';
+      banner.className = 'end-banner lose';
+      sub.textContent = newBalance != null ? `Balance: ${newBalance} cr` : '';
+    } else if (result === 'cancelled') {
+      banner.textContent = 'CANCELLED';
+      banner.className = 'end-banner draw';
+      sub.textContent = reason ? `Reason: ${reason}` : '';
+    } else {
+      banner.textContent = 'DRAW';
+      banner.className = 'end-banner draw';
+      sub.textContent = '';
+    }
+    $('end-screen').style.display = '';
+    disableChoices(true);
     if (typeof newBalance === 'number') {
       const bal = document.querySelector('.topbar .balance');
       if (bal) bal.textContent = fmtCredits(newBalance);
     }
-    if (reason) $('round-status').textContent = 'Reason: ' + reason;
+  });
+
+  // ── User actions ─────────────────────────────────────────────────
+  $('find-btn').addEventListener('click', () => {
+    const bet = Math.floor(Number($('bet').value));
+    if (!bet || bet <= 0) { setStatus('Enter a positive bet.'); return; }
+    $('find-btn').disabled = true;
+    setStatus('Searching…');
+    socket.emit('find_match', { bet }, (resp) => {
+      if (resp?.error) {
+        $('find-btn').disabled = false;
+        setStatus(friendly(resp.error));
+        return;
+      }
+      $('cancel-btn').style.display = '';
+      setStatus(resp?.waiting ? 'Waiting for opponent…' : 'Match found!');
+    });
+  });
+  $('cancel-btn').addEventListener('click', () => {
+    socket.emit('cancel_find');
+    $('cancel-btn').style.display = 'none';
+    $('find-btn').disabled = false;
+    setStatus('');
   });
 
   document.querySelectorAll('.choice-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (myChoiceLocked) return;
-      myChoiceLocked = true;
-      document.querySelectorAll('.choice-btn').forEach(b => b.disabled = true);
+      if (S.myChoiceLocked) return;
+      const c = btn.dataset.c;
+      S.myChoiceLocked = true;
       btn.classList.add('selected');
-      socket.emit('choose', { matchId: myMatchId, choice: btn.dataset.c });
+      disableChoices(true);
+      socket.emit('choose', { matchId: S.matchId, choice: c });
     });
   });
-
-  function setScores(s) {
-    if (mySide === 'a') { $('you-score').textContent = s.a; $('opp-score').textContent = s.b; }
-    else                { $('you-score').textContent = s.b; $('opp-score').textContent = s.a; }
-  }
 
   function friendly(code) {
     return ({
