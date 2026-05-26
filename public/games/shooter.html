@@ -237,6 +237,54 @@ input:focus { border-color:var(--accent); }
 .lobby-card.tier-locked { opacity:.45;cursor:not-allowed;filter:grayscale(.5); }
 .lobby-card.tier-locked .card-name { color:var(--dim); }
 
+/* ── Private lobby panel ────────────────────────────────────────── */
+.private-lobby-section {
+  width:100%; max-width:900px; margin: 14px auto 0;
+  background:rgba(0,0,0,.30); border:1px solid var(--border); border-radius:6px;
+  padding:14px 16px;
+}
+.private-lobby-section .pl-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+.pl-body { display:flex; gap:18px; flex-wrap:wrap; align-items:flex-start; }
+.pl-avatar {
+  width:120px; height:160px; flex:0 0 120px;
+  background: radial-gradient(circle at 50% 40%, rgba(255,255,255,.08), transparent 70%);
+  border:1px dashed rgba(255,255,255,.12); border-radius:6px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:80px; color:#9bb4ff;
+}
+.pl-controls { display:flex; flex-direction:column; gap:10px; flex:1; min-width:240px; }
+.pl-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.pl-row label { color:var(--dim); font-size:11px; letter-spacing:1px; min-width:80px; }
+.pl-row button { background:rgba(0,0,0,.4); border:1px solid var(--border); color:#fff; padding:6px 12px; border-radius:3px; font-family:inherit; font-size:12px; cursor:pointer; }
+.pl-row button.active { border-color:var(--accent); color:var(--accent); background:rgba(75,158,255,.1); }
+.pl-row button:hover:not(.active) { background:rgba(255,255,255,.06); }
+.pl-row input { background:rgba(0,0,0,.4); border:1px solid var(--border); color:#fff; padding:6px 10px; border-radius:3px; font-family:inherit; font-size:13px; width:120px; }
+.pl-primary { background:var(--accent) !important; color:#000 !important; font-weight:700; padding:8px 18px !important; letter-spacing:2px; }
+.pl-slots { display:flex; gap:10px; flex-wrap:wrap; margin-top:6px; }
+.pl-slot { display:flex; flex-direction:column; align-items:center; gap:4px; min-width:100px; padding:10px; border:1px solid var(--border); border-radius:4px; background:rgba(0,0,0,.2); }
+.pl-slot .slot-team-a { color:#5b9bff; font-size:10px; letter-spacing:1px; }
+.pl-slot .slot-team-b { color:#ff6c6c; font-size:10px; letter-spacing:1px; }
+.pl-slot .slot-name { color:#fff; font-size:13px; }
+.pl-slot.empty { opacity:.45; border-style:dashed; }
+.pl-invite-list { max-height:160px; overflow-y:auto; display:flex; flex-direction:column; gap:4px; }
+.pl-invite-row { display:flex; justify-content:space-between; align-items:center; padding:5px 8px; background:rgba(0,0,0,.25); border-radius:3px; font-size:12px; }
+.pl-invite-row button { padding:3px 9px; font-size:11px; }
+
+/* ── Incoming lobby invite toast ─────────────────────────────── */
+.lobby-invite-toast {
+  position:fixed; bottom:24px; right:24px; z-index:9999;
+  background:rgba(20,20,30,.95); border:1px solid var(--accent); border-radius:6px;
+  padding:14px 18px; min-width:280px;
+  box-shadow:0 10px 24px rgba(0,0,0,.55);
+  animation: toastIn .2s ease;
+}
+.lobby-invite-toast h4 { margin:0 0 4px; font-size:13px; letter-spacing:2px; color:var(--accent); }
+.lobby-invite-toast .msg { font-size:13px; margin-bottom:10px; color:#fff; }
+.lobby-invite-toast .row { display:flex; gap:8px; justify-content:flex-end; }
+.lobby-invite-toast button { background:rgba(0,0,0,.4); border:1px solid var(--border); color:#fff; padding:5px 12px; border-radius:3px; cursor:pointer; font-family:inherit; font-size:12px; }
+.lobby-invite-toast button.accept { background:var(--accent); color:#000; font-weight:700; }
+@keyframes toastIn { from { transform:translateY(20px); opacity:0; } to { transform:translateY(0); opacity:1; } }
+
 /* ── Sniper scope overlay ─────────────────────────────────────────── */
 #scope-overlay .scope-ring {
   position:absolute;top:50%;left:50%;width:100vmin;height:100vmin;
@@ -335,6 +383,18 @@ input:focus { border-color:var(--accent); }
     </div>
   </div>
   <div class="lobby-grid" id="lobby-grid"></div>
+
+  <!-- Private lobby panel: host-created, invite-only, supports team modes. -->
+  <div class="private-lobby-section" id="private-lobby-section">
+    <div class="pl-header">
+      <span class="label">YOUR LOBBY</span>
+      <span class="label" style="color:var(--dim);font-size:11px;">Invite friends · 1v1 · 2v2 · 3v3 · 5v5</span>
+    </div>
+    <div class="pl-body" id="pl-body">
+      <!-- JS renders one of the two states here: create / waiting -->
+    </div>
+  </div>
+
   <div class="training-section">
     <span class="label">PRACTICE MODE</span>
     <div class="training-card" onclick="App.startTraining()">
@@ -1155,20 +1215,19 @@ const GameEngine = {
     this.scene.add(bounce);
   },
 
-  // ── Opponent mesh — blocky/voxel soldier (cubes only) ─────────────────
+  // ── Opponent mesh — humanoid soldier (cylinders + sized cubes) ────────
   _buildOpponentMesh() {
     this.opponentGroup = new THREE.Group();
     this.opponentGroup.visible = false;
 
-    // Cartoony blocky palette
-    const skin     = new THREE.MeshLambertMaterial({ color: 0xe3b07a });
+    // Palette
+    const skin     = new THREE.MeshLambertMaterial({ color: 0xd9a173 });
     const stubble  = new THREE.MeshLambertMaterial({ color: 0x6b4a32 });
     const eyeWhite = new THREE.MeshLambertMaterial({ color: 0xffffff });
     const pupil    = new THREE.MeshLambertMaterial({ color: 0x101010 });
     const mouth    = new THREE.MeshLambertMaterial({ color: 0x501818 });
-    const teeth    = new THREE.MeshLambertMaterial({ color: 0xf2efe2 });
-    const uniform  = new THREE.MeshLambertMaterial({ color: 0x6a7b3f });   // olive
-    const vest     = new THREE.MeshLambertMaterial({ color: 0x4a5a30 });   // darker tactical
+    const uniform  = new THREE.MeshLambertMaterial({ color: 0x6a7b3f });
+    const vest     = new THREE.MeshLambertMaterial({ color: 0x4a5a30 });
     const pouch    = new THREE.MeshLambertMaterial({ color: 0x2f3a18 });
     const pants    = new THREE.MeshLambertMaterial({ color: 0x3d4220 });
     const boots    = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
@@ -1177,91 +1236,83 @@ const GameEngine = {
     const gunGrip  = new THREE.MeshLambertMaterial({ color: 0x3a2a18 });
 
     const box = (w,h,d,mat) => new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat);
+    const cyl = (rTop, rBot, h, segs, mat) =>
+      new THREE.Mesh(new THREE.CylinderGeometry(rTop, rBot, h, segs || 12), mat);
 
-    // ── HEAD (big chunky cube) ──────────────────────────────
-    const head = box(0.42, 0.42, 0.42, skin);
-    head.position.y = 1.66;
+    // ── HEAD (smaller, slightly tall — more human-proportioned) ────
+    // Old head was 0.42³; new head is ~0.30 wide × 0.34 tall × 0.30 deep.
+    const head = box(0.30, 0.34, 0.30, skin);
+    head.position.y = 1.70;
+    // Neck — short cylinder bridging head and torso.
+    const neck = cyl(0.10, 0.12, 0.10, 10, skin);
+    neck.position.y = 1.50;
 
-    // Helmet (slightly wider than head)
-    const helmet = box(0.48, 0.22, 0.48, helmetM);
-    helmet.position.y = 1.96;
-    // Helmet brim
-    const brim = box(0.50, 0.04, 0.52, helmetM);
-    brim.position.y = 1.83;
-    // Helmet strap
-    const strap = box(0.46, 0.04, 0.04, boots);
-    strap.position.set(0, 1.78, 0.22);
+    // Helmet sized to the new smaller head.
+    const helmet = box(0.36, 0.17, 0.36, helmetM);
+    helmet.position.y = 1.92;
+    const brim = box(0.38, 0.03, 0.40, helmetM);
+    brim.position.y = 1.82;
+    const strap = box(0.34, 0.03, 0.03, boots);
+    strap.position.set(0, 1.77, 0.16);
 
-    // Eyes (two small white squares with black pupils)
-    const eyeL = box(0.08, 0.06, 0.02, eyeWhite);
-    eyeL.position.set(-0.10, 1.70, 0.215);
-    const eyeR = box(0.08, 0.06, 0.02, eyeWhite);
-    eyeR.position.set( 0.10, 1.70, 0.215);
-    const pupL = box(0.04, 0.04, 0.02, pupil);
-    pupL.position.set(-0.10, 1.70, 0.221);
-    const pupR = box(0.04, 0.04, 0.02, pupil);
-    pupR.position.set( 0.10, 1.70, 0.221);
-    // Angry eyebrows
-    const browL = box(0.10, 0.03, 0.02, stubble);
-    browL.position.set(-0.10, 1.76, 0.215);
-    browL.rotation.z = -0.25;
-    const browR = box(0.10, 0.03, 0.02, stubble);
-    browR.position.set( 0.10, 1.76, 0.215);
-    browR.rotation.z =  0.25;
+    // Eyes
+    const eyeL = box(0.06, 0.04, 0.02, eyeWhite);
+    eyeL.position.set(-0.075, 1.74, 0.155);
+    const eyeR = box(0.06, 0.04, 0.02, eyeWhite);
+    eyeR.position.set( 0.075, 1.74, 0.155);
+    const pupL = box(0.025, 0.025, 0.02, pupil);
+    pupL.position.set(-0.075, 1.74, 0.161);
+    const pupR = box(0.025, 0.025, 0.02, pupil);
+    pupR.position.set( 0.075, 1.74, 0.161);
+    // Eyebrows (subtle)
+    const browL = box(0.07, 0.02, 0.02, stubble);
+    browL.position.set(-0.075, 1.78, 0.155); browL.rotation.z = -0.2;
+    const browR = box(0.07, 0.02, 0.02, stubble);
+    browR.position.set( 0.075, 1.78, 0.155); browR.rotation.z =  0.2;
+    // Mouth — a single small slit, less cartoony.
+    const mouthBg = box(0.14, 0.03, 0.02, mouth);
+    mouthBg.position.set(0, 1.64, 0.155);
+    // Ears
+    const earL = box(0.03, 0.07, 0.07, skin);
+    earL.position.set(-0.16, 1.70, 0);
+    const earR = box(0.03, 0.07, 0.07, skin);
+    earR.position.set( 0.16, 1.70, 0);
+    // Stand-in placeholders so the cleanup loop below still runs.
+    const teethBar = box(0.01, 0.01, 0.01, mouth); teethBar.visible = false;
+    const div1 = teethBar.clone(), div2 = teethBar.clone(), div3 = teethBar.clone();
 
-    // Gritted-teeth mouth (small dark slit with white teeth)
-    const mouthBg = box(0.20, 0.06, 0.02, mouth);
-    mouthBg.position.set(0, 1.56, 0.215);
-    const teethBar = box(0.18, 0.035, 0.025, teeth);
-    teethBar.position.set(0, 1.56, 0.22);
-    // Teeth dividers
-    const div1 = box(0.012, 0.04, 0.027, mouth);
-    div1.position.set(-0.05, 1.56, 0.222);
-    const div2 = box(0.012, 0.04, 0.027, mouth);
-    div2.position.set( 0.00, 1.56, 0.222);
-    const div3 = box(0.012, 0.04, 0.027, mouth);
-    div3.position.set( 0.05, 1.56, 0.222);
+    // ── TORSO — narrower at the waist via stacked cylinders + box ──
+    // Tapered shoulder/chest cylinder, then a slightly narrower waist
+    // block. This reads as a human silhouette rather than a chunky cube.
+    const chest = cyl(0.30, 0.34, 0.50, 14, uniform);
+    chest.position.y = 1.22;
+    const tacVest = box(0.58, 0.44, 0.46, vest);
+    tacVest.position.set(0, 1.18, 0.03);
+    const waist = cyl(0.30, 0.26, 0.20, 14, uniform);
+    waist.position.y = 0.93;
+    const pouchL = box(0.16, 0.12, 0.10, pouch);
+    pouchL.position.set(-0.16, 1.08, 0.26);
+    const pouchR = box(0.16, 0.12, 0.10, pouch);
+    pouchR.position.set( 0.16, 1.08, 0.26);
+    const belt = box(0.62, 0.08, 0.36, boots);
+    belt.position.y = 0.82;
+    const buckle = box(0.08, 0.06, 0.04, helmetM);
+    buckle.position.set(0, 0.82, 0.20);
 
-    // Ears (small stubs)
-    const earL = box(0.04, 0.10, 0.10, skin);
-    earL.position.set(-0.22, 1.66, 0);
-    const earR = box(0.04, 0.10, 0.10, skin);
-    earR.position.set( 0.22, 1.66, 0);
-
-    // ── TORSO ────────────────────────────────────────────────
-    // Uniform chest
-    const chest = box(0.74, 0.55, 0.42, uniform);
-    chest.position.y = 1.18;
-    // Tactical vest (slightly smaller, overlays chest front)
-    const tacVest = box(0.62, 0.46, 0.46, vest);
-    tacVest.position.set(0, 1.16, 0.025);
-    // Ammo pouches (two on the chest)
-    const pouchL = box(0.18, 0.14, 0.10, pouch);
-    pouchL.position.set(-0.16, 1.07, 0.26);
-    const pouchR = box(0.18, 0.14, 0.10, pouch);
-    pouchR.position.set( 0.16, 1.07, 0.26);
-    // Belt + buckle
-    const belt = box(0.78, 0.10, 0.46, boots);
-    belt.position.y = 0.83;
-    const buckle = box(0.10, 0.08, 0.04, helmetM);
-    buckle.position.set(0, 0.83, 0.235);
-
-    // ── ARMS (blocky, held forward) ──────────────────────────
-    // Upper arms
-    const lUpper = box(0.18, 0.36, 0.20, uniform);
-    lUpper.position.set(-0.45, 1.18, 0);
-    const rUpper = box(0.18, 0.36, 0.20, uniform);
-    rUpper.position.set( 0.45, 1.18, 0);
-    // Forearms (rotated forward)
-    const lFore  = box(0.16, 0.20, 0.34, uniform);
-    lFore.position.set(-0.35, 0.96, 0.20);
-    const rFore  = box(0.16, 0.20, 0.34, uniform);
-    rFore.position.set( 0.35, 0.96, 0.20);
-    // Hands
-    const lHand  = box(0.14, 0.14, 0.14, skin);
-    lHand.position.set(-0.30, 0.92, 0.40);
-    const rHand  = box(0.14, 0.14, 0.14, skin);
-    rHand.position.set( 0.30, 0.92, 0.40);
+    // ── ARMS — cylinders for natural human shape ───────────────────
+    const lUpper = cyl(0.08, 0.10, 0.36, 12, uniform);
+    lUpper.position.set(-0.42, 1.22, 0);
+    const rUpper = cyl(0.08, 0.10, 0.36, 12, uniform);
+    rUpper.position.set( 0.42, 1.22, 0);
+    // Forearms slightly thinner, angled forward (held-rifle pose).
+    const lFore  = cyl(0.07, 0.09, 0.32, 12, uniform);
+    lFore.position.set(-0.34, 0.96, 0.18); lFore.rotation.x = 1.0;
+    const rFore  = cyl(0.07, 0.09, 0.32, 12, uniform);
+    rFore.position.set( 0.34, 0.96, 0.18); rFore.rotation.x = 1.0;
+    const lHand  = box(0.10, 0.10, 0.10, skin);
+    lHand.position.set(-0.30, 0.84, 0.36);
+    const rHand  = box(0.10, 0.10, 0.10, skin);
+    rHand.position.set( 0.30, 0.84, 0.36);
 
     // ── HELD RIFLE (chunky boxes only) ───────────────────────
     const gunGrp = new THREE.Group();
@@ -1285,19 +1336,19 @@ const GameEngine = {
     gSig.position.set(0, 0.06, -0.50);
     gunGrp.add(gRecv, gBar, gHg, gStk, gMag, gSig);
 
-    // ── LEGS (chunky cubes + boots) ──────────────────────────
-    const lThigh = box(0.22, 0.46, 0.28, pants);
-    lThigh.position.set(-0.16, 0.52, 0);
-    const rThigh = box(0.22, 0.46, 0.28, pants);
-    rThigh.position.set( 0.16, 0.52, 0);
-    const lShin  = box(0.20, 0.32, 0.24, pants);
-    lShin.position.set(-0.16, 0.16, 0);
-    const rShin  = box(0.20, 0.32, 0.24, pants);
-    rShin.position.set( 0.16, 0.16, 0);
-    const lBoot  = box(0.26, 0.10, 0.34, boots);
-    lBoot.position.set(-0.16, -0.04, 0.04);
-    const rBoot  = box(0.26, 0.10, 0.34, boots);
-    rBoot.position.set( 0.16, -0.04, 0.04);
+    // ── LEGS — cylinders give a much more humanoid silhouette ─────
+    const lThigh = cyl(0.11, 0.13, 0.46, 12, pants);
+    lThigh.position.set(-0.13, 0.52, 0);
+    const rThigh = cyl(0.11, 0.13, 0.46, 12, pants);
+    rThigh.position.set( 0.13, 0.52, 0);
+    const lShin  = cyl(0.09, 0.11, 0.32, 12, pants);
+    lShin.position.set(-0.13, 0.18, 0);
+    const rShin  = cyl(0.09, 0.11, 0.32, 12, pants);
+    rShin.position.set( 0.13, 0.18, 0);
+    const lBoot  = box(0.22, 0.10, 0.30, boots);
+    lBoot.position.set(-0.13, -0.02, 0.04);
+    const rBoot  = box(0.22, 0.10, 0.30, boots);
+    rBoot.position.set( 0.13, -0.02, 0.04);
 
     // Leg groups for swing animation
     this._oppLegL = new THREE.Group();
@@ -1306,11 +1357,11 @@ const GameEngine = {
     this._oppLegR.add(rThigh, rShin, rBoot);
 
     this.opponentGroup.add(
-      head, helmet, brim, strap,
+      head, neck, helmet, brim, strap,
       eyeL, eyeR, pupL, pupR, browL, browR,
       mouthBg, teethBar, div1, div2, div3,
       earL, earR,
-      chest, tacVest, pouchL, pouchR, belt, buckle,
+      chest, tacVest, waist, pouchL, pouchR, belt, buckle,
       lUpper, rUpper, lFore, rFore, lHand, rHand,
       gunGrp,
       this._oppLegL, this._oppLegR,
@@ -1824,6 +1875,22 @@ const GameEngine = {
       // body faces the same direction the opponent is looking.
       this.opponentGroup.rotation.y = this._oppCurYaw + Math.PI;
 
+      // Jump (vertical y-offset) — lerp toward target each frame.
+      this._oppCurY = (this._oppCurY || 0) +
+        ((this._oppTgtY || 0) - (this._oppCurY || 0)) * Math.min(1, dt * 14);
+      this.opponentGroup.position.y = this._oppCurY;
+
+      // Crouch — squash the model vertically and pull it down to keep
+      // the feet planted on the floor. _oppCurCrouch is a 0..1 blend.
+      const tgtCrouch = this._oppTgtCrouch ? 1 : 0;
+      this._oppCurCrouch = (this._oppCurCrouch || 0) +
+        (tgtCrouch - (this._oppCurCrouch || 0)) * Math.min(1, dt * 12);
+      const crouchScaleY = 1 - this._oppCurCrouch * 0.45;     // 1.0 → 0.55
+      const crouchSink   = this._oppCurCrouch * 0.0;           // feet stay planted
+      this.opponentGroup.scale.y = crouchScaleY;
+      // Re-set position with crouch sink applied (jump y already set above).
+      this.opponentGroup.position.y = this._oppCurY - crouchSink;
+
       // Leg-swing animation when opponent moves
       const moveSpeed = prev.distanceTo(this._oppCurPos) / Math.max(dt, 0.001);
       this._oppGait = (this._oppGait || 0) + dt * Math.min(moveSpeed * 1.6, 14);
@@ -1832,6 +1899,23 @@ const GameEngine = {
       if (this._oppLegR) this._oppLegR.rotation.x = -swing;
 
       this._updateNameTag();
+    }
+
+    // Multi-player (team-mode) opponent lerps.
+    if (this._otherPlayers) {
+      for (const e of this._otherPlayers.values()) {
+        e.curPos.lerp(e.tgtPos, Math.min(1, dt * 18));
+        let yawDiff = e.tgtYaw - e.curYaw;
+        while (yawDiff >  Math.PI) yawDiff -= 2 * Math.PI;
+        while (yawDiff < -Math.PI) yawDiff += 2 * Math.PI;
+        e.curYaw += yawDiff * Math.min(1, dt * 12);
+        e.curY      = e.curY + (e.tgtY - e.curY) * Math.min(1, dt * 14);
+        e.curCrouch = e.curCrouch + ((e.tgtCrouch ? 1 : 0) - e.curCrouch) * Math.min(1, dt * 12);
+        const sy = 1 - e.curCrouch * 0.45;
+        e.group.position.set(e.curPos.x, e.curY, e.curPos.z);
+        e.group.scale.set(1, sy, 1);
+        e.group.rotation.y = e.curYaw + Math.PI;
+      }
     }
 
     // Bot update (training mode only)
@@ -2048,6 +2132,7 @@ const GameEngine = {
     this._oppVisible    = false;
     this.opponentGroup.visible = false;
     if (this.opponentNameTagEl) this.opponentNameTagEl.style.display = 'none';
+    this._disposeOtherPlayers();
     this._arenaObjects.forEach(o => this.scene.remove(o));
     this._arenaObjects = [];
     this._staticBoxes  = [];
@@ -2061,15 +2146,90 @@ const GameEngine = {
   },
 
   // ── Network / bot callbacks ────────────────────────────────────────────
-  onOpponentMove({ position, rotation }) {
+  onOpponentMove({ position, rotation, yOffset, crouching, senderSockId, senderTeam }) {
+    // Team match — route to multi-opponent map.
+    if (App.isTeamMatch && senderSockId) {
+      this._updateOtherPlayer(senderSockId, senderTeam, position, rotation, yOffset, crouching);
+      return;
+    }
+    // 1v1 path — single opponent.
     this._oppTgtPos.set(position.x, 0, position.z);
     if (rotation != null) this._oppTgtYaw = rotation.y ?? 0;
+    this._oppTgtY      = Number(yOffset) || 0;
+    this._oppTgtCrouch = !!crouching;
     if (!this._oppVisible) {
       this._oppCurPos.copy(this._oppTgtPos);
-      this._oppCurYaw = this._oppTgtYaw;
+      this._oppCurYaw    = this._oppTgtYaw;
+      this._oppCurY      = this._oppTgtY;
+      this._oppCurCrouch = this._oppTgtCrouch ? 1 : 0;
       this._oppVisible = true;
       this.opponentGroup.visible = true;
     }
+  },
+
+  // ── Multi-player (team mode) — one mesh per other player ──────────────
+  _otherPlayers: null,  // Map<sockId, { group, curPos, tgtPos, curYaw, tgtYaw, curY, tgtY, curCrouch, tgtCrouch }>
+
+  _buildTeamPlayerMesh(team) {
+    // Cheap, readable model: a colored capsule body + smaller head box.
+    // Team A = blue, Team B = red. Smaller than the full hero model so
+    // 4+ players don't clutter the scene.
+    const color = team === 'a' ? 0x4a8cff : 0xff5a5a;
+    const headCol = team === 'a' ? 0x3576dc : 0xdc3535;
+    const g = new THREE.Group();
+    const bodyMat = new THREE.MeshLambertMaterial({ color });
+    const headMat = new THREE.MeshLambertMaterial({ color: headCol });
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.30, 0.32, 1.45, 14), bodyMat);
+    body.position.y = 0.85;
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.34, 0.30), headMat);
+    head.position.y = 1.70;
+    // Eye stripe so we can tell which way they're looking.
+    const eye = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.04, 0.02), new THREE.MeshBasicMaterial({ color: 0xfff5a0 }));
+    eye.position.set(0, 1.74, 0.16);
+    // Legs
+    const lLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.10, 0.12, 0.42, 10), new THREE.MeshLambertMaterial({ color: 0x222 }));
+    lLeg.position.set(-0.13, 0.21, 0);
+    const rLeg = lLeg.clone();
+    rLeg.position.x = 0.13;
+    g.add(body, head, eye, lLeg, rLeg);
+    return g;
+  },
+
+  _updateOtherPlayer(sockId, team, position, rotation, yOffset, crouching) {
+    if (!this._otherPlayers) this._otherPlayers = new Map();
+    let entry = this._otherPlayers.get(sockId);
+    if (!entry) {
+      const group = this._buildTeamPlayerMesh(team || 'b');
+      this.scene.add(group);
+      entry = {
+        group, team,
+        curPos: new THREE.Vector3(position.x, 0, position.z),
+        tgtPos: new THREE.Vector3(position.x, 0, position.z),
+        curYaw: rotation?.y || 0, tgtYaw: rotation?.y || 0,
+        curY: 0, tgtY: 0, curCrouch: 0, tgtCrouch: 0,
+      };
+      this._otherPlayers.set(sockId, entry);
+    }
+    entry.tgtPos.set(position.x, 0, position.z);
+    if (rotation != null) entry.tgtYaw = rotation.y ?? 0;
+    entry.tgtY      = Number(yOffset) || 0;
+    entry.tgtCrouch = !!crouching;
+  },
+
+  _disposeOtherPlayers() {
+    if (!this._otherPlayers) return;
+    for (const entry of this._otherPlayers.values()) {
+      this.scene.remove(entry.group);
+      entry.group.traverse(o => {
+        if (o.isMesh) {
+          o.geometry?.dispose?.();
+          if (Array.isArray(o.material)) o.material.forEach(m => m.dispose?.());
+          else o.material?.dispose?.();
+        }
+      });
+    }
+    this._otherPlayers.clear();
+    this._otherPlayers = null;
   },
 
   setOpponentPos(pos, playerPos) {
@@ -2560,6 +2720,190 @@ const UIManager = {
   },
 };
 
+// ══════════════════════════════════════════════════════════════
+//  PRIVATE LOBBY  — host-created lobbies with friend invites.
+// ══════════════════════════════════════════════════════════════
+const PrivateLobby = {
+  // null when not in a lobby; { id, hostUserId, teamSize, bet, weaponMode, killsToWin, status, members } otherwise
+  state: null,
+  // Local form state for the "create" view.
+  formTeamSize: 1,
+  formBet: 50,
+  formMode: 'all',
+  formRounds: 5,
+  // Chat namespace socket — used to deliver invites between players
+  // even when the dashboard isn't open.
+  chatSocket: null,
+  friends: [],
+
+  init() {
+    this.chatSocket = io('/chat', { withCredentials: true, transports: ['websocket','polling'] });
+    this.chatSocket.on('lobby_invite', d => this.onIncomingInvite(d));
+    // Pull friend list so we can render the invite UI.
+    api('/api/friends').then(r => { this.friends = r.friends || []; this.render(); }).catch(() => {});
+    // Listen to shooter-namespace lobby events.
+    const s = NetworkManager.socket;
+    if (s) {
+      s.on('private_lobby_update',    d => { this.state = d; this.render(); });
+      s.on('private_lobby_disbanded', () => { this.state = null; this.render(); });
+    }
+    this.render();
+  },
+
+  render() {
+    const root = document.getElementById('pl-body');
+    if (!root) return;
+    if (!this.state) {
+      // Create view
+      const sizes = [1, 2, 3, 5];
+      const modes = ['all', 'rifle', 'pistol', 'shotgun', 'sniper'];
+      const rounds = [3, 5, 7];
+      root.innerHTML = `
+        <div class="pl-avatar">🧑‍🚀</div>
+        <div class="pl-controls">
+          <div class="pl-row"><label>SIZE</label>${sizes.map(n =>
+            `<button data-size="${n}" class="${this.formTeamSize === n ? 'active' : ''}">${n}v${n}</button>`
+          ).join('')}</div>
+          <div class="pl-row"><label>WEAPONS</label>${modes.map(m =>
+            `<button data-mode="${m}" class="${this.formMode === m ? 'active' : ''}">${m}</button>`
+          ).join('')}</div>
+          <div class="pl-row"><label>ROUNDS</label>${rounds.map(r =>
+            `<button data-rounds="${r}" class="${this.formRounds === r ? 'active' : ''}">First to ${r}</button>`
+          ).join('')}</div>
+          <div class="pl-row"><label>BET (cr)</label>
+            <input id="pl-bet" type="number" min="1" step="1" value="${this.formBet}">
+          </div>
+          <div class="pl-row" style="margin-top:6px;">
+            <button class="pl-primary" id="pl-create">CREATE LOBBY</button>
+          </div>
+        </div>
+      `;
+      root.querySelectorAll('[data-size]').forEach(b => b.addEventListener('click', () => {
+        this.formTeamSize = Number(b.dataset.size); this.render();
+      }));
+      root.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => {
+        this.formMode = b.dataset.mode; this.render();
+      }));
+      root.querySelectorAll('[data-rounds]').forEach(b => b.addEventListener('click', () => {
+        this.formRounds = Number(b.dataset.rounds); this.render();
+      }));
+      root.querySelector('#pl-bet')?.addEventListener('input', e => {
+        this.formBet = Math.max(1, Math.floor(Number(e.target.value) || 1));
+      });
+      root.querySelector('#pl-create')?.addEventListener('click', () => this.create());
+      return;
+    }
+
+    // Waiting view
+    const ttl = this.state.teamSize * 2;
+    const filled = this.state.members.length;
+    const teamA = this.state.members.filter(m => m.team === 'a');
+    const teamB = this.state.members.filter(m => m.team === 'b');
+    const padSlots = (arr, n, team) => {
+      const out = arr.slice();
+      while (out.length < n) out.push({ empty: true, team });
+      return out;
+    };
+    const renderSlot = (m) => m.empty
+      ? `<div class="pl-slot empty">
+           <span class="${m.team === 'a' ? 'slot-team-a' : 'slot-team-b'}">TEAM ${m.team.toUpperCase()}</span>
+           <span class="slot-name">— empty —</span>
+         </div>`
+      : `<div class="pl-slot">
+           <span class="${m.team === 'a' ? 'slot-team-a' : 'slot-team-b'}">TEAM ${m.team.toUpperCase()}</span>
+           <span class="slot-name">${escapeHtml(m.username)}</span>
+         </div>`;
+    const isHost = this.state.hostUserId === App.userId;
+    const canStart = isHost && filled === ttl;
+
+    // Friends not already in the lobby = invitable.
+    const inLobby = new Set(this.state.members.map(m => m.userId));
+    const inviteRows = this.friends.filter(f => !inLobby.has(f.userId)).map(f =>
+      `<div class="pl-invite-row">
+         <span>${escapeHtml(f.username)}</span>
+         <button data-invite="${f.userId}">INVITE</button>
+       </div>`
+    ).join('') || `<div class="pl-invite-row" style="opacity:.6;">Add friends in the dashboard to invite them.</div>`;
+
+    root.innerHTML = `
+      <div class="pl-avatar">🧑‍🚀</div>
+      <div class="pl-controls">
+        <div style="font-size:12px;color:var(--dim);letter-spacing:2px;">
+          ${this.state.teamSize}v${this.state.teamSize} · ${this.state.weaponMode.toUpperCase()} · FIRST TO ${this.state.killsToWin} · BET ${this.state.bet} cr · ${filled}/${ttl}
+        </div>
+        <div class="pl-slots">
+          ${padSlots(teamA, this.state.teamSize, 'a').map(renderSlot).join('')}
+          ${padSlots(teamB, this.state.teamSize, 'b').map(renderSlot).join('')}
+        </div>
+        ${isHost ? `
+          <div style="margin-top:4px;font-size:11px;color:var(--dim);letter-spacing:1px;">FRIENDS</div>
+          <div class="pl-invite-list">${inviteRows}</div>` : ''}
+        <div class="pl-row" style="margin-top:6px;">
+          ${isHost ? `<button class="pl-primary" id="pl-start" ${canStart ? '' : 'disabled'}>START MATCH</button>` : ''}
+          <button id="pl-leave">LEAVE LOBBY</button>
+        </div>
+      </div>
+    `;
+    if (isHost) {
+      root.querySelectorAll('[data-invite]').forEach(b => b.addEventListener('click', () => {
+        const friendUserId = b.dataset.invite;
+        b.disabled = true; b.textContent = '…';
+        NetworkManager.socket.emit('invite_to_lobby', { friendUserId }, (res) => {
+          if (res?.error) { alert('Invite failed: ' + res.error); b.disabled = false; b.textContent = 'INVITE'; }
+          else            { b.textContent = 'SENT ✓'; }
+        });
+      }));
+      root.querySelector('#pl-start')?.addEventListener('click', () => {
+        NetworkManager.socket.emit('start_private_match', null, (res) => {
+          if (res?.error) alert('Start failed: ' + res.error);
+        });
+      });
+    }
+    root.querySelector('#pl-leave')?.addEventListener('click', () => {
+      NetworkManager.socket.emit('leave_private_lobby', null, () => {
+        this.state = null; this.render();
+      });
+    });
+  },
+
+  create() {
+    const bet = Math.max(1, Math.floor(Number(this.formBet) || 1));
+    NetworkManager.socket.emit('create_private_lobby', {
+      teamSize: this.formTeamSize,
+      bet,
+      weaponMode: this.formMode,
+      killsToWin: this.formRounds,
+    }, (res) => {
+      if (res?.error) { alert('Create failed: ' + res.error); return; }
+      this.state = res.lobby;
+      this.render();
+    });
+  },
+
+  onIncomingInvite(d) {
+    if (!d?.lobbyId) return;
+    const toast = document.createElement('div');
+    toast.className = 'lobby-invite-toast';
+    toast.innerHTML = `
+      <h4>LOBBY INVITE</h4>
+      <div class="msg"><b>${escapeHtml(d.fromUsername)}</b> invites you to a ${d.teamSize}v${d.teamSize} ${escapeHtml(d.weaponMode)} match (first to ${d.killsToWin}, ${d.bet} cr bet).</div>
+      <div class="row"><button class="decline">DECLINE</button><button class="accept">ACCEPT</button></div>
+    `;
+    document.body.appendChild(toast);
+    const close = () => toast.remove();
+    toast.querySelector('.decline').addEventListener('click', close);
+    toast.querySelector('.accept').addEventListener('click', () => {
+      NetworkManager.socket.emit('accept_invite', { lobbyId: d.lobbyId }, (res) => {
+        close();
+        if (res?.error) alert('Join failed: ' + res.error);
+        else            this.state = res.lobby, this.render();
+      });
+    });
+    // Auto-dismiss after 30s.
+    setTimeout(close, 30000);
+  },
+};
+
 // Tiny HTML-escape used by chat + killcam labels.
 function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => (
@@ -2883,6 +3227,18 @@ const Killcam = {
     document.getElementById('overlay-respawn')?.classList.remove('killcam-active');
     const title = document.getElementById('respawn-title');
     if (title) title.textContent = 'YOU DIED';
+    // Free per-scene GPU resources so playing many kills doesn't leak.
+    try {
+      for (const m of this._cleanupMeshes) {
+        m.geometry?.dispose?.();
+        if (Array.isArray(m.material)) m.material.forEach(x => x.dispose?.());
+        else m.material?.dispose?.();
+      }
+    } catch (_) {}
+    this._cleanupMeshes = [];
+    this._tracers = [];
+    this._scene = null;
+    this._camera = null;
   },
 };
 
@@ -3144,9 +3500,14 @@ const App = {
     if (!user) { location.href = '/login.html'; return; }
 
     this.myUsername    = user.username;
+    this.userId        = user.id;
     this.playerBalance = user.balance;
     document.getElementById('header-username').textContent = user.username;
     UIManager.updateBalance(user.balance);
+
+    // Boot the private-lobby panel once the socket is connected and we
+    // know the user id (needed to detect host vs guest in the UI).
+    try { PrivateLobby.init(); } catch (e) { console.error('[private-lobby] init failed', e); }
 
     // Use the snapshot stashed in NetworkManager (or wait for the next one)
     const renderInitial = () => {
@@ -3345,6 +3706,10 @@ const App = {
     // Per-match settings (voted on in the lobby).
     GameEngine.weaponMode = data.weaponMode || 'all';
     GameEngine.killsToWin = Number(data.killsToWin) || 5;
+    // Team-mode flag — drives multi-opponent rendering.
+    this.isTeamMatch   = !!data.isTeamMatch;
+    this.yourTeam      = data.yourTeam || null;
+    GameEngine._disposeOtherPlayers();
     const startingW = (GameEngine.weaponMode === 'all') ? 'rifle' : GameEngine.weaponMode;
     GameEngine.currentWeapon = startingW;
     const ml = document.getElementById('hud-mode-label');
@@ -3480,6 +3845,23 @@ const App = {
     AudioManager.playMusic();
   },
 };
+
+// ── Global error nets ────────────────────────────────────────────────
+// A stray exception in any module (killcam, audio, settings) used to
+// silently break the tab. Logging here keeps the game running and gives
+// us a console line to diagnose with.
+window.addEventListener('error', (e) => {
+  try { console.error('[global error]', e.message, e.filename + ':' + e.lineno); } catch (_) {}
+});
+window.addEventListener('unhandledrejection', (e) => {
+  try { console.error('[unhandled rejection]', e.reason); } catch (_) {}
+});
+// Best-effort: warn if the WebGL context is lost so the user understands
+// the freeze instead of just seeing a black screen.
+document.addEventListener('webglcontextlost', (e) => {
+  e.preventDefault();
+  console.warn('[webgl] context lost — attempting to recover');
+});
 
 window.addEventListener('DOMContentLoaded', () => App.init());
 </script>

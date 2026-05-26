@@ -21,10 +21,12 @@ const {
   POSITION_HISTORY_MS, MOVEMENT_SNAPSHOT_INTERVAL_MS,
   MAX_SHOT_DIRECTION_DEVIATION,
   WEAPON_MODES, ROUND_OPTIONS, resolveWeaponMode, resolveRounds,
+  TEAM_SIZES, privateLobbies,
   lobbies, matches, players,
   rayHitDistance, playerBox, headBox, coverAabb, positionAtTime,
   symmetricalMap, randomMap, resolveMapType, lobbySnapshot,
   startShooterMatch, finishShooterMatch, cancelShooterMatch,
+  startTeamShooterMatch, finishTeamShooterMatch, cancelTeamShooterMatch,
 } = S;
 
 // Lightweight helper — logs a rejected action to the replay buffer AND bumps
@@ -54,13 +56,20 @@ function buildWaitingUpdate(lobby) {
   };
 }
 
-function endMatch(io, matchId, winnerSocketId, reason) {
+function endMatch(io, matchId, winnerArg, reason) {
   const match = matches.get(matchId);
   if (!match) return;
   if (match.ended) return;
   match.ended = true;
   if (match.timeoutTimer) { clearTimeout(match.timeoutTimer); match.timeoutTimer = null; }
 
+  // ── Team match branch — wholly separate flow ─────────────────────
+  if (match.isTeamMatch) {
+    return endTeamMatch(io, match, winnerArg, reason);
+  }
+
+  // ── 1v1 branch (original logic) ──────────────────────────────────
+  const winnerSocketId = winnerArg;
   const winnerPlayer = winnerSocketId ? players.get(winnerSocketId) : null;
   const aSock = match.playerIds[0];
   const bSock = match.playerIds[1];
@@ -169,6 +178,259 @@ function endMatch(io, matchId, winnerSocketId, reason) {
 
   matches.delete(matchId);
   broadcastLobbies(io);
+}
+
+// ── Team-match end ──────────────────────────────────────────────────────
+function endTeamMatch(io, match, winnerArg, reason) {
+  const ns = io.of('/shooter');
+  const winnerTeam = (winnerArg === 'a' || winnerArg === 'b') ? winnerArg : null;
+  const winners = match.playerIds
+    .map(id => ({ sock: id, state: match.gameState[id], userId: players.get(id)?.userId }))
+    .filter(x => x.state && (winnerTeam ? x.state.team === winnerTeam : false));
+  const losers = match.playerIds
+    .map(id => ({ sock: id, state: match.gameState[id], userId: players.get(id)?.userId }))
+    .filter(x => x.state && (winnerTeam ? x.state.team !== winnerTeam : true));
+
+  Replay.log(match.id, 'match_end', {
+    reason, teamMatch: true, winnerTeam,
+    teamScores: match.teamScores,
+  });
+
+  const winUserIds = winners.map(w => w.userId).filter(Boolean);
+  const losUserIds = losers .map(l => l.userId).filter(Boolean);
+
+  finishTeamShooterMatch(match.sessionId, winUserIds, losUserIds, match.betAmount, reason)
+    .then(async () => {
+      Replay.flush(match.id, null, {
+        teamMatch: true, finalScores: match.teamScores, reason,
+      }).catch(err => console.error('[shooter] team replay flush failed', err));
+
+      // Apply Elo per pair (winner vs each loser) so MMR still works.
+      // Simple approach: each winner gains/loses MMR against the average
+      // of the opposing team.
+      try {
+        if (winUserIds.length && losUserIds.length) {
+          for (const w of winners) {
+            for (const l of losers) {
+              const wSt = match.gameState[w.sock] || {};
+              const lSt = match.gameState[l.sock] || {};
+              await Ranking.applyMatchResult({
+                winnerUserId: w.userId, loserUserId: l.userId,
+                winnerKills: Math.floor((wSt.kills || 0) / Math.max(1, losers.length)),
+                winnerHeadshots: Math.floor((wSt.headshots || 0) / Math.max(1, losers.length)),
+                winnerShotsFired: Math.floor((wSt.shotsFired || 0) / Math.max(1, losers.length)),
+                winnerShotsHit:  Math.floor((wSt.shotsHit || 0) / Math.max(1, losers.length)),
+                loserKills: Math.floor((lSt.kills || 0) / Math.max(1, winners.length)),
+                loserHeadshots: Math.floor((lSt.headshots || 0) / Math.max(1, winners.length)),
+                loserShotsFired: Math.floor((lSt.shotsFired || 0) / Math.max(1, winners.length)),
+                loserShotsHit:  Math.floor((lSt.shotsHit || 0) / Math.max(1, winners.length)),
+              }).catch(() => {});
+            }
+          }
+        }
+      } catch (e) { console.error('[shooter] team ranking failed', e); }
+
+      // Tell every player.
+      for (const id of match.playerIds) {
+        const sock = ns.sockets.get(id);
+        const p = players.get(id);
+        if (!p) continue;
+        const newBalance = await getBalance(p.userId).catch(() => 0);
+        const me = match.gameState[id] || {};
+        const isWinner = winnerTeam && me.team === winnerTeam;
+        const baseBet = match.betAmount;
+        const teamSize = match.teamSize;
+        // Net change for the player: win → +bet share of the pot; lose → -bet
+        const creditChange = isWinner ? +baseBet : -baseBet;
+        const liveStats = await Ranking.publicStatsFor(p.userId).catch(() => null);
+        sock?.emit('match_end', {
+          won: !!isWinner,
+          creditChange,
+          newBalance,
+          reason,
+          isTeamMatch: true,
+          teamScores: match.teamScores,
+          yourTeam: me.team,
+          stats: {
+            kills: me.kills || 0,
+            deaths: me.deaths || 0,
+            headshots: me.headshots || 0,
+            shotsFired: me.shotsFired || 0,
+            shotsHit: me.shotsHit || 0,
+            accuracy: me.shotsFired ? Math.round(((me.shotsHit || 0) / me.shotsFired) * 100) : 0,
+          },
+          liveStats,
+          replaySaved: true,
+        });
+      }
+    })
+    .catch(err => console.error('[shooter] finishTeamMatch failed', err));
+
+  for (const id of match.playerIds) {
+    const p = players.get(id);
+    if (p) { p.currentMatch = null; }
+  }
+  matches.delete(match.id);
+}
+
+// ── Private lobby helpers ───────────────────────────────────────────────
+function snapshotPrivate(lobby) {
+  return {
+    id: lobby.id,
+    hostUserId: lobby.hostUserId,
+    teamSize: lobby.teamSize,
+    bet: lobby.bet,
+    weaponMode: lobby.weaponMode,
+    killsToWin: lobby.killsToWin,
+    status: lobby.status,
+    members: lobby.members.map(m => ({
+      userId: m.userId, username: m.username, team: m.team,
+    })),
+  };
+}
+
+function broadcastPrivateLobbyUpdate(io, lobby) {
+  io.of('/shooter').to('priv:' + lobby.id).emit('private_lobby_update', snapshotPrivate(lobby));
+}
+
+function handleLeavePrivate(socket) {
+  const me = players.get(socket.id);
+  if (!me?.privateLobby) return;
+  const lobby = privateLobbies.get(me.privateLobby);
+  me.privateLobby = null;
+  socket.leave('priv:' + (lobby?.id || ''));
+  if (!lobby) return;
+  // If a player leaves while the lobby is waiting, just drop them.
+  if (lobby.status === 'waiting') {
+    lobby.members = lobby.members.filter(m => m.socketId !== socket.id);
+    if (!lobby.members.length || lobby.hostUserId === me.userId) {
+      // Host left OR lobby empty — disband.
+      privateLobbies.delete(lobby.id);
+      socket.server.of('/shooter').to('priv:' + lobby.id).emit('private_lobby_disbanded', { reason: 'host_left' });
+    } else {
+      broadcastPrivateLobbyUpdate(socket.server.of('/shooter').server, lobby);
+    }
+  }
+  // If the match was already in progress, the match-end forfeit path
+  // will handle the rest via handleLeave.
+}
+
+// startPrivateMatch — boots a team-aware match from a filled private lobby.
+async function startPrivateMatch(io, lobby) {
+  // Mark lobby as in-progress immediately so a double-click can't fire twice.
+  lobby.status = 'in_progress';
+  broadcastPrivateLobbyUpdate(io, lobby);
+
+  const ns = io.of('/shooter');
+  const teamA = lobby.members.filter(m => m.team === 'a');
+  const teamB = lobby.members.filter(m => m.team === 'b');
+  const allMembers = [...teamA, ...teamB];
+
+  // Wallet escrow for every player.
+  let dbResult;
+  try {
+    dbResult = await startTeamShooterMatch(
+      teamA.map(m => m.userId),
+      teamB.map(m => m.userId),
+      lobby.bet,
+    );
+  } catch (e) {
+    console.error('[shooter] private match escrow failed', e);
+    for (const m of allMembers) ns.to(m.socketId).emit('match_error', { error: e.message });
+    privateLobbies.delete(lobby.id);
+    return;
+  }
+
+  // Build spawn points: pair them across the map, alternating sides.
+  const mapType = 'symmetrical';
+  const coverBoxes = symmetricalMap();
+  // Two rows of spawns — z= +17 for team A, z= -17 for team B.
+  // x is staggered so team-mates don't overlap.
+  const spawnFor = (team, idx) => {
+    const xs = [-4, 0, 4, -8, 8];
+    return { x: xs[idx % xs.length], y: 0, z: team === 'a' ? 17 : -17 };
+  };
+
+  const now = Date.now();
+  const mkState = (team, spawnIdx) => ({
+    position: { ...spawnFor(team, spawnIdx) }, rotation: { x:0, y: team === 'a' ? Math.PI : 0 },
+    health: MAX_HEALTH, kills: 0, deaths: 0, headshots: 0,
+    shotsFired: 0, shotsHit: 0,
+    weapon: (lobby.weaponMode === 'all') ? DEFAULT_WEAPON : lobby.weaponMode,
+    weapons: Object.fromEntries(
+      Object.keys(WEAPONS).map(k => [k, { ammo: WEAPONS[k].mag, reloading: false, reloadStartedAt: 0 }])
+    ),
+    lastShot: 0, positionHistory: [], respawning: false,
+    lastPosition: { ...spawnFor(team, spawnIdx) },
+    lastMoveAt: now, lastWeaponSwitchAt: 0, suspiciousScore: 0,
+    team,  // 'a' | 'b'
+  });
+
+  const gameState = {};
+  const playerIds = [];
+  teamA.forEach((m, i) => { gameState[m.socketId] = mkState('a', i); playerIds.push(m.socketId); });
+  teamB.forEach((m, i) => { gameState[m.socketId] = mkState('b', i); playerIds.push(m.socketId); });
+
+  const match = {
+    id: dbResult.sessionId,
+    dbMatchId: null,         // team matches don't use shooter_sessions
+    sessionId: dbResult.sessionId,
+    privateLobbyId: lobby.id,
+    isTeamMatch: true,
+    teamSize: lobby.teamSize,
+    teamScores: { a: 0, b: 0 },
+    playerIds,
+    teamsByUserId: Object.fromEntries(allMembers.map(m => [m.userId, m.team])),
+    mapType, coverBoxes,
+    spawnPoints: playerIds.map((sid, i) => ({ ...gameState[sid].position })),
+    startTime: now, endTime: now + MATCH_DURATION_MS,
+    status: 'active',
+    gameState,
+    betAmount: lobby.bet,
+    ended: false,
+    coverAabbs: coverBoxes.map(coverAabb),
+    weaponMode: lobby.weaponMode,
+    killsToWin: lobby.killsToWin,
+    memberUserIds: allMembers.map(m => m.userId),
+  };
+  matches.set(match.id, match);
+
+  // Mark every player as being in this match and clear any other state.
+  for (const m of allMembers) {
+    const p = players.get(m.socketId);
+    if (p) { p.currentMatch = match.id; p.currentLobby = null; p.privateLobby = null; }
+  }
+  // Start replay recorder.
+  Replay.start(match.id, dbResult.sessionId, {
+    privateLobbyId: lobby.id, bet: lobby.bet, mapType,
+    teamMatch: true, teamSize: lobby.teamSize,
+    players: Object.fromEntries(allMembers.map(m => [m.socketId, {
+      userId: m.userId, username: m.username, team: m.team,
+    }])),
+  });
+
+  // Tell every player the match started.
+  const basePayload = {
+    matchId: match.id, mapType, coverBoxes,
+    spawnPoints: match.spawnPoints,
+    endTime: match.endTime,
+    weaponMode: lobby.weaponMode,
+    killsToWin: lobby.killsToWin,
+    isTeamMatch: true,
+    teamSize: lobby.teamSize,
+    players: Object.fromEntries(allMembers.map((m, i) => [m.socketId, {
+      username: m.username, team: m.team, spawnIndex: i,
+    }])),
+  };
+  for (const m of allMembers) {
+    ns.to(m.socketId).emit('match_start', { ...basePayload, yourId: m.socketId, yourTeam: m.team });
+  }
+  // Match timer
+  match.timeoutTimer = setTimeout(() => {
+    if (matches.has(match.id) && !match.ended) endMatch(io, match.id, null, 'timeout');
+  }, MATCH_DURATION_MS);
+
+  privateLobbies.delete(lobby.id);
 }
 
 async function startMatch(io, lobbyId) {
@@ -412,6 +674,122 @@ function attach(io) {
       ns.to(p.currentLobby).emit('waiting_room_update', buildWaitingUpdate(lobby));
     });
 
+    // ── Private lobbies (host-created, invite-only) ──────────────────
+    socket.on('create_private_lobby', async ({ teamSize, bet, weaponMode, killsToWin } = {}, cb) => {
+      try {
+        const me = players.get(socket.id);
+        if (!me) return cb?.({ error: 'not_ready' });
+        if (me.privateLobby) return cb?.({ error: 'already_in_lobby' });
+        const ts = Number(teamSize);
+        if (!TEAM_SIZES.includes(ts)) return cb?.({ error: 'bad_team_size' });
+        const b  = Math.max(1, Math.floor(Number(bet) || 50));
+        const wm = WEAPON_MODES.includes(weaponMode) ? weaponMode : 'all';
+        const kw = ROUND_OPTIONS.includes(Number(killsToWin)) ? Number(killsToWin) : 5;
+        // Sanity: host must have the bet on hand to escrow later.
+        const bal = await getBalance(me.userId);
+        if (bal < b) return cb?.({ error: 'insufficient_balance' });
+
+        const lobbyId = 'p-' + Math.random().toString(36).slice(2, 10);
+        const lobby = {
+          id: lobbyId,
+          hostUserId: me.userId,
+          hostSocketId: socket.id,
+          teamSize: ts,
+          bet: b,
+          weaponMode: wm,
+          killsToWin: kw,
+          members: [{ socketId: socket.id, userId: me.userId, username: me.username, team: 'a' }],
+          status: 'waiting',
+          createdAt: Date.now(),
+        };
+        privateLobbies.set(lobbyId, lobby);
+        me.privateLobby = lobbyId;
+        socket.join('priv:' + lobbyId);
+        cb?.({ ok: true, lobby: snapshotPrivate(lobby) });
+        broadcastPrivateLobbyUpdate(io, lobby);
+      } catch (e) {
+        cb?.({ error: e.message || 'create_failed' });
+      }
+    });
+
+    // Sends an invite to a friend via the /chat namespace.
+    socket.on('invite_to_lobby', async ({ friendUserId } = {}, cb) => {
+      try {
+        const me = players.get(socket.id);
+        if (!me?.privateLobby) return cb?.({ error: 'not_in_lobby' });
+        const lobby = privateLobbies.get(me.privateLobby);
+        if (!lobby || lobby.hostUserId !== me.userId) return cb?.({ error: 'not_host' });
+        if (lobby.status !== 'waiting') return cb?.({ error: 'already_started' });
+        if (lobby.members.length >= lobby.teamSize * 2) return cb?.({ error: 'lobby_full' });
+
+        // Verify friendship.
+        const [a, b] = me.userId < friendUserId ? [me.userId, friendUserId] : [friendUserId, me.userId];
+        const { rows } = await pool.query(
+          `SELECT 1 FROM friendships WHERE user_a=$1 AND user_b=$2 AND status='accepted'`,
+          [a, b]
+        );
+        if (!rows.length) return cb?.({ error: 'not_friends' });
+
+        // Send via the /chat namespace's per-user room (u:<userId>).
+        io.of('/chat').to(`u:${friendUserId}`).emit('lobby_invite', {
+          lobbyId: lobby.id,
+          fromUserId: me.userId,
+          fromUsername: me.username,
+          teamSize: lobby.teamSize,
+          bet: lobby.bet,
+          weaponMode: lobby.weaponMode,
+          killsToWin: lobby.killsToWin,
+        });
+        cb?.({ ok: true });
+      } catch (e) { cb?.({ error: e.message || 'invite_failed' }); }
+    });
+
+    socket.on('accept_invite', async ({ lobbyId } = {}, cb) => {
+      try {
+        const me = players.get(socket.id);
+        if (!me) return cb?.({ error: 'not_ready' });
+        if (me.privateLobby) return cb?.({ error: 'already_in_lobby' });
+        if (me.currentLobby || me.currentMatch) return cb?.({ error: 'busy' });
+        const lobby = privateLobbies.get(lobbyId);
+        if (!lobby) return cb?.({ error: 'no_lobby' });
+        if (lobby.status !== 'waiting') return cb?.({ error: 'already_started' });
+        if (lobby.members.length >= lobby.teamSize * 2) return cb?.({ error: 'lobby_full' });
+
+        const bal = await getBalance(me.userId);
+        if (bal < lobby.bet) return cb?.({ error: 'insufficient_balance' });
+
+        // Auto-team: first half of joiners on team A, rest on team B.
+        const teamA = lobby.members.filter(m => m.team === 'a').length;
+        const teamB = lobby.members.filter(m => m.team === 'b').length;
+        const team = teamA <= teamB ? 'a' : 'b';
+        lobby.members.push({ socketId: socket.id, userId: me.userId, username: me.username, team });
+        me.privateLobby = lobby.id;
+        socket.join('priv:' + lobby.id);
+        cb?.({ ok: true, lobby: snapshotPrivate(lobby) });
+        broadcastPrivateLobbyUpdate(io, lobby);
+      } catch (e) { cb?.({ error: e.message || 'join_failed' }); }
+    });
+
+    socket.on('leave_private_lobby', (_, cb) => {
+      handleLeavePrivate(socket);
+      cb?.({ ok: true });
+    });
+
+    socket.on('start_private_match', async (_, cb) => {
+      try {
+        const me = players.get(socket.id);
+        if (!me?.privateLobby) return cb?.({ error: 'not_in_lobby' });
+        const lobby = privateLobbies.get(me.privateLobby);
+        if (!lobby) return cb?.({ error: 'no_lobby' });
+        if (lobby.hostUserId !== me.userId) return cb?.({ error: 'not_host' });
+        if (lobby.status !== 'waiting') return cb?.({ error: 'already_started' });
+        const need = lobby.teamSize * 2;
+        if (lobby.members.length !== need) return cb?.({ error: 'lobby_not_full', need });
+        cb?.({ ok: true });
+        startPrivateMatch(io, lobby);
+      } catch (e) { cb?.({ error: e.message || 'start_failed' }); }
+    });
+
     socket.on('leave_lobby', (_, cb) => {
       handleLeave(socket);
       cb?.({ ok: true });
@@ -495,10 +873,24 @@ function attach(io) {
         MOVEMENT_SNAPSHOT_INTERVAL_MS, state.rotation,
         { yOffset: state.yOffset, crouching: state.crouching });
 
-      const oppSock = match.playerIds.find(id => id !== socket.id);
-      if (oppSock) ns.to(oppSock).emit('opponent_move', {
+      // For team matches the move is broadcast to every other player; for
+      // 1v1 it goes to the single opponent. Either way we include the
+      // sender's socket id and team so multi-player clients can route the
+      // update to the right model.
+      const movePayload = {
         position: state.position, rotation: state.rotation, timestamp: ts,
-      });
+        yOffset: state.yOffset || 0, crouching: !!state.crouching,
+        senderSockId: socket.id,
+        senderTeam: state.team || null,
+      };
+      if (match.isTeamMatch) {
+        for (const id of match.playerIds) {
+          if (id !== socket.id) ns.to(id).emit('opponent_move', movePayload);
+        }
+      } else {
+        const oppSock = match.playerIds.find(id => id !== socket.id);
+        if (oppSock) ns.to(oppSock).emit('opponent_move', movePayload);
+      }
     });
 
     socket.on('switch_weapon', ({ weapon } = {}) => {
@@ -592,17 +984,23 @@ function attach(io) {
         ] : null,
       });
 
-      const oppSock = match.playerIds.find(id => id !== socket.id);
-      const oppState = match.gameState[oppSock];
-      if (!oppState || oppState.respawning) {
+      // Find every possible target: in team mode, only enemy team members;
+      // in 1v1, the single other player. Respawning targets are skipped.
+      const candidates = match.isTeamMatch
+        ? match.playerIds.filter(id =>
+            id !== socket.id &&
+            match.gameState[id] &&
+            !match.gameState[id].respawning &&
+            match.gameState[id].team !== state.team)
+        : (() => {
+            const opp = match.playerIds.find(id => id !== socket.id);
+            return (opp && match.gameState[opp] && !match.gameState[opp].respawning) ? [opp] : [];
+          })();
+
+      if (!candidates.length) {
         socket.emit('hit_result', { hit: false, ammo: wState.ammo, weapon: wKey });
         return;
       }
-
-      const rewindTs  = timestamp ?? now;
-      const rewindPos = positionAtTime(oppState.positionHistory, rewindTs) || oppState.position;
-      const bodyB = playerBox(rewindPos);
-      const headB = headBox(rewindPos);
 
       const baseDirs = Array.isArray(directions) && directions.length ? directions : [direction];
       const rays = [];
@@ -630,29 +1028,62 @@ function attach(io) {
         { min:{x: 19.75, y:0, z:-20.25}, max:{x: 20.25, y:3, z: 20.25} },
       ];
 
-      let totalDmg = 0, didHit = false, didHead = false;
-      for (const ray of rays) {
-        let coverDist = Infinity;
-        for (const c of match.coverAabbs) {
-          const d = rayHitDistance(ray, c, 80); if (d < coverDist) coverDist = d;
+      // For each candidate enemy, run all the rays and aggregate damage.
+      // Pick the enemy with the closest hit (so a shot in a crowd hits
+      // the one in front, not "every body it passes through").
+      const rewindTs = timestamp ?? now;
+      let bestTarget = null;
+      let bestNearest = Infinity;
+      let bestDmg = 0;
+      let bestHead = false;
+
+      for (const cSock of candidates) {
+        const cState = match.gameState[cSock];
+        const cPos = positionAtTime(cState.positionHistory, rewindTs) || cState.position;
+        const bodyB = playerBox(cPos);
+        const headB = headBox(cPos);
+
+        let dmgHere = 0, hitHere = false, headHere = false, nearestHere = Infinity;
+        for (const ray of rays) {
+          let coverDist = Infinity;
+          for (const c of match.coverAabbs) {
+            const d = rayHitDistance(ray, c, 80); if (d < coverDist) coverDist = d;
+          }
+          for (const w of walls) {
+            const d = rayHitDistance(ray, w, 80); if (d < coverDist) coverDist = d;
+          }
+          const headDist = rayHitDistance(ray, headB, 80);
+          const bodyDist = rayHitDistance(ray, bodyB, 80);
+          if (headDist < coverDist && headDist <= bodyDist) {
+            dmgHere += W.headDmg; hitHere = true; headHere = true;
+            if (headDist < nearestHere) nearestHere = headDist;
+          } else if (bodyDist < coverDist && bodyDist !== Infinity) {
+            dmgHere += W.dmg; hitHere = true;
+            if (bodyDist < nearestHere) nearestHere = bodyDist;
+          }
         }
-        for (const w of walls) {
-          const d = rayHitDistance(ray, w, 80); if (d < coverDist) coverDist = d;
-        }
-        const headDist = rayHitDistance(ray, headB, 80);
-        const bodyDist = rayHitDistance(ray, bodyB, 80);
-        if (headDist < coverDist && headDist <= bodyDist) {
-          totalDmg += W.headDmg; didHit = true; didHead = true;
-        } else if (bodyDist < coverDist && bodyDist !== Infinity) {
-          totalDmg += W.dmg; didHit = true;
+        if (hitHere && nearestHere < bestNearest) {
+          bestNearest = nearestHere;
+          bestTarget  = cSock;
+          bestDmg     = dmgHere;
+          bestHead    = headHere;
         }
       }
 
-      if (!didHit) {
+      if (!bestTarget) {
         Replay.log(match.id, 'miss', { s: socket.id, w: wKey });
         socket.emit('hit_result', { hit: false, ammo: wState.ammo, weapon: wKey });
         return;
       }
+
+      // Bind to the legacy variable names so the rest of the kill flow
+      // (which uses oppSock / oppState / totalDmg / didHead / didHit)
+      // keeps working unchanged.
+      const oppSock  = bestTarget;
+      const oppState = match.gameState[oppSock];
+      const totalDmg = bestDmg;
+      const didHead  = bestHead;
+      const didHit   = true;
 
       state.shotsHit++;
       if (didHead) state.headshots = (state.headshots || 0) + 1;
@@ -684,7 +1115,22 @@ function attach(io) {
       if (fatal) {
         state.kills++;
         oppState.deaths++;
-        const winnerSock = state.kills >= (match.killsToWin || KILLS_TO_WIN) ? socket.id : null;
+        // Team mode: scoring is by team and the winner is whichever team
+        // hits killsToWin first.
+        let winnerSock = null;
+        let teamWin = null;
+        if (match.isTeamMatch) {
+          match.teamScores[state.team]++;
+          if (match.teamScores[state.team] >= (match.killsToWin || KILLS_TO_WIN)) {
+            teamWin = state.team;
+          }
+          // Broadcast updated team scores so HUDs can update.
+          for (const id of match.playerIds) {
+            ns.to(id).emit('team_score_update', { scores: match.teamScores });
+          }
+        } else if (state.kills >= (match.killsToWin || KILLS_TO_WIN)) {
+          winnerSock = socket.id;
+        }
 
         const killPayload = {
           killerId: socket.id, killedId: oppSock,
@@ -699,8 +1145,14 @@ function attach(io) {
         });
         Replay.log(match.id, 'death', { s: oppSock, by: socket.id });
 
-        ns.to(socket.id).emit('kill_event', killPayload);
-        ns.to(oppSock).emit('kill_event', killPayload);
+        // In team matches everyone needs the killfeed entry — broadcast
+        // to all match members rather than just killer + victim.
+        if (match.isTeamMatch) {
+          for (const id of match.playerIds) ns.to(id).emit('kill_event', killPayload);
+        } else {
+          ns.to(socket.id).emit('kill_event', killPayload);
+          ns.to(oppSock).emit('kill_event', killPayload);
+        }
 
         // ── Killcam packet ─────────────────────────────────────────────
         // Send the victim the last 3 seconds of the killer's recorded
@@ -723,8 +1175,8 @@ function attach(io) {
           console.error('[shooter] killcam build failed', e);
         }
 
-        if (winnerSock) {
-          endMatch(io, match.id, winnerSock, 'kills');
+        if (winnerSock || teamWin) {
+          endMatch(io, match.id, winnerSock || teamWin, 'kills');
           return;
         }
 
@@ -827,13 +1279,36 @@ function attach(io) {
     const p = players.get(socket.id);
     if (!p) return;
 
-    // If in an active match, opponent wins by forfeit
+    // If in an active match, opponent wins by forfeit (1v1) — or the
+    // other team wins only if THIS team is now empty (team mode).
     if (p.currentMatch) {
       const match = matches.get(p.currentMatch);
       if (match && !match.ended) {
-        const opp = match.playerIds.find(id => id !== socket.id);
-        endMatch(io, match.id, opp, fromDisconnect ? 'disconnect' : 'forfeit');
+        if (match.isTeamMatch) {
+          // Remove the leaver from the playerIds list so move/shoot
+          // broadcasts skip them, but keep the match going if their
+          // team still has at least one player.
+          const myTeam = match.gameState[socket.id]?.team;
+          match.playerIds = match.playerIds.filter(id => id !== socket.id);
+          if (match.gameState[socket.id]) {
+            match.gameState[socket.id].respawning = true; // freeze them out
+            delete match.gameState[socket.id];
+          }
+          // Did this team just empty out?
+          const remaining = Object.values(match.gameState).filter(s => s.team === myTeam).length;
+          if (remaining === 0 && myTeam) {
+            const otherTeam = myTeam === 'a' ? 'b' : 'a';
+            endMatch(io, match.id, otherTeam, fromDisconnect ? 'disconnect' : 'forfeit');
+          }
+        } else {
+          const opp = match.playerIds.find(id => id !== socket.id);
+          endMatch(io, match.id, opp, fromDisconnect ? 'disconnect' : 'forfeit');
+        }
       }
+    }
+    // If they were in a private lobby (pre-match), clean that up too.
+    if (p.privateLobby) {
+      handleLeavePrivate(socket);
     }
 
     // Leave lobby and refund-not-needed (we hadn't escrowed yet — escrow happens in startMatch)

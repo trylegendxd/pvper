@@ -57,6 +57,15 @@ const LOBBY_DEFS = [
 const lobbies = new Map();   // lobbyId   → { ...def, players:[socketId,..], mapVotes, status }
 const matches = new Map();   // matchId   → live match state
 const players = new Map();   // socketId  → { id, userId, username, currentLobby, currentMatch }
+// Private (host-created) lobbies — separate from the public arena lobbies
+// so they can't collide with bronze/silver/gold/diamond IDs.
+//   privateId → {
+//     id, hostUserId, hostSocketId, teamSize (1|2|3|5), bet, weaponMode, killsToWin,
+//     members: [{ socketId, userId, username, team }],
+//     status: 'waiting' | 'in_progress',
+//     createdAt
+//   }
+const privateLobbies = new Map();
 
 LOBBY_DEFS.forEach(def => lobbies.set(def.id, {
   id: def.id, name: def.name, bet: def.bet,
@@ -167,6 +176,10 @@ function resolveWeaponMode(votes) {
 
 // Rounds = first-to-N kills. Allowed: 3 / 5 / 7. Default 5.
 const ROUND_OPTIONS = [3, 5, 7];
+
+// Allowed team sizes for private lobbies. The number is the team count
+// per side, so 2 = 2v2, 3 = 3v3, 5 = 5v5. 1 = classic 1v1.
+const TEAM_SIZES = [1, 2, 3, 5];
 function resolveRounds(votes) {
   const v = Object.values(votes || {}).filter(x => ROUND_OPTIONS.includes(x));
   if (v.length === 0)              return 5;
@@ -295,6 +308,112 @@ async function refundShooterMatch(matchId, reason = 'refund') {
   return cancelShooterMatch(matchId, reason);
 }
 
+// ── Team match lifecycle (2v2 / 3v3 / 5v5) ────────────────────────────────
+// Team matches skip shooter_sessions (whose schema is 2-player) and instead
+// log via game_sessions + the wallet ledger. The returned `matchId` IS the
+// game_sessions row id so finishTeamShooterMatch can be idempotent.
+async function startTeamShooterMatch(teamA, teamB, bet) {
+  // teamA / teamB: arrays of userId strings.
+  return withTx(async (client) => {
+    const totalPot = (teamA.length + teamB.length) * bet;
+    const { rows: gs } = await client.query(
+      `INSERT INTO game_sessions (game_type, status, bet_amount, pot_amount)
+       VALUES ('shooter','active',$1,$2)
+       RETURNING id`,
+      [bet, totalPot]
+    );
+    const sessionId = gs[0].id;
+    // Deduct bet from every team member. Unique refIds so retries collide.
+    let i = 0;
+    for (const uid of teamA) {
+      await adjustBalance(uid, -bet, 'bet', {
+        refType: 'shooter', refId: `${sessionId}:a${i}`, client,
+      });
+      i++;
+    }
+    i = 0;
+    for (const uid of teamB) {
+      await adjustBalance(uid, -bet, 'bet', {
+        refType: 'shooter', refId: `${sessionId}:b${i}`, client,
+      });
+      i++;
+    }
+    return { matchId: sessionId, sessionId };
+  });
+}
+
+async function finishTeamShooterMatch(sessionId, winnerUserIds, loserUserIds, bet, reason = 'kills') {
+  return withTx(async (client) => {
+    const { rows } = await client.query(
+      `SELECT id, status FROM game_sessions WHERE id = $1 FOR UPDATE`, [sessionId]
+    );
+    if (!rows.length) throw new Error('team_match_not_found');
+    if (rows[0].status !== 'active') return { alreadyFinished: true };
+
+    const totalPlayers = (winnerUserIds?.length || 0) + (loserUserIds?.length || 0);
+    const pot = totalPlayers * bet;
+    const fee = Math.floor(pot * (HOUSE_FEE_PERCENT / 100));
+    const netPot = pot - fee;
+
+    if (winnerUserIds?.length) {
+      // Equal split among winners (integer cents — last winner picks up rounding).
+      const share = Math.floor(netPot / winnerUserIds.length);
+      const remainder = netPot - share * winnerUserIds.length;
+      let idx = 0;
+      for (const uid of winnerUserIds) {
+        const payout = share + (idx === winnerUserIds.length - 1 ? remainder : 0);
+        try {
+          await adjustBalance(uid, payout, 'win', {
+            refType: 'shooter', refId: `${sessionId}:wp${idx}`, client,
+            metadata: { reason, fee, pot, teamMatch: true },
+          });
+        } catch (e) { if (e.message !== 'duplicate_transaction') throw e; }
+        idx++;
+      }
+    } else {
+      // No winner — refund every player.
+      let idx = 0;
+      for (const uid of [...(winnerUserIds || []), ...(loserUserIds || [])]) {
+        try {
+          await adjustBalance(uid, bet, 'refund', {
+            refType: 'shooter', refId: `${sessionId}:r${idx}`, client, metadata: { reason },
+          });
+        } catch (e) { if (e.message !== 'duplicate_transaction') throw e; }
+        idx++;
+      }
+    }
+
+    await client.query(
+      `UPDATE game_sessions SET status='finished', finished_at=NOW() WHERE id=$1`,
+      [sessionId]
+    );
+    return { payout: netPot, fee };
+  });
+}
+
+async function cancelTeamShooterMatch(sessionId, members, bet, reason = 'cancelled') {
+  return withTx(async (client) => {
+    const { rows } = await client.query(
+      `SELECT id, status FROM game_sessions WHERE id = $1 FOR UPDATE`, [sessionId]
+    );
+    if (!rows.length) return;
+    if (rows[0].status !== 'active') return;
+    let idx = 0;
+    for (const uid of members) {
+      try {
+        await adjustBalance(uid, bet, 'refund', {
+          refType: 'shooter', refId: `${sessionId}:c${idx}`, client, metadata: { reason },
+        });
+      } catch (e) { if (e.message !== 'duplicate_transaction') throw e; }
+      idx++;
+    }
+    await client.query(
+      `UPDATE game_sessions SET status='cancelled', finished_at=NOW() WHERE id=$1`,
+      [sessionId]
+    );
+  });
+}
+
 module.exports = {
   // Constants / configs
   LOBBY_DEFS, MAX_HEALTH, KILLS_TO_WIN, MATCH_DURATION_MS, RESPAWN_DELAY_MS,
@@ -309,6 +428,8 @@ module.exports = {
   rayHitDistance, playerBox, headBox, coverAabb, positionAtTime,
   symmetricalMap, randomMap, resolveMapType, lobbySnapshot,
   WEAPON_MODES, ROUND_OPTIONS, resolveWeaponMode, resolveRounds,
+  TEAM_SIZES, privateLobbies,
   // Wallet-aware lifecycle
   startShooterMatch, finishShooterMatch, cancelShooterMatch, refundShooterMatch,
+  startTeamShooterMatch, finishTeamShooterMatch, cancelTeamShooterMatch,
 };
