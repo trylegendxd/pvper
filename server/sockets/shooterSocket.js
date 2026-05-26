@@ -346,6 +346,7 @@ function refillThrowables(state) {
 
 // Start the per-match throwable tick. Idempotent — safe to call twice.
 function ensureThrowableTick(io, match) {
+  match._io = io;          // captured for stopThrowableTick's flush
   if (match.throwableTickTimer) return;
   match.projectiles = match.projectiles || new Map();
   match.areaEffects = match.areaEffects || new Map();
@@ -354,10 +355,36 @@ function ensureThrowableTick(io, match) {
 }
 
 function stopThrowableTick(match) {
+  if (!match) return;
   if (match.throwableTickTimer) {
     clearInterval(match.throwableTickTimer);
     match.throwableTickTimer = null;
   }
+  // Flush any in-flight projectiles + active area effects so clients
+  // don't end up with leftover fire/smoke on the post-match screen.
+  if (match.matchEndCleanupDone) return;
+  match.matchEndCleanupDone = true;
+  try {
+    const io = match._io;
+    if (!io) return;
+    const ns = io.of('/shooter');
+    if (match.projectiles) {
+      for (const [pid, p] of match.projectiles) {
+        ns.to(match.playerIds).emit('throwable_impact', {
+          id: pid, type: p.type,
+          position: { x: p.position.x, y: 0, z: p.position.z },
+          ownerSocketId: p.ownerSocketId,
+        });
+      }
+      match.projectiles.clear();
+    }
+    if (match.areaEffects) {
+      for (const [aid] of match.areaEffects) {
+        for (const sid of match.playerIds) ns.to(sid).emit('area_effect_end', { id: aid });
+      }
+      match.areaEffects.clear();
+    }
+  } catch (_) { /* swallow — cleanup must never throw */ }
 }
 
 // Per-tick projectile + area-effect simulation.
@@ -369,11 +396,6 @@ function tickThrowables(io, match) {
 
   // ── Projectiles: arc physics with simple ground/cover collision ──────
   for (const [pid, p] of match.projectiles) {
-    if (now >= p.expiresAt) {
-      // Fizzle without impact (shouldn't normally happen).
-      match.projectiles.delete(pid);
-      continue;
-    }
     // Apply gravity, then advance.
     const cfg = THROWABLE_CONFIG[p.type];
     p.velocity.y -= cfg.gravity * dt;
@@ -383,8 +405,7 @@ function tickThrowables(io, match) {
 
     // Ground impact.
     let impacted = (ny <= 0);
-    // Cover-box / wall impact: if the new point is inside any cover, snap
-    // back to the previous y / ground.
+    // Cover-box impact.
     if (!impacted) {
       for (const c of (match.coverAabbs || [])) {
         if (nx >= c.min.x && nx <= c.max.x &&
@@ -392,30 +413,29 @@ function tickThrowables(io, match) {
             nz >= c.min.z && nz <= c.max.z) { impacted = true; break; }
       }
     }
-    if (!impacted) {
-      // Out-of-bounds also impacts.
-      if (Math.abs(nx) > 21 || Math.abs(nz) > 21) impacted = true;
-    }
+    if (!impacted && (Math.abs(nx) > 21 || Math.abs(nz) > 21)) impacted = true;
+
+    // Expiration counts as an impact too — falls in place. This stops
+    // the client-side mesh from hanging in the air forever if physics
+    // somehow keeps the projectile aloft past the max flight time.
+    const expired = now >= p.expiresAt;
+    if (expired && !impacted) impacted = true;
 
     if (impacted) {
-      // Settle on the ground (y=0) — flat fire / smoke.
       const impactPos = { x: nx, y: 0, z: nz };
       match.projectiles.delete(pid);
+      // Broadcast to every player in the match in one call.
       ns.to(match.playerIds).emit('throwable_impact', {
         id: pid, type: p.type, position: impactPos, ownerSocketId: p.ownerSocketId,
       });
-      // Spawn the area effect.
       spawnAreaEffect(io, match, p.type, impactPos, p.ownerSocketId, p.ownerUserId, p.ownerTeam);
     } else {
       p.position.x = nx; p.position.y = ny; p.position.z = nz;
-      // Stream updates (sparingly — every other tick).
-      if ((p._frame = (p._frame || 0) + 1) % 2 === 0) {
-        for (const sid of match.playerIds) {
-          ns.to(sid).emit('throwable_projectile_update', {
-            id: pid, position: p.position, velocity: p.velocity,
-          });
-        }
-      }
+      // Stream position EVERY tick (100ms) so the client can interpolate
+      // smoothly — every-other-tick caused visible flicker/jitter.
+      ns.to(match.playerIds).emit('throwable_projectile_update', {
+        id: pid, position: p.position, velocity: p.velocity,
+      });
     }
   }
 

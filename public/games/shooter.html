@@ -737,7 +737,7 @@ input:focus { border-color:var(--accent); }
     <span id="hud-throw-name">MOLOTOV</span>
     <span style="color:#999;">×</span>
     <span id="hud-throw-count" style="color:#ffce4a;font-weight:700;">1</span>
-    <span id="hud-throw-key" style="color:#666;font-size:10px;margin-left:6px;">[G]</span>
+    <span id="hud-throw-key" style="color:#666;font-size:10px;margin-left:6px;">[LMB]</span>
   </div>
 
   <div class="hud-el" id="hud-sprint">
@@ -1902,7 +1902,14 @@ const GameEngine = {
       if (e.target && e.target.id !== 'game-canvas') return;
       if (!this.pointerLocked) { this.requestPointerLock(); return; }
       if (!this.running || this._tabHidden) return;
-      if (e.button === 0) { this._firing = true; this._shoot(); }
+      if (e.button === 0) {
+        // While holding a throwable, LMB throws it instead of firing.
+        if (typeof Throwables !== 'undefined' && Throwables._inHand) {
+          Throwables.throwSelected();
+        } else {
+          this._firing = true; this._shoot();
+        }
+      }
       else if (e.button === 2) { this.setScoped(true); }
     });
     window.addEventListener('mouseup', e => {
@@ -2399,6 +2406,10 @@ const GameEngine = {
     // Stop any in-progress killcam so its RAF doesn't keep running into
     // the next screen / next match.
     try { if (typeof Killcam !== 'undefined') Killcam.stop(); } catch (_) {}
+    // Wipe any leftover throwable visuals (fire, smoke, in-flight
+    // grenades, in-hand model) so they don't bleed into the post-match
+    // screen or the next match.
+    try { if (typeof Throwables !== 'undefined') Throwables.resetMatch(); } catch (_) {}
     this.pointerLocked  = false;
     this._keys          = {};
     this._oppVisible    = false;
@@ -3725,49 +3736,82 @@ const Throwables = {
       }
     }
 
-    // ── In-flight projectile trails (molotov sparks) ────────────────
+    // ── In-flight projectiles: dead-reckon + spin + trail ─────────────
+    // GRAVITY mirrors the server constant — keeping client and server in
+    // sync means our local extrapolation matches the next server update.
+    const PROJ_GRAVITY = 18;
     for (const p of this.projectiles.values()) {
-      if (p.type !== 'molotov') continue;
-      // Spawn a new spark every couple of frames.
-      p._sparkAccum = (p._sparkAccum || 0) + dt;
-      if (p._sparkAccum > 0.04) {
-        p._sparkAccum = 0;
-        const s = new THREE.Mesh(
-          new THREE.BoxGeometry(0.06, 0.06, 0.06),
-          new THREE.MeshBasicMaterial({ color: Math.random() < 0.5 ? 0xffcd44 : 0xff7a22, transparent: true, opacity: 1 })
-        );
-        s.position.copy(p.mesh.position);
-        // Slight random offset so the trail reads as a stream.
-        s.position.x += (Math.random() - 0.5) * 0.12;
-        s.position.y += (Math.random() - 0.5) * 0.12;
-        s.position.z += (Math.random() - 0.5) * 0.12;
-        GameEngine.scene.add(s);
-        p.sparks = p.sparks || [];
-        p.sparks.push({ m: s, life: 0.6 });
-      }
-      // Fade and remove old sparks.
-      if (p.sparks) {
-        for (let i = p.sparks.length - 1; i >= 0; i--) {
-          const sp = p.sparks[i];
-          sp.life -= dt;
-          if (sp.life <= 0) {
-            GameEngine.scene.remove(sp.m);
-            sp.m.geometry.dispose();
-            sp.m.material.dispose();
-            p.sparks.splice(i, 1);
-          } else {
-            sp.m.material.opacity = Math.max(0, sp.life / 0.6);
-            sp.m.position.y -= dt * 0.3; // drift down behind
+      // 1) Locally apply gravity to the velocity we're holding.
+      p.vel.y -= PROJ_GRAVITY * dt;
+      // 2) Advance our internal position with that velocity.
+      p.pos.x += p.vel.x * dt;
+      p.pos.y += p.vel.y * dt;
+      p.pos.z += p.vel.z * dt;
+      // 3) Gently lerp toward the most recent server-truth position to
+      //    correct drift. Stronger correction the older the local data is.
+      const ageMs = performance.now() - (p.lastUpdateAt || performance.now());
+      const blend = Math.min(1, dt * (8 + ageMs * 0.02));
+      p.pos.x += (p.targetPos.x - p.pos.x) * blend;
+      p.pos.y += (p.targetPos.y - p.pos.y) * blend;
+      p.pos.z += (p.targetPos.z - p.pos.z) * blend;
+      // Pull velocity toward server-truth too so the next predicted step
+      // tracks the authoritative arc instead of drifting off.
+      p.vel.x += (p.targetVel.x - p.vel.x) * blend;
+      p.vel.y += (p.targetVel.y - p.vel.y) * blend;
+      p.vel.z += (p.targetVel.z - p.vel.z) * blend;
+
+      p.mesh.position.set(p.pos.x, p.pos.y, p.pos.z);
+      // Spin so the in-flight item reads as tumbling.
+      p._spinT = (p._spinT || 0) + dt * 6;
+      p.mesh.rotation.x = p._spinT;
+      p.mesh.rotation.z = p._spinT * 0.5;
+
+      // Molotov-only ember trail.
+      if (p.type === 'molotov') {
+        p._sparkAccum = (p._sparkAccum || 0) + dt;
+        if (p._sparkAccum > 0.04) {
+          p._sparkAccum = 0;
+          const s = new THREE.Mesh(
+            new THREE.BoxGeometry(0.06, 0.06, 0.06),
+            new THREE.MeshBasicMaterial({ color: Math.random() < 0.5 ? 0xffcd44 : 0xff7a22, transparent: true, opacity: 1 })
+          );
+          s.position.copy(p.mesh.position);
+          s.position.x += (Math.random() - 0.5) * 0.12;
+          s.position.y += (Math.random() - 0.5) * 0.12;
+          s.position.z += (Math.random() - 0.5) * 0.12;
+          GameEngine.scene.add(s);
+          p.sparks = p.sparks || [];
+          p.sparks.push({ m: s, life: 0.6 });
+        }
+        if (p.sparks) {
+          for (let i = p.sparks.length - 1; i >= 0; i--) {
+            const sp = p.sparks[i];
+            sp.life -= dt;
+            if (sp.life <= 0) {
+              GameEngine.scene.remove(sp.m);
+              sp.m.geometry.dispose();
+              sp.m.material.dispose();
+              p.sparks.splice(i, 1);
+            } else {
+              sp.m.material.opacity = Math.max(0, sp.life / 0.6);
+              sp.m.position.y -= dt * 0.3;
+            }
           }
         }
       }
     }
 
     // ── Area effects: fire flame flicker + rising embers, smoke drift
+    // Safety: auto-expire any area effect whose endsAt has passed even
+    // if we never received an area_effect_end (server might have ended
+    // the match before the duration ran out). Iterate over a snapshot
+    // so we can delete while looping.
+    for (const [id, e] of [...this.effects]) {
+      if (Date.now() > e.endsAt) this.onEffectEnd({ id });
+    }
     for (const e of this.effects.values()) {
       const elapsed = (Date.now() - e.startedAt);
       if (e.type === 'molotov') {
-        // Flicker the flames vertically.
         e.particles?.forEach((m, i) => {
           const phase = (now / 220) + i * 0.5;
           const sy = 0.6 + Math.sin(phase) * 0.25;
@@ -3828,16 +3872,30 @@ const Throwables = {
       : this._buildSmokeCanMesh();
     mesh.position.set(position.x, position.y, position.z);
     GameEngine.scene.add(mesh);
-    this.projectiles.set(id, { mesh, type, vel: velocity || { x:0,y:0,z:0 }, _spinT: 0 });
+    // Dead-reckoning state: keep a server target + velocity and run a
+    // local mini-physics step every frame. On each server update we
+    // gently lerp the mesh toward the authoritative position. This kills
+    // the every-tick "snap" flicker.
+    this.projectiles.set(id, {
+      mesh, type,
+      // Live (rendered) state.
+      pos: { x: position.x, y: position.y, z: position.z },
+      vel: { x: velocity?.x || 0, y: velocity?.y || 0, z: velocity?.z || 0 },
+      // Server-truth target the client is converging toward.
+      targetPos: { x: position.x, y: position.y, z: position.z },
+      targetVel: { x: velocity?.x || 0, y: velocity?.y || 0, z: velocity?.z || 0 },
+      lastUpdateAt: performance.now(),
+      _spinT: 0,
+    });
   },
 
-  onProjectileUpdate({ id, position }) {
+  onProjectileUpdate({ id, position, velocity }) {
     const p = this.projectiles.get(id);
     if (!p) return;
-    p.mesh.position.set(position.x, position.y, position.z);
-    p._spinT = (p._spinT || 0) + 0.15;
-    p.mesh.rotation.x = p._spinT;
-    p.mesh.rotation.z = p._spinT * 0.5;
+    // Just update the target — interpolation happens in tick().
+    p.targetPos = { x: position.x, y: position.y, z: position.z };
+    if (velocity) p.targetVel = { x: velocity.x, y: velocity.y, z: velocity.z };
+    p.lastUpdateAt = performance.now();
   },
 
   onImpact({ id, type, position }) {
