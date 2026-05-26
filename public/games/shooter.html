@@ -846,6 +846,13 @@ input:focus { border-color:var(--accent); }
 <!-- ═══ SCRIPTS ═════════════════════════════════════════════════════════════ -->
 <script src="/socket.io/socket.io.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<!--
+  Imported-FBX weapon support. fflate is required by the legacy
+  THREE.FBXLoader (it inflates FBX compressed buffers). Both are
+  pinned to a Three.js r128-compatible build.
+-->
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/libs/fflate.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/FBXLoader.js"></script>
 <script>
 'use strict';
 
@@ -1336,6 +1343,134 @@ const Bot = {
 };
 
 // ══════════════════════════════════════════════════════════════
+//  WEAPON ASSETS  — async-load FBX gun models, fall back to the
+//  hand-built blocky meshes if loading fails.
+//
+//  The shipped Weapons.fbx (Imphenzia low-poly pack) contains four
+//  named meshes that map directly to our weapon keys:
+//    rifle   ← Gun-AK47
+//    pistol  ← Pistol
+//    shotgun ← ShotGun
+//    sniper  ← Sniper
+//
+//  Tuning per weapon lives in WEAPON_TUNING below — adjust scale,
+//  offset, and rotation there to dial in each gun's first-person
+//  look without touching the loader code.
+// ══════════════════════════════════════════════════════════════
+const WEAPON_TUNING = {
+  // FBX meshes are typically authored in cm / scaled by 100x. These
+  // values are the "looks-like-the-old-box-gun" calibration. Tune as
+  // needed — values here only affect the imported model.
+  rifle:   { src: 'Gun-AK47', scale: 0.0040, pos: [0.20, -0.20, -0.48], rot: [0,  Math.PI, 0] },
+  pistol:  { src: 'Pistol',   scale: 0.0042, pos: [0.16, -0.18, -0.36], rot: [0,  Math.PI, 0] },
+  shotgun: { src: 'ShotGun',  scale: 0.0040, pos: [0.22, -0.22, -0.50], rot: [0,  Math.PI, 0] },
+  sniper:  { src: 'Sniper',   scale: 0.0040, pos: [0.20, -0.18, -0.56], rot: [0,  Math.PI, 0] },
+};
+
+const WeaponAssets = {
+  // Map of weaponKey → THREE.Object3D (master clone source). null = not
+  // loaded yet or failed.
+  master: null,
+  loadedKeys: new Set(),
+  loadAttempted: false,
+
+  // Kick off loading. Safe to call multiple times; only loads once.
+  // GameEngine is passed so we can patch its _gunModels once the FBX
+  // is ready. If loading fails, the existing box-geometry models stay
+  // in place — never a hard crash.
+  load(engine) {
+    if (this.loadAttempted) return;
+    this.loadAttempted = true;
+    if (typeof THREE === 'undefined' || !THREE.FBXLoader) {
+      console.warn('[weapons] FBXLoader unavailable — keeping fallback box models.');
+      return;
+    }
+    const loader = new THREE.FBXLoader();
+    loader.load(
+      '/assets/models/weapons/Weapons.fbx',
+      (root) => {
+        try {
+          this.master = this._collectMasters(root);
+          // Apply to whatever's currently in the scene.
+          for (const key of Object.keys(WEAPON_TUNING)) {
+            this._applyToGroup(engine, key);
+          }
+          // Make sure the currently-equipped weapon shows the new model.
+          if (engine._gunModels?.[engine.currentWeapon]) {
+            engine.gunGroup = engine._gunModels[engine.currentWeapon];
+          }
+          console.info('[weapons] FBX weapons loaded:', [...this.loadedKeys]);
+        } catch (e) {
+          console.error('[weapons] FBX post-load failed', e);
+        }
+      },
+      undefined,
+      (err) => {
+        console.warn('[weapons] FBX load failed — keeping fallback box models.', err);
+      }
+    );
+  },
+
+  // Walk the loaded FBX scene and pick out the meshes named in
+  // WEAPON_TUNING. Returns { weaponKey: Object3D } for easy clone-on-demand.
+  _collectMasters(root) {
+    const wanted = {};
+    for (const [key, t] of Object.entries(WEAPON_TUNING)) wanted[t.src] = key;
+    const out = {};
+    root.traverse((obj) => {
+      // Match exact mesh names AND parent group names (FBX often wraps
+      // each piece in a Null node with the artist's name on it).
+      const k = wanted[obj.name];
+      if (k && !out[k]) out[k] = obj;
+    });
+    return out;
+  },
+
+  // Hook the imported model into engine._gunModels[key]:
+  //   1. Hide every existing (box-geometry) child.
+  //   2. Clone the FBX node + apply scale / offset / rotation.
+  //   3. Force depth-test off so the model can't clip through walls,
+  //      matching the existing first-person gun convention.
+  _applyToGroup(engine, key) {
+    if (!engine._gunModels || !this.master?.[key]) return;
+    const group = engine._gunModels[key];
+    const t = WEAPON_TUNING[key];
+    // Drop any previous imported clone (e.g. if applied twice).
+    if (group.userData.importedClone) {
+      group.remove(group.userData.importedClone);
+      group.userData.importedClone.traverse(o => {
+        o.geometry?.dispose?.();
+        if (Array.isArray(o.material)) o.material.forEach(m => m.dispose?.());
+        else o.material?.dispose?.();
+      });
+    }
+    // Hide existing fallback children but DON'T destroy them — they
+    // remain as the safety net if the user reloads the page during the
+    // network swap, or if we ever want to flip back.
+    for (const child of group.children) child.visible = false;
+    const clone = this.master[key].clone(true);
+    clone.scale.setScalar(t.scale);
+    clone.position.set(t.pos[0], t.pos[1], t.pos[2]);
+    clone.rotation.set(t.rot[0], t.rot[1], t.rot[2]);
+    clone.traverse(o => {
+      if (o.material) {
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        for (const m of mats) {
+          m.depthTest = false;
+          m.depthWrite = false;
+          // Lambert lighting reads fine for the low-poly look.
+          if (m.shininess !== undefined) m.shininess = 0;
+        }
+      }
+      o.renderOrder = 999;
+    });
+    group.add(clone);
+    group.userData.importedClone = clone;
+    this.loadedKeys.add(key);
+  },
+};
+
+// ══════════════════════════════════════════════════════════════
 //  GAME ENGINE
 // ══════════════════════════════════════════════════════════════
 const GameEngine = {
@@ -1636,6 +1771,11 @@ const GameEngine = {
     flash.renderOrder = 1000;
     this._muzzleFlash = flash;
     this.camera.add(flash);
+
+    // Kick off async load of the imported FBX weapon models. If this
+    // never resolves (no FBXLoader, network failure, etc.) the box
+    // models above stay visible — the game keeps working.
+    try { WeaponAssets.load(this); } catch (e) { console.warn('[weapons] async load init failed', e); }
   },
 
   _buildWeaponModel(key) {
