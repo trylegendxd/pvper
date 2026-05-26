@@ -6,31 +6,102 @@
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/css/styles.css">
 <style>
-  .table {
-    background: radial-gradient(ellipse at top, #1b5a35 0%, #0e3a22 70%, #0a2615 100%);
-    border: 6px solid #0d2716; border-radius: 14px;
-    padding: 28px 24px 22px; min-height: 460px;
-    display:flex; flex-direction:column; gap:18px;
-    box-shadow: inset 0 0 60px rgba(0,0,0,.4);
+  /* ── Table & felt ─────────────────────────────────────────────── */
+  .bj-stage {
+    position: relative;
+    background: linear-gradient(180deg, #0b0d10 0%, #1a1c1f 100%);
+    border-radius: 14px;
+    padding: 0;
+    overflow: hidden;
+    box-shadow: 0 10px 30px rgba(0,0,0,.5);
+  }
+  .bj-felt {
+    position: relative;
+    background:
+      radial-gradient(ellipse 90% 55% at 50% 35%, #1a6a3c 0%, #114a29 55%, #0a3019 80%, #07210f 100%),
+      #07210f;
+    padding: 20px 18px 24px;
+    min-height: 560px;
+    border: 8px solid #3a2516;
+    border-radius: 14px;
+    box-shadow: inset 0 0 80px rgba(0,0,0,.5), inset 0 0 4px rgba(255,255,255,.05);
+  }
+  .bj-felt::before {
+    /* Subtle "felt" texture — light noise via overlapping radial dots */
+    content:''; position:absolute; inset:0; pointer-events:none;
+    background:
+      radial-gradient(circle 1px at 20% 30%, rgba(255,255,255,.05) 50%, transparent 51%),
+      radial-gradient(circle 1px at 80% 70%, rgba(255,255,255,.04) 50%, transparent 51%);
+    background-size: 40px 40px, 60px 60px;
+    opacity: .35;
+  }
+  .bj-table-text {
+    text-align: center;
+    color: rgba(255,255,255,.18);
+    letter-spacing: 4px;
+    font-weight: 700;
+    pointer-events: none;
+    margin: 4px 0 12px;
+    font-size: 13px;
+  }
+  .bj-table-text .big { display:block; font-size: 28px; letter-spacing: 8px; color: rgba(255,255,255,.22); }
+  .bj-table-text .sub { font-size: 10px; opacity: .85; }
+
+  /* ── Top row: chip rack + deck shoe ───────────────────────────── */
+  .bj-top {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    margin-bottom: 8px; gap: 16px;
+  }
+  .chip-rack-tray {
+    background: linear-gradient(180deg, #1a1a1a, #2a2a2a);
+    border: 2px solid #444; border-radius: 6px;
+    padding: 6px 10px;
+    display: flex; gap: 6px;
+    box-shadow: inset 0 -3px 6px rgba(0,0,0,.5);
+  }
+  .chip-rack-tray .stack {
+    width: 22px; height: 56px;
+    border-radius: 3px;
+    background: repeating-linear-gradient(
+      to bottom,
+      var(--c) 0 4px,
+      rgba(0,0,0,.35) 4px 5px
+    );
+    box-shadow: inset 0 0 3px rgba(0,0,0,.4);
+  }
+  .deck-shoe {
+    width: 70px; height: 80px;
+    background: linear-gradient(135deg, #d6d4cd 0%, #f6f3eb 60%, #b8b3a7 100%);
+    border-radius: 6px;
+    border: 2px solid #2a2a2a;
+    box-shadow: 0 4px 10px rgba(0,0,0,.5);
     position: relative;
   }
-  .seat { display:flex; flex-direction:column; gap:8px; align-items:center; }
-  .seat h3 { color:#fff; font-size:13px; letter-spacing:3px; opacity:.9; }
-  .cards { display:flex; gap:8px; min-height: 124px; align-items:center; justify-content:center; }
+  .deck-shoe::before {
+    content:''; position:absolute; right:6px; bottom:6px; top:6px; left:6px;
+    background:
+      linear-gradient(135deg, rgba(0,0,0,.2) 0 50%, transparent 50%),
+      repeating-linear-gradient(45deg, #3a1d6b 0 6px, #5a3a8c 6px 12px);
+    border-radius: 3px;
+  }
 
-  /* ── Card ─────────────────────────────────────────────────────── */
+  /* ── Dealer area ──────────────────────────────────────────────── */
+  .dealer-area { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .dealer-area .cards { display: flex; gap: 8px; min-height: 110px; align-items: center; }
+  .dealer-area .val { color: #dfecdf; font-size: 13px; letter-spacing: 2px; opacity: .85; min-height: 18px; }
+
+  /* ── Cards ────────────────────────────────────────────────────── */
   .card-face {
     width: 70px; height: 98px; border-radius: 6px;
     background: #fff; color: #000; padding: 6px;
     display:flex; flex-direction:column; justify-content:space-between;
     font-family: 'Georgia', serif; font-weight: 700; font-size: 18px;
-    box-shadow: 0 6px 14px rgba(0,0,0,.45);
-    position: relative;
+    box-shadow: 0 6px 14px rgba(0,0,0,.55);
     transform-origin: top center;
     animation: dealIn .35s cubic-bezier(.22,1.18,.34,1) backwards;
   }
   @keyframes dealIn {
-    from { transform: translate(-60px, -60px) rotate(-12deg); opacity: 0; }
+    from { transform: translate(-60px, -90px) rotate(-15deg); opacity: 0; }
     to   { transform: translate(0,0) rotate(0); opacity: 1; }
   }
   .card-face.hidden {
@@ -42,100 +113,153 @@
   }
   .card-face .bot { transform: rotate(180deg); align-self: flex-end; }
   .card-face.red { color: #c0142d; }
-  .seat .val { color:#dceede; font-size:15px; letter-spacing:1px; font-weight:600; min-height: 20px; }
 
-  /* ── Multi-hand seats row ─────────────────────────────────────── */
-  .seats-row {
-    display: grid; grid-template-columns: repeat(var(--seat-count, 1), 1fr);
-    gap: 24px; align-items: start;
+  /* ── Three player seats ───────────────────────────────────────── */
+  .seats-arc {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 18px;
+    margin: 26px 24px 14px;
   }
-  .player-seat {
-    background: rgba(0,0,0,.18); border: 1px solid rgba(255,255,255,.07);
-    border-radius: 8px; padding: 12px 10px;
-    display: flex; flex-direction: column; gap: 8px; align-items: center;
-    transition: border-color .2s ease, background .2s ease;
+  .seat-slot {
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+    min-height: 220px;
+    position: relative;
   }
-  .player-seat.is-active { border-color: rgba(255,215,0,.45); background: rgba(255,215,0,.04); }
-  .player-seat.is-bust   { border-color: rgba(255,90,90,.45); }
-  .player-seat.is-win    { border-color: rgba(80,220,150,.5); background: rgba(80,220,150,.05); }
-  .seat-tag {
-    font-size:10px; letter-spacing:2px; color:#cdd; opacity:.8;
+  .seat-slot.is-locked { opacity: .3; pointer-events: none; }
+  .seat-cards { display:flex; gap: 6px; min-height: 110px; align-items: center; justify-content: center; }
+  .seat-val { color:#fff; font-size: 13px; letter-spacing: 1px; font-weight: 600; min-height: 18px; }
+  .seat-banner {
+    font-size: 13px; letter-spacing: 3px; font-weight: 700;
+    text-align: center; padding: 4px 10px; border-radius: 3px; min-height: 22px;
+    color: #fff;
   }
-  .seat-bet { color: #ffd84a; font-size: 13px; letter-spacing: 1px; font-weight: 600; }
-  .seat-controls { display:flex; gap:6px; flex-wrap:wrap; justify-content:center; }
-  .seat-controls button {
-    background:rgba(0,0,0,.4); border:1px solid rgba(255,255,255,.18);
-    color:#fff; padding:6px 12px; border-radius:3px; cursor:pointer;
-    font-family:inherit; font-size:12px; letter-spacing:1px; font-weight:600;
-  }
-  .seat-controls button.green { border-color:#3fd07f; color:#3fd07f; }
-  .seat-controls button.red   { border-color:#e63946; color:#e63946; }
-  .seat-controls button.gold  { border-color:#ffd84a; color:#ffd84a; }
-  .seat-controls button:hover { background: rgba(255,255,255,.06); }
+  .seat-banner.win  { background: rgba(80,220,150,.18); color: #6df0a8; box-shadow: 0 0 12px rgba(80,220,150,.4); }
+  .seat-banner.lose { background: rgba(255,90,90,.16);  color: #ff8a8a; }
+  .seat-banner.push { background: rgba(255,216,74,.16); color: #ffd84a; }
+  .seat-banner.active { background: rgba(255,255,255,.08); color: #fff; }
 
-  .banner {
-    text-align:center; font-size:24px; letter-spacing:4px; font-weight:700;
-    color:#fff; min-height:30px;
-    text-shadow: 0 2px 6px rgba(0,0,0,.5);
-  }
-  .banner.win  { color: #4cf09e; }
-  .banner.lose { color: #ff6f7a; }
-  .banner.push { color: #ffd84a; }
-
-  /* ── Chip rack + setup ────────────────────────────────────────── */
-  .setup-panel {
-    display:flex; flex-direction:column; gap:14px;
-    background: rgba(0,0,0,.25); border:1px solid rgba(255,255,255,.08);
-    border-radius:8px; padding:14px;
-  }
-  .chip-rack {
-    display:flex; gap:10px; justify-content:center; flex-wrap:wrap;
-  }
-  .chip {
-    width: 56px; height: 56px; border-radius: 50%;
-    border: 4px dashed rgba(255,255,255,.65);
-    background: var(--chip-color, #444);
-    color: #fff; font-weight: 700; font-size: 14px; letter-spacing: 0;
-    display:flex; align-items:center; justify-content:center;
+  /* Betting circle below cards */
+  .bet-circle {
+    width: 86px; height: 86px;
+    border-radius: 50%;
+    border: 2px dashed rgba(255,255,255,.45);
+    display: flex; align-items: center; justify-content: center;
+    position: relative;
     cursor: pointer;
-    box-shadow: 0 4px 0 rgba(0,0,0,.4), inset 0 -4px 4px rgba(0,0,0,.3);
-    user-select: none;
-    transition: transform .12s ease;
+    transition: border-color .15s ease, transform .15s ease;
   }
-  .chip:hover { transform: translateY(-3px); }
-  .chip.c-5    { --chip-color: #f0f0f0; color:#222; }
-  .chip.c-25   { --chip-color: #2b6fff; }
-  .chip.c-100  { --chip-color: #1aa758; }
-  .chip.c-500  { --chip-color: #6c2bff; }
-  .chip.c-1000 { --chip-color: #ffae00; color:#222; }
-  .chip-clear  { --chip-color: #b03030; }
-  .seat-setup-row {
-    display:flex; gap:12px; align-items:center; justify-content:space-between;
-    padding:8px 12px; background:rgba(0,0,0,.25); border-radius:6px;
+  .bet-circle.is-selected { border-color: #ffd84a; box-shadow: 0 0 18px rgba(255,216,74,.35); }
+  .bet-circle.is-locked   { border-style: solid; cursor: default; }
+  .bet-circle .add-hand-label {
+    color: rgba(255,255,255,.45); font-size: 10px; letter-spacing: 2px;
   }
-  .seat-setup-row.is-selected { outline: 1px solid #ffd84a; }
-  .seat-setup-row .ss-label { font-size:12px; letter-spacing:2px; color:#cdd; }
-  .seat-setup-row .ss-bet  { font-size:18px; color:#ffd84a; font-weight:700; letter-spacing:1px; min-width:60px; text-align:right; }
-  .seat-setup-row .ss-rm {
-    background: rgba(0,0,0,.4); border:1px solid #b03030; color:#e63946;
-    padding:3px 8px; border-radius:3px; cursor:pointer; font-size:11px;
-  }
-  .setup-actions { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:4px; }
-  .setup-actions button {
-    background:#222; border:1px solid #555; color:#fff; padding:8px 14px;
-    border-radius:3px; cursor:pointer; font-family:inherit; font-size:12px;
-    letter-spacing:2px; font-weight:600;
-  }
-  .setup-actions button.primary { background:#1aa758; border-color:#1aa758; }
-  .setup-actions button.primary:hover { background:#1ec56b; }
-  .setup-actions button:disabled { opacity:.4; cursor:not-allowed; }
-  .total-bet { text-align:center; font-size:12px; color:#cdd; letter-spacing:2px; }
-  .total-bet b { color:#ffd84a; font-size:14px; }
 
-  .center-line {
-    text-align:center; color: rgba(255,255,255,.4); font-size: 11px;
-    letter-spacing: 4px; padding: 6px 0; border-top: 1px dashed rgba(255,255,255,.15);
-    border-bottom: 1px dashed rgba(255,255,255,.15);
+  /* Chip stack rendered inside a betting circle. We fake a 3D stack
+     using two pseudo-rings + a chip face. */
+  .chip-stack {
+    position: relative;
+    width: 64px; height: 38px;
+    pointer-events: none;
+  }
+  .chip-stack .chip-face {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    height: 26px; border-radius: 50%;
+    background: var(--c, #4a4a4a);
+    box-shadow:
+      0 -2px 0 rgba(0,0,0,.18),
+      0 -4px 0 var(--c, #4a4a4a),
+      0 -6px 0 rgba(0,0,0,.18),
+      0 -8px 0 var(--c, #4a4a4a),
+      inset 0 -3px 4px rgba(0,0,0,.35),
+      inset 0 2px 3px rgba(255,255,255,.18);
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-weight: 700; font-size: 12px;
+    letter-spacing: 0;
+    border: 3px dashed rgba(255,255,255,.65);
+    box-sizing: border-box;
+  }
+  .chip-stack .chip-amount {
+    text-shadow: 0 0 2px rgba(0,0,0,.6);
+  }
+
+  /* ── Player action buttons (per seat, only when active) ──────── */
+  .seat-actions { display:flex; gap:6px; justify-content:center; flex-wrap:wrap; margin-top: 4px; }
+  .seat-actions button {
+    background: rgba(0,0,0,.4);
+    border: 1px solid rgba(255,255,255,.18);
+    color: #fff;
+    padding: 6px 12px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    letter-spacing: 1px;
+    font-weight: 600;
+  }
+  .seat-actions button.green { border-color:#3fd07f; color:#3fd07f; }
+  .seat-actions button.red   { border-color:#e63946; color:#e63946; }
+  .seat-actions button.gold  { border-color:#ffd84a; color:#ffd84a; }
+  .seat-actions button:hover { background: rgba(255,255,255,.06); }
+
+  /* ── Bottom rail: chip selector + actions + status ───────────── */
+  .bj-bottom {
+    margin-top: auto;
+    padding-top: 18px;
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+  }
+  .chip-row { display: flex; gap: 14px; justify-content: center; align-items: center; }
+  .chip-btn {
+    width: 60px; height: 60px;
+    border-radius: 50%;
+    background: var(--c);
+    border: 4px dashed rgba(255,255,255,.7);
+    color: #fff; font-weight: 800; font-size: 13px;
+    cursor: pointer;
+    box-shadow:
+      0 4px 0 rgba(0,0,0,.45),
+      inset 0 -5px 7px rgba(0,0,0,.35),
+      inset 0 2px 4px rgba(255,255,255,.2);
+    transition: transform .12s ease;
+    user-select: none;
+    display: flex; align-items: center; justify-content: center;
+    text-shadow: 0 0 2px rgba(0,0,0,.6);
+    font-family: inherit;
+  }
+  .chip-btn:hover { transform: translateY(-3px); }
+  .chip-btn.is-active { box-shadow: 0 0 0 3px #ffd84a, 0 4px 0 rgba(0,0,0,.45), inset 0 -5px 7px rgba(0,0,0,.35); }
+
+  .action-row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 6px; }
+  .action-btn {
+    background: linear-gradient(180deg, #2a2a2a, #1a1a1a);
+    border: 1px solid #555;
+    color: #fff;
+    padding: 10px 22px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 13px;
+    letter-spacing: 3px;
+    font-weight: 700;
+    box-shadow: 0 3px 0 rgba(0,0,0,.4);
+    min-width: 120px;
+  }
+  .action-btn.primary { background: linear-gradient(180deg, #1aa758, #138647); border-color: #1aa758; }
+  .action-btn.primary:hover { background: linear-gradient(180deg, #1ec56b, #138647); }
+  .action-btn:hover { background: linear-gradient(180deg, #3a3a3a, #2a2a2a); }
+  .action-btn:disabled { opacity: .35; cursor: not-allowed; box-shadow: none; }
+
+  .balance-bar {
+    display: flex; justify-content: space-between; width: 100%;
+    padding: 8px 18px; font-size: 12px; letter-spacing: 2px;
+    color: rgba(255,255,255,.8); border-top: 1px solid rgba(255,255,255,.08);
+    margin-top: 8px;
+  }
+  .balance-bar b { color: #ffd84a; }
+
+  @media (max-width: 720px) {
+    .seats-arc { grid-template-columns: 1fr; }
+    .chip-btn  { width: 52px; height: 52px; }
   }
 </style>
 </head>
@@ -143,17 +267,45 @@
 <div class="topbar" id="topbar"></div>
 <div class="container">
   <h1 class="page">BLACKJACK</h1>
-  <p class="subtitle">Dealer hits to 17 · Blackjack pays 3:2 · Push refunds · Double on first two cards. Up to 3 hands at once.</p>
+  <p class="subtitle">Dealer hits to 17 · Blackjack pays 3:2 · Push refunds · Up to 3 hands per round.</p>
 
-  <div class="table" id="table">
-    <div class="seat" id="dealer-seat">
-      <h3>DEALER</h3>
-      <div class="cards" id="dealer-cards"></div>
-      <div class="val" id="dealer-val"></div>
+  <div class="bj-stage">
+    <div class="bj-felt">
+      <!-- Top: chip rack on the left, deck shoe on the right -->
+      <div class="bj-top">
+        <div class="chip-rack-tray" aria-hidden="true">
+          <div class="stack" style="--c:#f0f0f0"></div>
+          <div class="stack" style="--c:#2b6fff"></div>
+          <div class="stack" style="--c:#1aa758"></div>
+          <div class="stack" style="--c:#c83434"></div>
+          <div class="stack" style="--c:#6c2bff"></div>
+          <div class="stack" style="--c:#ffae00"></div>
+        </div>
+        <div class="deck-shoe" aria-hidden="true"></div>
+      </div>
+
+      <!-- Dealer cards -->
+      <div class="dealer-area">
+        <div class="cards" id="dealer-cards"></div>
+        <div class="val"   id="dealer-val"></div>
+      </div>
+
+      <!-- Felt-printed title text (only when no hands are out) -->
+      <div class="bj-table-text" id="bj-table-text">
+        <span class="big">BLACKJACK</span>
+        <span class="sub">PAYS 3 TO 2 · DEALER HITS ON SOFT 17</span>
+      </div>
+
+      <!-- Three seats with cards + a betting circle each -->
+      <div class="seats-arc" id="seats-arc"></div>
+
+      <!-- Bottom rail: chip selector + actions -->
+      <div class="bj-bottom" id="bj-bottom"></div>
     </div>
-    <div class="center-line">— TABLE —</div>
-    <div id="seats-row" class="seats-row" style="--seat-count:1"></div>
-    <div id="setup-area"></div>
+    <div class="balance-bar">
+      <span>BALANCE: <b id="bal-display">0 cr</b></span>
+      <span>BET AMOUNT: <b id="total-bet-display">0 cr</b></span>
+    </div>
   </div>
 </div>
 <div class="legal-footer">Credits are fictional play-money credits only and have no real-world monetary value.</div>

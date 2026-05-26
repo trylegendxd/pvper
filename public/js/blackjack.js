@@ -1,23 +1,56 @@
-// public/js/blackjack.js — multi-hand blackjack with chip-stack betting
+// public/js/blackjack.js — multi-hand blackjack, casino-style felt
 (async () => {
   const user = await renderTopbar();
   if (!user) return;
 
   const MAX_SEATS = 3;
-  const CHIPS     = [5, 25, 100, 500, 1000];
   const MIN_BET   = 5;
+  // Chip palette — matches the on-table rack so the colours are
+  // consistent everywhere on screen.
+  const CHIPS = [
+    { v: 5,    c: '#f0f0f0', tc: '#222' },
+    { v: 25,   c: '#2b6fff', tc: '#fff' },
+    { v: 100,  c: '#1aa758', tc: '#fff' },
+    { v: 500,  c: '#6c2bff', tc: '#fff' },
+    { v: 1000, c: '#ffae00', tc: '#222' },
+  ];
 
   const $ = id => document.getElementById(id);
 
+  // ── State ─────────────────────────────────────────────────────────
   const State = {
-    // Setup phase: per-seat bet stacks.
-    setupSeats: [0],     // each element = current bet for that seat
-    selectedSeat: 0,     // which seat new chips go to
-    // Play phase: array of hands returned by the server.
-    hands: [],
+    phase:        'setup',   // 'setup' | 'play'
+    bets:         [0, 0, 0], // current bet on each of 3 seats
+    selectedSeat: 0,
+    activeChip:   CHIPS[2].v, // default chip = 100
+    lastBets:     null,      // for REBET
+    balance:      Number(user.balance) || 0,
+    hands:        [],
   };
 
-  // ── Card rendering ──────────────────────────────────────────────────
+  // ── Helpers ───────────────────────────────────────────────────────
+  function chipFor(v) { return CHIPS.find(c => c.v === v) || CHIPS[0]; }
+
+  // Pick the largest chip <= remaining as the "label" for the stack on
+  // the betting circle. The visual is a stack — we just colour by the
+  // largest denomination that fits.
+  function stackColorFor(total) {
+    let c = CHIPS[0];
+    for (const x of CHIPS) if (total >= x.v) c = x;
+    return c;
+  }
+
+  function totalBet() { return State.bets.reduce((a, b) => a + b, 0); }
+
+  function refreshBalance() {
+    api('/api/wallet/balance').then(({ balance }) => {
+      State.balance = Number(balance) || 0;
+      $('bal-display').textContent = fmtCredits(State.balance);
+      const tb = $('topbar')?.querySelector('.balance');
+      if (tb) tb.textContent = fmtCredits(State.balance);
+    }).catch(() => {});
+  }
+
   function renderCard(c) {
     if (c.hidden) return `<div class="card-face hidden"></div>`;
     const red = (c.s === '♥' || c.s === '♦');
@@ -27,194 +60,238 @@
     </div>`;
   }
 
-  // ── Setup view (no hands dealt) ─────────────────────────────────────
+  // Pretty money — uses k/m suffixes only in chip stacks to keep them tight.
+  function chipLabel(v) {
+    if (v >= 1000 && v % 1000 === 0) return (v / 1000) + 'k';
+    return String(v);
+  }
+
+  // ── Setup-phase render ────────────────────────────────────────────
   function renderSetup() {
+    State.phase = 'setup';
     $('dealer-cards').innerHTML = '';
     $('dealer-val').textContent = '';
-    $('seats-row').innerHTML = '';
-    $('seats-row').style.setProperty('--seat-count', 1);
+    $('bj-table-text').style.display = '';
+    $('total-bet-display').textContent = fmtCredits(totalBet());
 
-    const total = State.setupSeats.reduce((a, b) => a + b, 0);
-    const canDeal = State.setupSeats.length > 0 && State.setupSeats.every(b => b >= MIN_BET);
+    // Three seats, each empty (no cards), with a betting circle below.
+    $('seats-arc').innerHTML = State.bets.map((bet, i) => {
+      const isSel = i === State.selectedSeat;
+      const hasBet = bet > 0;
+      return `
+        <div class="seat-slot" data-seat="${i}">
+          <div class="seat-cards"></div>
+          <div class="seat-val"></div>
+          <div class="seat-banner"></div>
+          <div class="bet-circle ${isSel ? 'is-selected' : ''}" data-bet-circle="${i}">
+            ${hasBet
+              ? `<div class="chip-stack" style="--c:${stackColorFor(bet).c}">
+                   <div class="chip-face"><span class="chip-amount">${chipLabel(bet)}</span></div>
+                 </div>`
+              : `<span class="add-hand-label">CLICK<br>TO BET</span>`}
+          </div>
+        </div>
+      `;
+    }).join('');
 
-    const seatRowsHtml = State.setupSeats.map((bet, i) => `
-      <div class="seat-setup-row ${i === State.selectedSeat ? 'is-selected' : ''}" data-seat="${i}">
-        <span class="ss-label">SEAT ${i + 1}</span>
-        <span class="ss-bet">${bet} cr</span>
-        ${State.setupSeats.length > 1 ? `<button class="ss-rm" data-rm="${i}">remove</button>` : '<span></span>'}
+    // Bottom rail: chip selector + actions
+    $('bj-bottom').innerHTML = `
+      <div class="chip-row">
+        ${CHIPS.map(c => `
+          <button class="chip-btn ${c.v === State.activeChip ? 'is-active' : ''}"
+                  data-chip="${c.v}"
+                  style="--c:${c.c};color:${c.tc};">
+            ${chipLabel(c.v)}
+          </button>
+        `).join('')}
       </div>
-    `).join('');
-
-    $('setup-area').innerHTML = `
-      <div class="setup-panel">
-        <div class="seats-list">${seatRowsHtml}</div>
-        <div class="total-bet">Total bet: <b>${total} cr</b> across ${State.setupSeats.length} ${State.setupSeats.length === 1 ? 'hand' : 'hands'}</div>
-        <div class="chip-rack" id="chip-rack">
-          ${CHIPS.map(v => `<button class="chip c-${v}" data-chip="${v}" title="Add ${v}">${v}</button>`).join('')}
-          <button class="chip chip-clear" data-clear="1" title="Clear selected seat">×</button>
-        </div>
-        <div class="setup-actions">
-          ${State.setupSeats.length < MAX_SEATS ? `<button id="btn-add-seat">+ ADD HAND</button>` : ''}
-          <button id="btn-deal" class="primary" ${canDeal ? '' : 'disabled'}>DEAL ${State.setupSeats.length === 1 ? 'HAND' : 'HANDS'}</button>
-        </div>
+      <div class="action-row">
+        <button class="action-btn" id="btn-clear">CLEAR</button>
+        ${State.lastBets ? `<button class="action-btn" id="btn-rebet">REBET</button>` : ''}
+        <button class="action-btn" id="btn-double" ${totalBet() > 0 ? '' : 'disabled'}>×2</button>
+        <button class="action-btn primary" id="btn-deal" ${totalBet() >= MIN_BET ? '' : 'disabled'}>DEAL</button>
       </div>
     `;
 
-    // Wire events
-    document.querySelectorAll('[data-seat]').forEach(el => {
-      el.addEventListener('click', e => {
-        if (e.target.dataset.rm) return; // handled below
-        State.selectedSeat = Number(el.dataset.seat);
+    wireSetup();
+  }
+
+  function wireSetup() {
+    // Seat / betting-circle selection
+    document.querySelectorAll('[data-bet-circle]').forEach(el => {
+      el.addEventListener('click', () => {
+        State.selectedSeat = Number(el.dataset.betCircle);
         renderSetup();
       });
     });
-    document.querySelectorAll('[data-rm]').forEach(el => {
-      el.addEventListener('click', e => {
-        e.stopPropagation();
-        const idx = Number(el.dataset.rm);
-        State.setupSeats.splice(idx, 1);
-        if (State.selectedSeat >= State.setupSeats.length) {
-          State.selectedSeat = State.setupSeats.length - 1;
-        }
-        renderSetup();
-      });
-    });
+    // Chip selection
     document.querySelectorAll('[data-chip]').forEach(el => {
       el.addEventListener('click', () => {
         const v = Number(el.dataset.chip);
-        const i = State.selectedSeat;
-        if (i < 0 || i >= State.setupSeats.length) return;
-        State.setupSeats[i] = (State.setupSeats[i] || 0) + v;
+        State.activeChip = v;
+        // Also place this chip on the currently-selected seat.
+        if (State.bets[State.selectedSeat] + v > State.balance - (totalBet() - State.bets[State.selectedSeat])) {
+          // Soft guard — still allow it; server will reject if truly short.
+        }
+        State.bets[State.selectedSeat] = (State.bets[State.selectedSeat] || 0) + v;
         renderSetup();
       });
     });
-    document.querySelector('[data-clear]')?.addEventListener('click', () => {
-      const i = State.selectedSeat;
-      if (i < 0 || i >= State.setupSeats.length) return;
-      State.setupSeats[i] = 0;
+    $('btn-clear')?.addEventListener('click', () => {
+      State.bets = [0, 0, 0];
       renderSetup();
     });
-    $('btn-add-seat')?.addEventListener('click', () => {
-      if (State.setupSeats.length >= MAX_SEATS) return;
-      State.setupSeats.push(0);
-      State.selectedSeat = State.setupSeats.length - 1;
+    $('btn-rebet')?.addEventListener('click', () => {
+      if (!State.lastBets) return;
+      State.bets = [
+        State.lastBets[0] || 0,
+        State.lastBets[1] || 0,
+        State.lastBets[2] || 0,
+      ];
       renderSetup();
     });
-    $('btn-deal').addEventListener('click', deal);
+    $('btn-double')?.addEventListener('click', () => {
+      State.bets = State.bets.map(b => b * 2);
+      renderSetup();
+    });
+    $('btn-deal')?.addEventListener('click', deal);
   }
 
-  // ── Play view (one or more active/finished hands) ───────────────────
-  function renderHands() {
-    const count = State.hands.length || 1;
-    const row = $('seats-row');
-    row.style.setProperty('--seat-count', count);
-    row.innerHTML = State.hands.map((h, idx) => seatHtml(h, idx)).join('');
+  // ── Play-phase render ─────────────────────────────────────────────
+  function renderPlay() {
+    State.phase = 'play';
+    $('bj-table-text').style.display = 'none';
 
-    // Dealer cards — share the dealer view across all hands. While ANY
-    // hand is still active the dealer's hole card must stay hidden, so we
-    // pick the most-hidden view available.
-    const dealerVisible = pickDealerView(State.hands);
-    $('dealer-cards').innerHTML = dealerVisible.cards.map(renderCard).join('');
-    $('dealer-val').textContent = dealerVisible.valueLabel;
+    // Dealer — share the dealer view across all hands.
+    const view = pickDealerView(State.hands);
+    $('dealer-cards').innerHTML = view.cards.map(renderCard).join('');
+    $('dealer-val').textContent = view.valueLabel;
 
-    // Per-seat buttons
+    // Build the seats: one per ACTUAL hand. Empty seats are locked.
+    // We keep three slots so layout stays balanced.
+    const handBySeat = [null, null, null];
+    State.hands.forEach((h, idx) => { if (idx < 3) handBySeat[idx] = h; });
+    const lockedBet = State.lastBets || [0, 0, 0];
+
+    $('seats-arc').innerHTML = handBySeat.map((h, i) => {
+      if (!h) {
+        // Empty seat — show a faded indicator if this seat had a bet.
+        const placeholder = lockedBet[i] > 0
+          ? `<div class="chip-stack" style="--c:${stackColorFor(lockedBet[i]).c};opacity:.25;">
+               <div class="chip-face"><span class="chip-amount">${chipLabel(lockedBet[i])}</span></div>
+             </div>`
+          : `<span class="add-hand-label">—</span>`;
+        return `
+          <div class="seat-slot is-locked" data-seat="${i}">
+            <div class="seat-cards"></div>
+            <div class="seat-val"></div>
+            <div class="seat-banner"></div>
+            <div class="bet-circle is-locked">${placeholder}</div>
+          </div>
+        `;
+      }
+      const isActive = h.status === 'active';
+      const bannerCls = bannerClassFor(h);
+      const bannerText = bannerTextFor(h);
+      const buttons = isActive ? `
+        <div class="seat-actions" data-handseat="${i}">
+          <button class="b-hit green">HIT</button>
+          <button class="b-stand red">STAND</button>
+          ${h.playerCards.length === 2 && State.balance >= h.bet ? `<button class="b-double gold">×2 +${h.bet}</button>` : ''}
+        </div>
+      ` : '';
+      return `
+        <div class="seat-slot" data-handseat="${i}">
+          <div class="seat-cards">${h.playerCards.map(renderCard).join('')}</div>
+          <div class="seat-val">${h.playerValue}</div>
+          <div class="seat-banner ${bannerCls}">${bannerText}</div>
+          <div class="bet-circle is-locked">
+            <div class="chip-stack" style="--c:${stackColorFor(h.bet).c}">
+              <div class="chip-face"><span class="chip-amount">${chipLabel(h.bet)}</span></div>
+            </div>
+          </div>
+          ${buttons}
+        </div>
+      `;
+    }).join('');
+
+    // Wire per-seat buttons
     State.hands.forEach((h, i) => {
       if (h.status !== 'active') return;
-      const root = document.querySelector(`[data-handseat="${i}"]`);
-      root?.querySelector('.b-hit')?.addEventListener('click', () => act('hit', h.id));
-      root?.querySelector('.b-stand')?.addEventListener('click', () => act('stand', h.id));
+      const root = document.querySelector(`[data-handseat="${i}"] .seat-actions`);
+      root?.querySelector('.b-hit')   ?.addEventListener('click', () => act('hit', h.id));
+      root?.querySelector('.b-stand') ?.addEventListener('click', () => act('stand', h.id));
       root?.querySelector('.b-double')?.addEventListener('click', () => act('double', h.id));
     });
 
-    // Setup area shows the NEW HAND button only if all hands are settled.
+    // Bottom rail — NEW HAND when every seat is settled, otherwise empty.
     const allDone = State.hands.every(h => h.status !== 'active');
     if (allDone) {
-      $('setup-area').innerHTML = `
-        <div class="setup-actions">
-          <button class="primary" id="btn-new">NEW HAND</button>
+      $('bj-bottom').innerHTML = `
+        <div class="action-row">
+          <button class="action-btn primary" id="btn-new">NEW HAND</button>
+          ${State.lastBets ? `<button class="action-btn" id="btn-rebet-now">REBET (${fmtCredits(State.lastBets.reduce((a,b)=>a+b,0))})</button>` : ''}
         </div>
       `;
       $('btn-new').addEventListener('click', () => {
+        State.bets = [0, 0, 0];
         State.hands = [];
-        State.setupSeats = [Math.max(MIN_BET, State.setupSeats[0] || 25)];
-        State.selectedSeat = 0;
         renderSetup();
         refreshBalance();
       });
+      $('btn-rebet-now')?.addEventListener('click', () => {
+        State.bets = [...State.lastBets];
+        State.hands = [];
+        renderSetup();
+      });
       refreshBalance();
     } else {
-      $('setup-area').innerHTML = '';
+      $('bj-bottom').innerHTML = '';
     }
+
+    $('total-bet-display').textContent = fmtCredits(State.hands.reduce((a,h) => a + h.bet, 0));
   }
 
   function pickDealerView(hands) {
-    // If at least one hand is active, show dealer's hidden hole card.
+    if (!hands.length) return { cards: [], valueLabel: '' };
     const anyActive = hands.some(h => h.status === 'active');
-    // Pull from the first hand — backend keeps dealer state consistent.
-    const h = hands[0];
-    if (!h) return { cards: [], valueLabel: '' };
-    if (anyActive) {
-      // Server already returns the hidden form when status === 'active'.
-      const activeHand = hands.find(x => x.status === 'active');
-      return {
-        cards: activeHand.dealerCards,
-        valueLabel: `Showing ${activeHand.dealerValue}+`,
-      };
-    }
+    const h = anyActive ? hands.find(x => x.status === 'active') : hands[0];
     return {
       cards: h.dealerCards,
-      valueLabel: `Total: ${h.dealerValue}`,
+      valueLabel: anyActive ? `Showing ${h.dealerValue}+` : `Total: ${h.dealerValue}`,
     };
   }
 
-  function seatHtml(h, idx) {
-    const isActive = h.status === 'active';
-    const cls = h.status === 'won' || h.outcome === 'win' || h.outcome === 'blackjack' ? 'is-win'
-              : h.status === 'player_bust' || h.outcome === 'lose' ? 'is-bust'
-              : isActive ? 'is-active' : '';
-    const banner = isActive
-      ? `<div class="banner">Your move</div>`
-      : (() => {
-          let txt = '', c = '';
-          switch (h.outcome) {
-            case 'blackjack': c='win';  txt = `BLACKJACK! +${h.payout} cr`; break;
-            case 'win':       c='win';  txt = `WIN +${h.payout} cr`; break;
-            case 'lose':      c='lose'; txt = `LOSE`; break;
-            case 'push':      c='push'; txt = `PUSH — refunded`; break;
-            default:          txt = h.status;
-          }
-          return `<div class="banner ${c}">${txt}</div>`;
-        })();
-    const buttons = isActive ? `
-      <div class="seat-controls">
-        <button class="b-hit green">HIT</button>
-        <button class="b-stand red">STAND</button>
-        ${h.playerCards.length === 2 ? `<button class="b-double gold">DOUBLE +${h.bet}</button>` : ''}
-      </div>
-    ` : '';
-    return `
-      <div class="player-seat ${cls}" data-handseat="${idx}">
-        <div class="seat-tag">SEAT ${idx + 1}</div>
-        <div class="seat-bet">${h.bet} cr</div>
-        <div class="cards">${h.playerCards.map(renderCard).join('')}</div>
-        <div class="val">Total: ${h.playerValue}</div>
-        ${banner}
-        ${buttons}
-      </div>
-    `;
+  function bannerClassFor(h) {
+    if (h.status === 'active') return 'active';
+    if (h.outcome === 'win' || h.outcome === 'blackjack') return 'win';
+    if (h.outcome === 'push') return 'push';
+    return 'lose';
+  }
+  function bannerTextFor(h) {
+    if (h.status === 'active') return 'YOUR MOVE';
+    switch (h.outcome) {
+      case 'blackjack': return `BLACKJACK +${h.payout}`;
+      case 'win':       return `WIN +${h.payout}`;
+      case 'lose':      return 'DEALER WINS';
+      case 'push':      return 'PUSH';
+      default:          return h.status;
+    }
   }
 
-  // ── Server interactions ─────────────────────────────────────────────
+  // ── Server interactions ───────────────────────────────────────────
   async function deal() {
     try {
-      const bets = State.setupSeats.filter(b => b >= MIN_BET);
+      const bets = State.bets.filter(b => b >= MIN_BET);
       if (!bets.length) return alert('Place at least one chip on a hand.');
       const r = await api('/api/games/blackjack/start', {
         method: 'POST',
         body: { bets },
       });
+      // Remember the bet shape for REBET.
+      State.lastBets = [...State.bets];
       State.hands = r.hands || [];
-      renderHands();
+      renderPlay();
       refreshBalance();
     } catch (e) { alert(friendly(e.message)); }
   }
@@ -227,18 +304,9 @@
         double: '/api/games/blackjack/double',
       })[kind];
       const r = await api(path, { method: 'POST', body: { handId } });
-      // Patch the updated hand back into our array.
       State.hands = State.hands.map(h => h.id === r.hand.id ? r.hand : h);
-      renderHands();
+      renderPlay();
     } catch (e) { alert(friendly(e.message)); }
-  }
-
-  async function refreshBalance() {
-    try {
-      const { balance } = await api('/api/wallet/balance');
-      const el = document.querySelector('.topbar .balance');
-      if (el) el.textContent = fmtCredits(balance);
-    } catch (_) {}
   }
 
   function friendly(c) {
@@ -253,14 +321,20 @@
     })[c] || c;
   }
 
-  // ── Resume any active hands ─────────────────────────────────────────
+  // ── Initial state: resume any active hands, else show setup ──────
+  $('bal-display').textContent = fmtCredits(State.balance);
   try {
     const r = await api('/api/games/blackjack/active');
     if (Array.isArray(r.hands) && r.hands.length) {
       State.hands = r.hands;
-      renderHands();
+      // Reconstruct lastBets from the active hands so REBET stays meaningful.
+      State.lastBets = [0, 0, 0];
+      r.hands.forEach((h, i) => { if (i < 3) State.lastBets[i] = h.bet; });
+      renderPlay();
+      refreshBalance();
       return;
     }
   } catch (_) {}
   renderSetup();
+  refreshBalance();
 })();
