@@ -186,6 +186,45 @@ const ROUND_OPTIONS = [3, 5, 7];
 // Allowed team sizes for private lobbies. The number is the team count
 // per side, so 2 = 2v2, 3 = 3v3, 5 = 5v5. 1 = classic 1v1.
 const TEAM_SIZES = [1, 2, 3, 5];
+
+// ── Throwables (Molotov + Smoke) ──────────────────────────────────────
+// All values in one place so they're easy to tune later. Conservative
+// defaults aimed at NOT being overpowered in 1v1.
+const THROWABLE_CONFIG = {
+  molotov: {
+    count: 1,                 // per life
+    cooldownMs: 1200,
+    throwSpeed: 16,           // m/s muzzle speed (gives a nice arc)
+    gravity: 18,              // m/s² downward
+    maxFlightMs: 4000,
+    area: {
+      radius: 3.2,
+      durationMs: 7000,
+      tickIntervalMs: 500,
+      tickDamage: 10,         // per tick (so ~20 dmg/sec)
+      friendlyFire: false,
+    },
+  },
+  smoke: {
+    count: 1,
+    cooldownMs: 1200,
+    throwSpeed: 16,
+    gravity: 18,
+    maxFlightMs: 4000,
+    area: {
+      radius: 4.5,
+      durationMs: 9000,
+      fadeInMs: 500,
+      fadeOutMs: 1000,
+      // Smoke is visual-only: no damage tick. Optionally hides nametags
+      // when LOS crosses smoke (handled client-side via raycast).
+    },
+  },
+};
+const THROWABLE_TYPES = Object.keys(THROWABLE_CONFIG);
+// Max angle (radians) between the player's known facing and a throw
+// direction. Same threshold as shot-direction; throws are an aim action.
+const MAX_THROW_DIRECTION_DEVIATION = 0.5;
 function resolveRounds(votes) {
   const v = Object.values(votes || {}).filter(x => ROUND_OPTIONS.includes(x));
   if (v.length === 0)              return 5;
@@ -435,6 +474,7 @@ module.exports = {
   symmetricalMap, randomMap, resolveMapType, lobbySnapshot,
   WEAPON_MODES, ROUND_OPTIONS, resolveWeaponMode, resolveRounds,
   TEAM_SIZES, privateLobbies, privateLobbiesByCode,
+  THROWABLE_CONFIG, THROWABLE_TYPES, MAX_THROW_DIRECTION_DEVIATION,
   // Wallet-aware lifecycle
   startShooterMatch, finishShooterMatch, cancelShooterMatch, refundShooterMatch,
   startTeamShooterMatch, finishTeamShooterMatch, cancelTeamShooterMatch,

@@ -731,6 +731,15 @@ input:focus { border-color:var(--accent); }
     <div class="ammo-label" id="ammo-label">AK-47</div>
   </div>
 
+  <!-- Throwable HUD: selected item + remaining count -->
+  <div class="hud-el" id="hud-throwable" style="bottom:14px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.7);padding:6px 12px;border-radius:4px;font-size:12px;letter-spacing:2px;display:flex;gap:10px;align-items:center;">
+    <span id="hud-throw-icon" style="font-size:18px;">🍾</span>
+    <span id="hud-throw-name">MOLOTOV</span>
+    <span style="color:#999;">×</span>
+    <span id="hud-throw-count" style="color:#ffce4a;font-weight:700;">1</span>
+    <span id="hud-throw-key" style="color:#666;font-size:10px;margin-left:6px;">[G]</span>
+  </div>
+
   <div class="hud-el" id="hud-sprint">
     <div class="sprint-label">SPRINT</div>
     <div class="sprint-track"><div class="sprint-fill" id="sprint-fill" style="width:100%"></div></div>
@@ -1793,6 +1802,8 @@ const GameEngine = {
     const GAME_KEYS = new Set([
       'KeyW','KeyS','KeyA','KeyD','ShiftLeft','ShiftRight','KeyR','Space',
       'Digit1','Digit2','Digit3','Digit4',
+      'Digit5','Digit6',            // throwable select
+      'KeyG',                       // throw
       'ControlLeft','ControlRight', // crouch
     ]);
 
@@ -1809,6 +1820,10 @@ const GameEngine = {
       if (e.code === 'Digit2') this.switchWeapon('pistol');
       if (e.code === 'Digit3') this.switchWeapon('shotgun');
       if (e.code === 'Digit4') this.switchWeapon('sniper');
+      // Throwable selection + throw.
+      if (e.code === 'Digit5') Throwables.select('molotov');
+      if (e.code === 'Digit6') Throwables.select('smoke');
+      if (e.code === 'KeyG')   Throwables.throwSelected();
       if (e.code === 'ControlLeft' || e.code === 'ControlRight') {
         // Crouch is hold-to-crouch on Ctrl; toggle stays via the existing
         // settings/HUD if any. Ctrl is more standard than C.
@@ -2305,6 +2320,8 @@ const GameEngine = {
     const dt = Math.min(ts - (this._lastTime ?? ts), 100) / 1000;
     this._lastTime = ts;
     this._update(dt);
+    // Tick throwable visuals (fire flicker, smoke drift, in-hand anim).
+    try { if (typeof Throwables !== 'undefined') Throwables.tick(dt); } catch (_) {}
     // Smoothly animate FOV toward scope target.
     if (this._scopeFovTarget != null) {
       const cur = this.camera.fov;
@@ -3457,6 +3474,277 @@ function escapeHtml(s) {
 //   * the killer jumping (camera rises with the jump y-offset)
 //   * each shot fired as a muzzle flash + tracer in front of the cam
 // ══════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
+//  THROWABLES  — Molotov + Smoke Grenade
+// ══════════════════════════════════════════════════════════════
+const Throwables = {
+  selected: 'molotov',
+  counts:   { molotov: 1, smoke: 1 },
+  // Visual state per-projectile/effect, keyed by server id.
+  projectiles: new Map(),   // id → { mesh, type }
+  effects:     new Map(),   // id → { type, group, position, radius, startedAt, endsAt, particles, lastTickAt }
+  lastThrowAt: 0,
+  cooldownMs:  1200,
+  throwAnimT:  0,           // animation timer for the in-hand throw motion
+
+  init() {
+    const s = NetworkManager.socket;
+    if (!s) return;
+    s.on('throwable_projectile_spawned', d => this.onProjectileSpawned(d));
+    s.on('throwable_projectile_update',  d => this.onProjectileUpdate(d));
+    s.on('throwable_impact',             d => this.onImpact(d));
+    s.on('area_effect_start',            d => this.onEffectStart(d));
+    s.on('area_effect_end',              d => this.onEffectEnd(d));
+    // Refresh on respawn.
+    s.on('respawn', () => { this.counts = { molotov: 1, smoke: 1 }; this.updateHud(); });
+  },
+
+  resetMatch() {
+    // Wipe any leftover meshes from a previous match.
+    for (const p of this.projectiles.values()) {
+      try { GameEngine.scene.remove(p.mesh); p.mesh.traverse(o => { o.geometry?.dispose?.(); o.material?.dispose?.(); }); } catch (_) {}
+    }
+    this.projectiles.clear();
+    for (const e of this.effects.values()) {
+      try { GameEngine.scene.remove(e.group); e.group.traverse(o => { o.geometry?.dispose?.(); o.material?.dispose?.(); }); } catch (_) {}
+    }
+    this.effects.clear();
+    this.counts = { molotov: 1, smoke: 1 };
+    this.selected = 'molotov';
+    this.updateHud();
+  },
+
+  select(type) {
+    if (type !== 'molotov' && type !== 'smoke') return;
+    this.selected = type;
+    NetworkManager.socket.emit('throwable_select', { type });
+    this.updateHud();
+  },
+
+  updateHud() {
+    const icon = document.getElementById('hud-throw-icon');
+    const name = document.getElementById('hud-throw-name');
+    const cnt  = document.getElementById('hud-throw-count');
+    if (!name) return;
+    if (this.selected === 'molotov') {
+      icon.textContent = '🍾';
+      name.textContent = 'MOLOTOV';
+      cnt.textContent  = this.counts.molotov;
+    } else {
+      icon.textContent = '💨';
+      name.textContent = 'SMOKE';
+      cnt.textContent  = this.counts.smoke;
+    }
+  },
+
+  throwSelected() {
+    if (!GameEngine.running || GameEngine.isDead) return;
+    const now = performance.now();
+    if (now - this.lastThrowAt < this.cooldownMs) return;
+    if ((this.counts[this.selected] || 0) <= 0) return;
+    // Compute origin + direction from the camera.
+    const cam = GameEngine.camera;
+    const origin = { x: cam.position.x, y: cam.position.y, z: cam.position.z };
+    const dirV = new THREE.Vector3();
+    cam.getWorldDirection(dirV);
+    const direction = { x: dirV.x, y: Math.max(dirV.y, -0.2), z: dirV.z };
+    NetworkManager.socket.emit('throwable_throw', {
+      type: this.selected, origin, direction, timestamp: Date.now(),
+    }, (res) => {
+      if (res?.error) {
+        UIManager.flashHitMarker?.(false);
+        return;
+      }
+      if (typeof res.count === 'number') {
+        this.counts[res.type || this.selected] = res.count;
+        this.updateHud();
+      }
+    });
+    this.lastThrowAt = now;
+    // Decrement optimistically so the HUD updates instantly; server's cb
+    // will correct if it actually rejected.
+    if (this.counts[this.selected] > 0) this.counts[this.selected]--;
+    this.updateHud();
+    // Tiny throw animation: pull the gun back briefly.
+    this.throwAnimT = 0.25;
+  },
+
+  // Update once per frame from the game loop.
+  tick(dt) {
+    if (this.throwAnimT > 0) this.throwAnimT = Math.max(0, this.throwAnimT - dt);
+    // Animate area effects: fire flame flicker, smoke expansion.
+    const now = performance.now();
+    for (const e of this.effects.values()) {
+      const elapsed = (Date.now() - e.startedAt);
+      if (e.type === 'molotov') {
+        // Flicker the flames vertically + tint.
+        e.particles?.forEach((m, i) => {
+          const phase = (now / 220) + i * 0.5;
+          const sy = 0.6 + Math.sin(phase) * 0.25;
+          m.scale.y = Math.max(0.2, sy);
+          m.position.y = sy * 0.5;
+        });
+      } else if (e.type === 'smoke') {
+        const cfg = { fadeInMs: 500, fadeOutMs: 1000, duration: e.endsAt - e.startedAt };
+        let opacity;
+        if (elapsed < cfg.fadeInMs)            opacity = elapsed / cfg.fadeInMs;
+        else if (elapsed > cfg.duration - cfg.fadeOutMs)
+          opacity = Math.max(0, (cfg.duration - elapsed) / cfg.fadeOutMs);
+        else                                    opacity = 1;
+        const scale = Math.min(1, 0.4 + (elapsed / cfg.fadeInMs) * 0.6);
+        e.particles?.forEach((m, i) => {
+          m.material.opacity = opacity * 0.75;
+          m.scale.setScalar(scale * (0.8 + (i % 5) * 0.07));
+          // Gentle drift upward
+          m.position.y += dt * 0.05;
+        });
+      }
+    }
+  },
+
+  onProjectileSpawned({ id, type, position, velocity }) {
+    if (!GameEngine.scene) return;
+    const mesh = type === 'molotov'
+      ? this._buildMolotovMesh()
+      : this._buildSmokeCanMesh();
+    mesh.position.set(position.x, position.y, position.z);
+    GameEngine.scene.add(mesh);
+    this.projectiles.set(id, { mesh, type, vel: velocity || { x:0,y:0,z:0 }, _spinT: 0 });
+  },
+
+  onProjectileUpdate({ id, position }) {
+    const p = this.projectiles.get(id);
+    if (!p) return;
+    p.mesh.position.set(position.x, position.y, position.z);
+    p._spinT = (p._spinT || 0) + 0.15;
+    p.mesh.rotation.x = p._spinT;
+    p.mesh.rotation.z = p._spinT * 0.5;
+  },
+
+  onImpact({ id, type, position }) {
+    const p = this.projectiles.get(id);
+    if (p) {
+      try { GameEngine.scene.remove(p.mesh); p.mesh.traverse(o => { o.geometry?.dispose?.(); o.material?.dispose?.(); }); } catch (_) {}
+      this.projectiles.delete(id);
+    }
+  },
+
+  onEffectStart({ id, type, position, radius, startedAt, endsAt }) {
+    if (!GameEngine.scene) return;
+    const group = type === 'molotov'
+      ? this._buildFireGroup(radius)
+      : this._buildSmokeGroup(radius);
+    group.position.set(position.x, 0, position.z);
+    GameEngine.scene.add(group);
+    this.effects.set(id, {
+      type, group,
+      position: { ...position }, radius,
+      startedAt, endsAt,
+      particles: group.userData.particles || [],
+    });
+    // Audio cue if available.
+    if (type === 'molotov') AudioManager?.playHit?.(); // simple feedback
+  },
+
+  onEffectEnd({ id }) {
+    const e = this.effects.get(id);
+    if (!e) return;
+    try {
+      GameEngine.scene.remove(e.group);
+      e.group.traverse(o => { o.geometry?.dispose?.(); o.material?.dispose?.(); });
+    } catch (_) {}
+    this.effects.delete(id);
+  },
+
+  // ── Meshes ────────────────────────────────────────────────────────
+  _buildMolotovMesh() {
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.10, 0.12, 0.32, 8),
+      new THREE.MeshLambertMaterial({ color: 0x2f7c2f })
+    );
+    const rag = new THREE.Mesh(
+      new THREE.BoxGeometry(0.06, 0.10, 0.06),
+      new THREE.MeshLambertMaterial({ color: 0xddd9b8 })
+    );
+    rag.position.y = 0.22;
+    const flame = new THREE.Mesh(
+      new THREE.BoxGeometry(0.08, 0.10, 0.08),
+      new THREE.MeshBasicMaterial({ color: 0xffaa44 })
+    );
+    flame.position.y = 0.33;
+    g.add(body, rag, flame);
+    return g;
+  },
+  _buildSmokeCanMesh() {
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.10, 0.10, 0.26, 8),
+      new THREE.MeshLambertMaterial({ color: 0x7a8290 })
+    );
+    const cap = new THREE.Mesh(
+      new THREE.BoxGeometry(0.16, 0.05, 0.10),
+      new THREE.MeshLambertMaterial({ color: 0x1a1a1a })
+    );
+    cap.position.y = 0.16;
+    g.add(body, cap);
+    return g;
+  },
+  _buildFireGroup(radius) {
+    const g = new THREE.Group();
+    // Black scorch disc.
+    const scorch = new THREE.Mesh(
+      new THREE.CircleGeometry(radius, 24),
+      new THREE.MeshBasicMaterial({ color: 0x2a1a0a, transparent: true, opacity: 0.55 })
+    );
+    scorch.rotation.x = -Math.PI / 2;
+    scorch.position.y = 0.02;
+    g.add(scorch);
+    // Voxel-style flame cubes.
+    const flames = [];
+    const FLAME_COUNT = 22;
+    for (let i = 0; i < FLAME_COUNT; i++) {
+      const angle = (i / FLAME_COUNT) * Math.PI * 2 + Math.random();
+      const r = Math.random() * radius * 0.9;
+      const w = 0.18 + Math.random() * 0.22;
+      const h = 0.40 + Math.random() * 0.55;
+      const color = Math.random() < 0.45 ? 0xffd24a : 0xff7a22;
+      const f = new THREE.Mesh(
+        new THREE.BoxGeometry(w, h, w),
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95 })
+      );
+      f.position.set(Math.cos(angle) * r, h / 2, Math.sin(angle) * r);
+      g.add(f); flames.push(f);
+    }
+    g.userData.particles = flames;
+    return g;
+  },
+  _buildSmokeGroup(radius) {
+    const g = new THREE.Group();
+    const COUNT = 60;
+    const particles = [];
+    for (let i = 0; i < COUNT; i++) {
+      const r = Math.random() * radius * 0.9;
+      const angle = Math.random() * Math.PI * 2;
+      const size = 0.6 + Math.random() * 0.9;
+      const tint = 0xc0c0c0 + (Math.random() < 0.5 ? 0x101010 : -0x101010);
+      const m = new THREE.Mesh(
+        new THREE.BoxGeometry(size, size, size),
+        new THREE.MeshLambertMaterial({ color: tint, transparent: true, opacity: 0 })
+      );
+      m.position.set(
+        Math.cos(angle) * r,
+        size * 0.5 + Math.random() * radius * 0.5,
+        Math.sin(angle) * r
+      );
+      m.rotation.y = Math.random() * Math.PI;
+      g.add(m); particles.push(m);
+    }
+    g.userData.particles = particles;
+    return g;
+  },
+};
+
 const Killcam = {
   _scene: null, _camera: null, _renderer: null, _raf: null,
   _start: 0, _data: null, _victim: null, _muzzleFlash: null,
@@ -3822,6 +4110,21 @@ const NetworkManager = {
       this._initialLobbies = d?.lobbies || [];
       if (d?.ranking)      { App.ranking = d.ranking; UIManager.updateRankBadge(d.ranking); }
       if (d?.requirements) { App.lobbyRequirements = d.requirements; }
+      // If the server restored a private lobby for us on reconnect,
+      // hand the state to PrivateLobby so it re-renders without a refresh.
+      if (d?.privateLobby && typeof PrivateLobby !== 'undefined') {
+        PrivateLobby.state = d.privateLobby;
+        PrivateLobby.render();
+      }
+    });
+    // On any socket (re)connect, ask the server for our current lobby
+    // state in case we joined while disconnected.
+    s.on('connect', () => {
+      s.emit('request_lobby_state', null, (res) => {
+        if (res?.lobby && typeof PrivateLobby !== 'undefined') {
+          PrivateLobby.state = res.lobby; PrivateLobby.render();
+        }
+      });
     });
     s.on('lobby_update',        d => UIManager.renderLobbyCards(d));
     s.on('waiting_room_update', d => UIManager.renderWaitingPlayers(d));
@@ -4261,6 +4564,8 @@ const App = {
     UIManager.updateHealth(CFG.MAX_HEALTH);
     UIManager.updateAmmo(WEAPONS[startingW].mag, WEAPONS[startingW].mag, WEAPONS[startingW].name);
     UIManager.setCrosshairSpread(0);
+    // Reset throwables per match and make sure listeners are attached.
+    try { Throwables.init(); Throwables.resetMatch(); } catch (_) {}
     UIManager.clearKillfeed();
     UIManager.hidePause();
     UIManager.hideRespawn();

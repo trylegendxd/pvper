@@ -22,6 +22,7 @@ const {
   MAX_SHOT_DIRECTION_DEVIATION,
   WEAPON_MODES, ROUND_OPTIONS, resolveWeaponMode, resolveRounds,
   TEAM_SIZES, privateLobbies, privateLobbiesByCode,
+  THROWABLE_CONFIG, THROWABLE_TYPES, MAX_THROW_DIRECTION_DEVIATION,
   lobbies, matches, players,
   rayHitDistance, playerBox, headBox, coverAabb, positionAtTime,
   symmetricalMap, randomMap, resolveMapType, lobbySnapshot,
@@ -176,6 +177,7 @@ function endMatch(io, matchId, winnerArg, reason) {
     if (p) { p.currentMatch = null; p.currentLobby = null; }
   }
 
+  stopThrowableTick(match);
   matches.delete(matchId);
   broadcastLobbies(io);
 }
@@ -270,6 +272,7 @@ function endTeamMatch(io, match, winnerArg, reason) {
     const p = players.get(id);
     if (p) { p.currentMatch = null; }
   }
+  stopThrowableTick(match);
   matches.delete(match.id);
 }
 
@@ -326,8 +329,242 @@ function snapshotPrivate(lobby) {
   };
 }
 
+// ── Throwables (Molotov + Smoke) ────────────────────────────────────────
+function mkThrowables() {
+  const out = {};
+  for (const k of THROWABLE_TYPES) out[k] = { count: THROWABLE_CONFIG[k].count };
+  return out;
+}
+
+function refillThrowables(state) {
+  for (const k of THROWABLE_TYPES) {
+    if (state.throwables[k]) state.throwables[k].count = THROWABLE_CONFIG[k].count;
+    else                     state.throwables[k] = { count: THROWABLE_CONFIG[k].count };
+  }
+  state.lastThrowAt = 0;
+}
+
+// Start the per-match throwable tick. Idempotent — safe to call twice.
+function ensureThrowableTick(io, match) {
+  if (match.throwableTickTimer) return;
+  match.projectiles = match.projectiles || new Map();
+  match.areaEffects = match.areaEffects || new Map();
+  const TICK_MS = 100;
+  match.throwableTickTimer = setInterval(() => tickThrowables(io, match), TICK_MS);
+}
+
+function stopThrowableTick(match) {
+  if (match.throwableTickTimer) {
+    clearInterval(match.throwableTickTimer);
+    match.throwableTickTimer = null;
+  }
+}
+
+// Per-tick projectile + area-effect simulation.
+function tickThrowables(io, match) {
+  if (!match || match.ended) { stopThrowableTick(match); return; }
+  const ns = io.of('/shooter');
+  const now = Date.now();
+  const dt  = 0.1; // 100 ms
+
+  // ── Projectiles: arc physics with simple ground/cover collision ──────
+  for (const [pid, p] of match.projectiles) {
+    if (now >= p.expiresAt) {
+      // Fizzle without impact (shouldn't normally happen).
+      match.projectiles.delete(pid);
+      continue;
+    }
+    // Apply gravity, then advance.
+    const cfg = THROWABLE_CONFIG[p.type];
+    p.velocity.y -= cfg.gravity * dt;
+    const nx = p.position.x + p.velocity.x * dt;
+    const ny = p.position.y + p.velocity.y * dt;
+    const nz = p.position.z + p.velocity.z * dt;
+
+    // Ground impact.
+    let impacted = (ny <= 0);
+    // Cover-box / wall impact: if the new point is inside any cover, snap
+    // back to the previous y / ground.
+    if (!impacted) {
+      for (const c of (match.coverAabbs || [])) {
+        if (nx >= c.min.x && nx <= c.max.x &&
+            ny >= c.min.y && ny <= c.max.y &&
+            nz >= c.min.z && nz <= c.max.z) { impacted = true; break; }
+      }
+    }
+    if (!impacted) {
+      // Out-of-bounds also impacts.
+      if (Math.abs(nx) > 21 || Math.abs(nz) > 21) impacted = true;
+    }
+
+    if (impacted) {
+      // Settle on the ground (y=0) — flat fire / smoke.
+      const impactPos = { x: nx, y: 0, z: nz };
+      match.projectiles.delete(pid);
+      ns.to(match.playerIds).emit('throwable_impact', {
+        id: pid, type: p.type, position: impactPos, ownerSocketId: p.ownerSocketId,
+      });
+      // Spawn the area effect.
+      spawnAreaEffect(io, match, p.type, impactPos, p.ownerSocketId, p.ownerUserId, p.ownerTeam);
+    } else {
+      p.position.x = nx; p.position.y = ny; p.position.z = nz;
+      // Stream updates (sparingly — every other tick).
+      if ((p._frame = (p._frame || 0) + 1) % 2 === 0) {
+        for (const sid of match.playerIds) {
+          ns.to(sid).emit('throwable_projectile_update', {
+            id: pid, position: p.position, velocity: p.velocity,
+          });
+        }
+      }
+    }
+  }
+
+  // ── Area effects: tick damage for fire, auto-expire all ──────────────
+  for (const [aid, eff] of match.areaEffects) {
+    if (now >= eff.endsAt) {
+      match.areaEffects.delete(aid);
+      for (const sid of match.playerIds) ns.to(sid).emit('area_effect_end', { id: aid });
+      continue;
+    }
+    if (eff.type !== 'molotov') continue;
+    const cfg = THROWABLE_CONFIG.molotov.area;
+    if (now - (eff.lastTickAt || 0) < cfg.tickIntervalMs) continue;
+    eff.lastTickAt = now;
+
+    // Damage every player inside the radius (no friendly fire by default).
+    for (const [sid, state] of Object.entries(match.gameState)) {
+      if (!state || state.respawning) continue;
+      if (!cfg.friendlyFire && eff.ownerTeam && state.team === eff.ownerTeam) continue;
+      const dx = state.position.x - eff.position.x;
+      const dz = state.position.z - eff.position.z;
+      if (Math.hypot(dx, dz) > eff.radius) continue;
+
+      // Apply damage.
+      state.health = Math.max(0, state.health - cfg.tickDamage);
+      const fatal = state.health <= 0;
+      if (fatal) state.respawning = true;
+      // Notify the victim.
+      ns.to(sid).emit('you_hit', {
+        health: state.health, headshot: false, fatal, source: 'molotov',
+      });
+      Replay.log(match.id, 'damage_dealt', {
+        s: eff.ownerSocketId, target: sid, dmg: cfg.tickDamage, kind: 'fire',
+      });
+
+      if (fatal) {
+        const killerState = match.gameState[eff.ownerSocketId];
+        if (killerState) killerState.kills = (killerState.kills || 0) + 1;
+        state.deaths = (state.deaths || 0) + 1;
+        // Score team win / 1v1 win check.
+        let teamWin = null, winnerSock = null;
+        if (match.isTeamMatch && killerState) {
+          match.teamScores[killerState.team] = (match.teamScores[killerState.team] || 0) + 1;
+          for (const id of match.playerIds) ns.to(id).emit('team_score_update', { scores: match.teamScores });
+          if (match.teamScores[killerState.team] >= (match.killsToWin || KILLS_TO_WIN)) {
+            teamWin = killerState.team;
+          }
+        } else if (killerState && killerState.kills >= (match.killsToWin || KILLS_TO_WIN)) {
+          winnerSock = eff.ownerSocketId;
+        }
+        const killPayload = {
+          killerId: eff.ownerSocketId, killedId: sid,
+          killerKills: killerState?.kills || 0, killedDeaths: state.deaths || 0,
+          killerName: players.get(eff.ownerSocketId)?.username || 'Molotov',
+          killedName: players.get(sid)?.username || '?',
+          headshot: false, weapon: 'molotov',
+        };
+        Replay.log(match.id, 'kill', {
+          killer: eff.ownerSocketId, victim: sid, weapon: 'molotov',
+          killerKills: killerState?.kills || 0, victimDeaths: state.deaths || 0,
+        });
+        Replay.log(match.id, 'death', { s: sid, by: eff.ownerSocketId });
+        if (match.isTeamMatch) {
+          for (const id of match.playerIds) ns.to(id).emit('kill_event', killPayload);
+        } else {
+          ns.to(eff.ownerSocketId).emit('kill_event', killPayload);
+          ns.to(sid).emit('kill_event', killPayload);
+        }
+        if (winnerSock || teamWin) {
+          endMatch(io, match.id, winnerSock || teamWin, 'kills');
+          return;
+        }
+        // Respawn the victim after the normal delay.
+        const spawnIdx = match.playerIds.indexOf(sid);
+        const spawn = { ...match.spawnPoints[spawnIdx] };
+        setTimeout(() => {
+          try {
+            if (!matches.has(match.id) || matches.get(match.id).ended) return;
+            state.health = MAX_HEALTH;
+            for (const k of Object.keys(WEAPONS)) {
+              if (!state.weapons[k]) state.weapons[k] = { ammo: WEAPONS[k].mag, reloading: false, reloadStartedAt: 0 };
+              else { state.weapons[k].ammo = WEAPONS[k].mag; state.weapons[k].reloading = false; }
+            }
+            refillThrowables(state);
+            state.position = spawn;
+            state.lastPosition = { ...spawn };
+            state.positionHistory = [];
+            state.respawning = false;
+            state.lastMoveAt = Date.now();
+            state.lastSpeed = 0;
+            ns.to(sid).emit('respawn', { position: spawn, health: MAX_HEALTH });
+            const otherSock = match.playerIds.find(x => x !== sid);
+            if (otherSock) ns.to(otherSock).emit('opponent_respawn', { position: spawn });
+          } catch (e) { console.error('[shooter] fire respawn failed', e); }
+        }, RESPAWN_DELAY_MS);
+      }
+    }
+  }
+}
+
+function spawnAreaEffect(io, match, type, position, ownerSocketId, ownerUserId, ownerTeam) {
+  const cfg = THROWABLE_CONFIG[type]?.area;
+  if (!cfg) return;
+  const id = 'a-' + Math.random().toString(36).slice(2, 10);
+  const now = Date.now();
+  const eff = {
+    id, type,
+    ownerSocketId, ownerUserId, ownerTeam,
+    position: { x: position.x, y: 0, z: position.z },
+    radius: cfg.radius,
+    startedAt: now,
+    endsAt: now + cfg.durationMs,
+    lastTickAt: 0,
+  };
+  match.areaEffects.set(id, eff);
+  for (const sid of match.playerIds) {
+    io.of('/shooter').to(sid).emit('area_effect_start', {
+      id, type, position: eff.position, radius: eff.radius,
+      startedAt: eff.startedAt, endsAt: eff.endsAt,
+      ownerSocketId, ownerTeam: ownerTeam || null,
+    });
+  }
+  Replay.log(match.id, 'area_effect_start', { id, type, p: [position.x, 0, position.z] });
+}
+
 function broadcastPrivateLobbyUpdate(io, lobby) {
-  io.of('/shooter').to('priv:' + lobby.id).emit('private_lobby_update', snapshotPrivate(lobby));
+  const snap = snapshotPrivate(lobby);
+  const ns = io.of('/shooter');
+  // Primary path: emit to the room.
+  ns.to('priv:' + lobby.id).emit('private_lobby_update', snap);
+  // Belt-and-suspenders: ALSO emit directly to each member's socket.
+  // Rescues the case where a transient disconnect/reconnect dropped a
+  // member's room subscription, which is otherwise invisible until
+  // they reload the page.
+  for (const m of lobby.members) {
+    if (!m.socketId) continue;
+    const sock = ns.sockets.get(m.socketId);
+    if (sock) sock.emit('private_lobby_update', snap);
+  }
+}
+
+// Find an active private lobby for this user (used to rejoin them to the
+// lobby room when they reconnect).
+function findPrivateLobbyForUser(userId) {
+  for (const lobby of privateLobbies.values()) {
+    const m = lobby.members.find(x => x.userId === userId);
+    if (m) return { lobby, member: m };
+  }
+  return null;
 }
 
 // Settings change → clear ready states for everyone except the host (the
@@ -443,6 +680,9 @@ async function startPrivateMatch(io, lobby) {
     lastPosition: { ...spawnFor(team, spawnIdx) },
     lastMoveAt: now, lastWeaponSwitchAt: 0, suspiciousScore: 0,
     team,  // 'a' | 'b'
+    throwables: mkThrowables(),
+    selectedThrowable: 'molotov',
+    lastThrowAt: 0,
   });
 
   const gameState = {};
@@ -473,6 +713,7 @@ async function startPrivateMatch(io, lobby) {
     memberUserIds: allMembers.map(m => m.userId),
   };
   matches.set(match.id, match);
+  ensureThrowableTick(io, match);
 
   // Mark every player as being in this match and clear any other state.
   for (const m of allMembers) {
@@ -565,6 +806,10 @@ async function startMatch(io, lobbyId) {
     lastMoveAt: now,
     lastWeaponSwitchAt: 0,
     suspiciousScore: 0,
+    // Throwables — refilled on every respawn.
+    throwables: mkThrowables(),
+    selectedThrowable: 'molotov',
+    lastThrowAt: 0,
   });
 
   const match = {
@@ -584,6 +829,7 @@ async function startMatch(io, lobbyId) {
     killsToWin,
   };
   matches.set(match.id, match);
+  ensureThrowableTick(io, match);
   p1.currentMatch = match.id;
   p2.currentMatch = match.id;
 
@@ -648,18 +894,48 @@ function attach(io) {
       Ranking.publicStatsFor(userId),
     ]).then(([{ rows }, liveStats]) => {
       const username = rows[0]?.username || 'player';
-      players.set(socket.id, {
+      const playerRec = {
         id: socket.id, userId, username,
         currentLobby: null, currentMatch: null,
-      });
+      };
+      // If this user was already in a private lobby (host just reloaded,
+      // network blip, etc.), restore their membership and rejoin them
+      // to the room so live updates resume without a refresh.
+      const existing = findPrivateLobbyForUser(userId);
+      if (existing) {
+        playerRec.privateLobby = existing.lobby.id;
+        existing.member.socketId = socket.id;
+        if (existing.lobby.hostUserId === userId) existing.lobby.hostSocketId = socket.id;
+        socket.join('priv:' + existing.lobby.id);
+      }
+      players.set(socket.id, playerRec);
       socket.emit('shooter_ready', {
         lobbies: lobbySnapshot(),
         ranking: liveStats,
         requirements: Ranking.LOBBY_REQUIREMENTS,
+        // If we restored a lobby for them, hand the snapshot straight back
+        // so the UI shows the current state without any extra round-trip.
+        privateLobby: existing ? snapshotPrivate(existing.lobby) : null,
       });
+      if (existing) broadcastPrivateLobbyUpdate(io, existing.lobby);
     }).catch(err => {
       console.error('[shooter] connection setup failed', err);
       socket.emit('shooter_ready', { lobbies: lobbySnapshot() });
+    });
+
+    // Client-driven re-sync of lobby state. Used as a backup if the
+    // initial broadcast on reconnect was missed.
+    socket.on('request_lobby_state', (_, cb) => {
+      const me = players.get(socket.id);
+      if (!me?.privateLobby) return cb?.({ ok: true, lobby: null });
+      const lobby = privateLobbies.get(me.privateLobby);
+      if (!lobby) { me.privateLobby = null; return cb?.({ ok: true, lobby: null }); }
+      // Refresh stored socket id & make sure the room subscription is live.
+      const mem = lobby.members.find(m => m.userId === me.userId);
+      if (mem) mem.socketId = socket.id;
+      if (lobby.hostUserId === me.userId) lobby.hostSocketId = socket.id;
+      socket.join('priv:' + lobby.id);
+      cb?.({ ok: true, lobby: snapshotPrivate(lobby) });
     });
 
     // Allow the client to ask for a fresh stats snapshot (e.g. after match)
@@ -1532,6 +1808,8 @@ function attach(io) {
             oppState.respawning = false;
             oppState.lastMoveAt = Date.now();
             oppState.lastSpeed  = 0;
+            // Refill throwables on respawn so molotov/smoke counts reset.
+            refillThrowables(oppState);
             Replay.log(match.id, 'player_spawn', { s: oppSock, p: spawn });
             ns.to(oppSock).emit('respawn', { position: spawn, health: MAX_HEALTH });
             ns.to(socket.id).emit('opponent_respawn', { position: spawn });
@@ -1546,6 +1824,109 @@ function attach(io) {
             } catch (_) {}
           }
         }, RESPAWN_DELAY_MS);
+      }
+    });
+
+    // ── Throwables ──────────────────────────────────────────────────
+    socket.on('throwable_select', ({ type } = {}) => {
+      const p = players.get(socket.id);
+      if (!p?.currentMatch) return;
+      const match = matches.get(p.currentMatch);
+      if (!match) return;
+      const state = match.gameState[socket.id];
+      if (!state) return;
+      if (!THROWABLE_TYPES.includes(type)) return;
+      state.selectedThrowable = type;
+    });
+
+    socket.on('throwable_throw', ({ type, origin, direction, timestamp } = {}, cb) => {
+      try {
+        const p = players.get(socket.id);
+        if (!p?.currentMatch) return cb?.({ error: 'no_match' });
+        const match = matches.get(p.currentMatch);
+        if (!match || match.status !== 'active') return cb?.({ error: 'no_match' });
+        const state = match.gameState[socket.id];
+        if (!state) return cb?.({ error: 'no_state' });
+        if (state.respawning) return cb?.({ error: 'respawning' });
+
+        const t = THROWABLE_TYPES.includes(type) ? type : state.selectedThrowable;
+        if (!THROWABLE_TYPES.includes(t)) return cb?.({ error: 'bad_type' });
+        const cfg = THROWABLE_CONFIG[t];
+
+        // Cooldown.
+        const now = Date.now();
+        if (now - (state.lastThrowAt || 0) < cfg.cooldownMs) {
+          return cb?.({ error: 'cooldown' });
+        }
+        // Ammo.
+        if (!state.throwables[t] || state.throwables[t].count <= 0) {
+          return cb?.({ error: 'out_of_throwable' });
+        }
+        // Origin / direction validation.
+        if (!origin || !direction ||
+            !Number.isFinite(origin.x)    || !Number.isFinite(origin.y)    || !Number.isFinite(origin.z) ||
+            !Number.isFinite(direction.x) || !Number.isFinite(direction.y) || !Number.isFinite(direction.z)) {
+          return cb?.({ error: 'bad_origin' });
+        }
+        // Direction must roughly match the player's known yaw — same
+        // forgiving threshold as shot-direction.
+        if (state.rotation && typeof state.rotation.y === 'number') {
+          const yaw = state.rotation.y;
+          const lookX = -Math.sin(yaw), lookZ = -Math.cos(yaw);
+          const ml = Math.hypot(direction.x, direction.z) || 1;
+          const dot = (direction.x / ml) * lookX + (direction.z / ml) * lookZ;
+          if (dot < MAX_SHOT_DIRECTION_DEVIATION) {
+            noteSuspicious(match, socket.id, 'throwable_direction', { dot: +dot.toFixed(2) });
+            // Allow it — yaw lag means strict reject would punish real players.
+          }
+        }
+        // Timestamp drift.
+        const ts = Number(timestamp) || now;
+        if (Math.abs(ts - now) > MAX_CLIENT_TIME_DRIFT_MS) {
+          noteSuspicious(match, socket.id, 'throwable_time_drift', { drift: ts - now });
+        }
+
+        // OK — consume one, set cooldown, spawn projectile.
+        state.throwables[t].count--;
+        state.lastThrowAt = now;
+
+        const id = 'pr-' + Math.random().toString(36).slice(2, 10);
+        // Normalize direction and scale by throw speed.
+        const dl = Math.hypot(direction.x, direction.y, direction.z) || 1;
+        const vx = (direction.x / dl) * cfg.throwSpeed;
+        // Add a small upward arc.
+        const vy = (direction.y / dl) * cfg.throwSpeed + 3.0;
+        const vz = (direction.z / dl) * cfg.throwSpeed;
+        const proj = {
+          id, type: t,
+          ownerSocketId: socket.id,
+          ownerUserId: p.userId,
+          ownerTeam: state.team || null,
+          position: { x: origin.x, y: origin.y, z: origin.z },
+          velocity: { x: vx, y: vy, z: vz },
+          createdAt: now,
+          expiresAt: now + cfg.maxFlightMs,
+        };
+        match.projectiles = match.projectiles || new Map();
+        match.projectiles.set(id, proj);
+        ensureThrowableTick(io, match);
+
+        // Broadcast spawn to every player in the match.
+        for (const sid of match.playerIds) {
+          ns.to(sid).emit('throwable_projectile_spawned', {
+            id, type: t,
+            ownerSocketId: socket.id,
+            position: proj.position, velocity: proj.velocity,
+          });
+        }
+        Replay.log(match.id, 'throwable_throw', {
+          s: socket.id, type: t,
+        });
+        // Echo the new count back so the HUD updates instantly.
+        cb?.({ ok: true, count: state.throwables[t].count, type: t });
+      } catch (e) {
+        console.error('[shooter] throwable_throw failed', e);
+        cb?.({ error: e.message || 'throw_failed' });
       }
     });
 
