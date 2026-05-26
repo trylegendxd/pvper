@@ -3736,29 +3736,30 @@ const Throwables = {
       }
     }
 
-    // ── In-flight projectiles: dead-reckon + spin + trail ─────────────
-    // GRAVITY mirrors the server constant — keeping client and server in
-    // sync means our local extrapolation matches the next server update.
+    // ── In-flight projectiles: pure prediction + soft reconciliation ──
+    // GRAVITY mirrors the server constant so client and server stay in
+    // lockstep — the only reason their paths would diverge is float
+    // round-off and tick-edge timing, both of which the correction
+    // buffer mops up gently.
     const PROJ_GRAVITY = 18;
     for (const p of this.projectiles.values()) {
-      // 1) Locally apply gravity to the velocity we're holding.
+      // Local physics — runs at full frame rate (no stutter).
       p.vel.y -= PROJ_GRAVITY * dt;
-      // 2) Advance our internal position with that velocity.
       p.pos.x += p.vel.x * dt;
       p.pos.y += p.vel.y * dt;
       p.pos.z += p.vel.z * dt;
-      // 3) Gently lerp toward the most recent server-truth position to
-      //    correct drift. Stronger correction the older the local data is.
-      const ageMs = performance.now() - (p.lastUpdateAt || performance.now());
-      const blend = Math.min(1, dt * (8 + ageMs * 0.02));
-      p.pos.x += (p.targetPos.x - p.pos.x) * blend;
-      p.pos.y += (p.targetPos.y - p.pos.y) * blend;
-      p.pos.z += (p.targetPos.z - p.pos.z) * blend;
-      // Pull velocity toward server-truth too so the next predicted step
-      // tracks the authoritative arc instead of drifting off.
-      p.vel.x += (p.targetVel.x - p.vel.x) * blend;
-      p.vel.y += (p.targetVel.y - p.vel.y) * blend;
-      p.vel.z += (p.targetVel.z - p.vel.z) * blend;
+
+      // Apply any pending server correction smoothly over its window.
+      if (p._correction.t > 0) {
+        const f = Math.min(1, dt / p._correction.t);
+        p.pos.x += p._correction.x * f;
+        p.pos.y += p._correction.y * f;
+        p.pos.z += p._correction.z * f;
+        p._correction.x -= p._correction.x * f;
+        p._correction.y -= p._correction.y * f;
+        p._correction.z -= p._correction.z * f;
+        p._correction.t = Math.max(0, p._correction.t - dt);
+      }
 
       p.mesh.position.set(p.pos.x, p.pos.y, p.pos.z);
       // Spin so the in-flight item reads as tumbling.
@@ -3872,30 +3873,38 @@ const Throwables = {
       : this._buildSmokeCanMesh();
     mesh.position.set(position.x, position.y, position.z);
     GameEngine.scene.add(mesh);
-    // Dead-reckoning state: keep a server target + velocity and run a
-    // local mini-physics step every frame. On each server update we
-    // gently lerp the mesh toward the authoritative position. This kills
-    // the every-tick "snap" flicker.
+    // Pure client-side prediction. We take the server's initial
+    // position + velocity and run the same gravity step locally at
+    // frame rate — perfectly smooth flight, no stutter from network
+    // updates. The server stays authoritative on impact.
     this.projectiles.set(id, {
       mesh, type,
-      // Live (rendered) state.
       pos: { x: position.x, y: position.y, z: position.z },
       vel: { x: velocity?.x || 0, y: velocity?.y || 0, z: velocity?.z || 0 },
-      // Server-truth target the client is converging toward.
-      targetPos: { x: position.x, y: position.y, z: position.z },
-      targetVel: { x: velocity?.x || 0, y: velocity?.y || 0, z: velocity?.z || 0 },
-      lastUpdateAt: performance.now(),
       _spinT: 0,
+      // Soft reconciliation buffer — if a server update diverges from
+      // our prediction we spread the correction over a few frames
+      // instead of snapping (which was the "2fps" stutter cause).
+      _correction: { x: 0, y: 0, z: 0, t: 0 },
     });
   },
 
   onProjectileUpdate({ id, position, velocity }) {
     const p = this.projectiles.get(id);
     if (!p) return;
-    // Just update the target — interpolation happens in tick().
-    p.targetPos = { x: position.x, y: position.y, z: position.z };
-    if (velocity) p.targetVel = { x: velocity.x, y: velocity.y, z: velocity.z };
-    p.lastUpdateAt = performance.now();
+    const dx = position.x - p.pos.x;
+    const dy = position.y - p.pos.y;
+    const dz = position.z - p.pos.z;
+    // Only correct on meaningful divergence (>25 cm). Smaller diffs
+    // are ignored so frame-rate prediction stays buttery smooth.
+    if ((dx*dx + dy*dy + dz*dz) > 0.0625) {
+      p._correction.x = dx;
+      p._correction.y = dy;
+      p._correction.z = dz;
+      p._correction.t = 0.15; // distribute the correction over ~150ms
+    }
+    // Track server velocity so future prediction stays accurate.
+    if (velocity) { p.vel.x = velocity.x; p.vel.y = velocity.y; p.vel.z = velocity.z; }
   },
 
   onImpact({ id, type, position }) {
