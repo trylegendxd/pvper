@@ -60,7 +60,8 @@ const players = new Map();   // socketId  → { id, userId, username, currentLob
 
 LOBBY_DEFS.forEach(def => lobbies.set(def.id, {
   id: def.id, name: def.name, bet: def.bet,
-  players: [], mapVotes: {}, status: 'waiting',
+  players: [], mapVotes: {}, modeVotes: {}, roundsVotes: {},
+  status: 'waiting',
 }));
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -153,6 +154,24 @@ function resolveMapType(votes) {
   if (v.length === 0)                    return Math.random() < 0.5 ? 'symmetrical' : 'random';
   if (v.every(x => x === v[0]))          return v[0];
   return Math.random() < 0.5 ? 'symmetrical' : 'random';
+}
+
+// Allowed weapon modes for lobby vote.
+const WEAPON_MODES = ['all','rifle','pistol','shotgun','sniper'];
+function resolveWeaponMode(votes) {
+  const v = Object.values(votes || {}).filter(x => WEAPON_MODES.includes(x));
+  if (v.length === 0)              return 'all';
+  if (v.every(x => x === v[0]))    return v[0];
+  return v[Math.floor(Math.random() * v.length)];
+}
+
+// Rounds = first-to-N kills. Allowed: 3 / 5 / 7. Default 5.
+const ROUND_OPTIONS = [3, 5, 7];
+function resolveRounds(votes) {
+  const v = Object.values(votes || {}).filter(x => ROUND_OPTIONS.includes(x));
+  if (v.length === 0)              return 5;
+  if (v.every(x => x === v[0]))    return v[0];
+  return v[Math.floor(Math.random() * v.length)];
 }
 
 function lobbySnapshot() {
@@ -289,6 +308,7 @@ module.exports = {
   // Helpers
   rayHitDistance, playerBox, headBox, coverAabb, positionAtTime,
   symmetricalMap, randomMap, resolveMapType, lobbySnapshot,
+  WEAPON_MODES, ROUND_OPTIONS, resolveWeaponMode, resolveRounds,
   // Wallet-aware lifecycle
   startShooterMatch, finishShooterMatch, cancelShooterMatch, refundShooterMatch,
 };
