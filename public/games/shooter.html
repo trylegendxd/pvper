@@ -2984,7 +2984,20 @@ const PrivateLobby = {
     });
     this.chatSocket.on('lobby_invite', d => this.onIncomingInvite(d));
 
-    api('/api/friends').then(r => { this.friends = r.friends || []; this.render(); }).catch(() => {});
+    // Real-time friend changes — refresh the invite list without a reload.
+    const refreshFriends = () => {
+      api('/api/friends')
+        .then(r => { this.friends = r.friends || []; this.render(); })
+        .catch(() => {});
+    };
+    this.chatSocket.on('friend_added',            refreshFriends);
+    this.chatSocket.on('friend_removed',          refreshFriends);
+    this.chatSocket.on('friend_request_received', d => {
+      this.notify(`${d?.fromUsername || 'Someone'} sent you a friend request.`);
+      refreshFriends();
+    });
+    this.chatSocket.on('friend_request_rejected', refreshFriends);
+    refreshFriends();
 
     const s = NetworkManager.socket;
     if (s) {
@@ -3136,7 +3149,10 @@ const PrivateLobby = {
         ? `<button class="pl-slot-kick" data-kick="${m.userId}" title="Kick">×</button>` : '';
       const xferBtn = isHost && !m.isHost
         ? `<button class="pl-slot-xfer" data-xfer="${m.userId}" title="Make host">👑</button>` : '';
-      const moveBtn = (isHost || isMe)
+      // Team switch is a self-action only — host can re-arrange via kick+
+      // re-invite if they really need to. Showing the ⇄ on other players'
+      // slots was confusing because the server always rejected it.
+      const moveBtn = isMe
         ? `<button class="pl-slot-move" data-move="${m.userId}" data-target="${team === 'a' ? 'b' : 'a'}" title="Switch team">⇄</button>` : '';
       return `<div class="pl-slot pl-slot-filled pl-team-${team} ${m.isHost ? 'is-host' : ''} ${m.ready ? 'is-ready' : ''} ${isMe ? 'is-me' : ''} ${offline ? 'is-offline' : ''}">
         <div class="pl-slot-avatar">${escapeHtml(m.username.slice(0,1).toUpperCase())}
@@ -3382,6 +3398,14 @@ const PrivateLobby = {
       cant_invite_self:    'Cannot invite yourself.',
       cant_kick_self:      'Cannot kick yourself.',
       too_many_members:    'Cannot shrink lobby below current member count.',
+      target_offline:      'That player is offline.',
+      not_member:          'You are no longer in this lobby.',
+      bad_team_size:       'Invalid team size.',
+      bad_weapon_mode:     'Invalid weapon mode.',
+      bad_kills:           'Invalid rounds option.',
+      bad_bet:             'Invalid bet amount.',
+      bad_target:          'Invalid target.',
+      not_ready:           'Connection not ready yet — try again.',
     })[code] || code;
   },
 

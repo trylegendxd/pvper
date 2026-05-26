@@ -372,8 +372,14 @@ function handleLeavePrivate(socket, reason = 'left') {
     return;
   }
   if (wasHost) {
-    // Transfer host to the first remaining member.
-    const next = lobby.members[0];
+    // Transfer host to the first remaining CONNECTED member; if none,
+    // disband instead so the lobby doesn't get stranded.
+    const next = lobby.members.find(m => m.socketId && players.has(m.socketId))
+                 || lobby.members[0];
+    if (!next || !next.socketId || !players.has(next.socketId)) {
+      disbandPrivateLobby(socket.server, lobby, 'host_left');
+      return;
+    }
     lobby.hostUserId   = next.userId;
     lobby.hostSocketId = next.socketId;
     // Settings changed effectively (new host) — clear ready states.
@@ -894,8 +900,8 @@ function attach(io) {
         if (!C) return cb?.({ error: 'bad_code' });
         const id = privateLobbiesByCode.get(C);
         if (!id) return cb?.({ error: 'no_lobby' });
-        // Reuse accept_invite logic by faking the call.
-        socket.emit;
+        // Reuse the accept-invite validation inline so the path stays
+        // in one place.
         return new Promise((resolve) => {
           // Inline the accept logic so the code path is shared.
           (async () => {
@@ -1047,6 +1053,11 @@ function attach(io) {
       if (lobby.status !== 'waiting' && lobby.status !== 'ready') return cb?.({ error: 'already_started' });
       const target = lobby.members.find(m => m.userId === userId);
       if (!target || target.userId === me.userId) return cb?.({ error: 'bad_target' });
+      // The target must actually be connected — handing host to an
+      // already-disconnected player would leave the lobby unleadable.
+      if (!target.socketId || !players.has(target.socketId)) {
+        return cb?.({ error: 'target_offline' });
+      }
       lobby.hostUserId = target.userId;
       lobby.hostSocketId = target.socketId;
       // New host is implicitly ready; clear ready for the OLD host.

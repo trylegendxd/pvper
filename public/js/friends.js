@@ -53,6 +53,35 @@
       if (STATE.activeChat === other) renderMessages();
       else flashUnread(other);
     });
+
+    // ── Real-time friend updates — refresh lists without a page reload ──
+    s.on('friend_request_received', d => {
+      load();
+      notify(`${d?.fromUsername || 'Someone'} sent you a friend request.`);
+    });
+    s.on('friend_added',            () => { load(); });
+    s.on('friend_request_rejected', () => { load(); });
+    s.on('friend_removed',          d => {
+      if (STATE.activeChat === d?.userId) STATE.activeChat = null;
+      load();
+    });
+  }
+
+  // Small in-page toast (no external CSS needed).
+  function notify(text) {
+    let host = document.getElementById('friend-toast-host');
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'friend-toast-host';
+      host.style.cssText = 'position:fixed;bottom:20px;right:20px;display:flex;flex-direction:column;gap:8px;z-index:9999;';
+      document.body.appendChild(host);
+    }
+    const t = document.createElement('div');
+    t.style.cssText = 'background:rgba(20,24,32,.95);border:1px solid #4b9eff;color:#fff;padding:10px 14px;border-radius:5px;font-size:13px;letter-spacing:1px;box-shadow:0 8px 18px rgba(0,0,0,.45);opacity:0;transition:opacity .2s ease;';
+    t.textContent = text;
+    host.appendChild(t);
+    setTimeout(() => t.style.opacity = '1', 10);
+    setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 250); }, 4500);
   }
 
   function flashUnread(userId) {
@@ -139,7 +168,13 @@
         else if (r.status === 'accepted')   alert('Request auto-accepted (they had already sent you one).');
         await load();
       } catch (e) {
-        alert(e.message || 'Could not send request.');
+        const friendly = ({
+          user_not_found:         'No user with that name.',
+          cannot_befriend_self:   'You cannot befriend yourself.',
+          missing_username:       'Enter a username first.',
+          blocked:                'You cannot send a request to that user.',
+        })[e.message] || (e.message || 'Could not send request.');
+        alert(friendly);
       }
     });
 

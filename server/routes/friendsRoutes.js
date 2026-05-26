@@ -1,6 +1,7 @@
 // server/routes/friendsRoutes.js
 // REST endpoints for the social layer (friends list + requests).
-// Real-time delivery of accepted/online events is handled by chatSocket.
+// Push notifications (request received, accepted, rejected, removed) go
+// out via the /chat namespace so the UI updates without a refresh.
 const express = require('express');
 const requireAuth = require('../middleware/requireAuth');
 const { pool } = require('../db');
@@ -11,6 +12,25 @@ router.use(requireAuth);
 // Helpers — canonical pair so the UNIQUE(user_a,user_b) index does its job.
 function pair(a, b) {
   return a < b ? [a, b] : [b, a];
+}
+
+// Push a social-event payload to one user's chat-namespace room.
+// Safe no-op if Socket.IO isn't attached (e.g. during tests).
+function pushToUser(app, userId, event, data) {
+  try {
+    const io = app.locals.io;
+    if (!io) return;
+    io.of('/chat').to(`u:${userId}`).emit(event, data || {});
+  } catch (e) {
+    // Real-time push should never break a REST response.
+    console.warn('[friends] push failed', e.message);
+  }
+}
+
+// Fetch the requester's username — small helper used by push events.
+async function lookupUsername(userId) {
+  const { rows } = await pool.query('SELECT username FROM users WHERE id=$1', [userId]);
+  return rows[0]?.username || null;
 }
 
 // ── GET /api/friends ───────────────────────────────────────────────────────
@@ -77,6 +97,12 @@ router.post('/request', async (req, res) => {
             `UPDATE friendships SET status='accepted', responded_at=NOW() WHERE id=$1`,
             [r.id]
           );
+          const meName = await lookupUsername(me);
+          // Both sides see each other as a new friend.
+          pushToUser(req.app, targetId, 'friend_added',
+            { userId: me, username: meName });
+          pushToUser(req.app, me, 'friend_added',
+            { userId: targetId, username });
           return res.json({ ok: true, status: 'accepted' });
         }
         return res.json({ ok: true, status: 'pending' });
@@ -88,6 +114,11 @@ router.post('/request', async (req, res) => {
        VALUES ($1, $2, $3, 'pending')`,
       [ua, ub, me]
     );
+    // Push the new request to the target so they see it immediately.
+    const meName = await lookupUsername(me);
+    pushToUser(req.app, targetId, 'friend_request_received', {
+      fromUserId: me, fromUsername: meName,
+    });
     res.json({ ok: true, status: 'pending' });
   } catch (e) {
     res.status(400).json({ error: e.message || 'request_failed' });
@@ -113,6 +144,12 @@ router.post('/accept', async (req, res) => {
       `UPDATE friendships SET status='accepted', responded_at=NOW() WHERE id=$1`,
       [requestId]
     );
+    // Notify both sides so neither needs a refresh.
+    const meName       = await lookupUsername(me);
+    const otherId      = r.requester_id;
+    const otherName    = await lookupUsername(otherId);
+    pushToUser(req.app, otherId, 'friend_added', { userId: me, username: meName });
+    pushToUser(req.app, me,      'friend_added', { userId: otherId, username: otherName });
     res.json({ ok: true, status: 'accepted' });
   } catch (e) {
     res.status(400).json({ error: e.message || 'accept_failed' });
@@ -133,6 +170,13 @@ router.post('/reject', async (req, res) => {
     const r = rows[0];
     if (r.user_a !== me && r.user_b !== me) return res.status(403).json({ error: 'forbidden' });
     await pool.query(`DELETE FROM friendships WHERE id=$1`, [requestId]);
+    // If I rejected an INCOMING request, tell the requester so their
+    // "outgoing" list updates without a refresh.
+    if (r.requester_id !== me) {
+      pushToUser(req.app, r.requester_id, 'friend_request_rejected', {
+        byUserId: me,
+      });
+    }
     res.json({ ok: true });
   } catch (e) {
     res.status(400).json({ error: e.message || 'reject_failed' });
@@ -149,6 +193,9 @@ router.delete('/:userId', async (req, res) => {
       `DELETE FROM friendships WHERE user_a=$1 AND user_b=$2`,
       [ua, ub]
     );
+    // Push to both sides so each friend list refreshes immediately.
+    pushToUser(req.app, otherId, 'friend_removed', { userId: me });
+    pushToUser(req.app, me,      'friend_removed', { userId: otherId });
     res.json({ ok: true });
   } catch (e) {
     res.status(400).json({ error: e.message || 'remove_failed' });

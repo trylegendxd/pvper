@@ -29,6 +29,11 @@ const PORT = Number(process.env.PORT || 3000);
   // Share express-session with Socket.IO so we can read req.session.userId
   io.engine.use(sessionMiddleware);
 
+  // Expose the io instance to REST routes via app.locals — used for live
+  // push of friend requests, accepts, removes, etc. so the UI updates
+  // without a refresh.
+  app.locals.io = io;
+
   attachAll(io);
 
   server.listen(PORT, () => {
