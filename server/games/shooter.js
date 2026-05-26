@@ -210,7 +210,16 @@ const THROWABLE_CONFIG = {
     cooldownMs: 1200,
     throwSpeed: 16,
     gravity: 18,
-    maxFlightMs: 4000,
+    maxFlightMs: 5000,         // a bit longer so bouncing has time to settle
+    // Bounce physics — smoke acts like a flashbang canister, bouncing off
+    // floors/walls/cover before going off.
+    bounce: {
+      maxBounces:    3,
+      restitution:   0.5,      // y-velocity factor preserved on bounce
+      wallRestitution: 0.55,   // similar for arena walls + cover faces
+      friction:      0.7,      // x/z velocity factor on each ground hit
+      settleSpeed:   1.5,      // speed² below this → settle + detonate
+    },
     area: {
       radius: 4.5,
       durationMs: 9000,

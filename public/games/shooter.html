@@ -3525,6 +3525,7 @@ const Throwables = {
     if (!s) return;
     s.on('throwable_projectile_spawned', d => this.onProjectileSpawned(d));
     s.on('throwable_projectile_update',  d => this.onProjectileUpdate(d));
+    s.on('throwable_bounce',             d => this.onProjectileBounce(d));
     s.on('throwable_impact',             d => this.onImpact(d));
     s.on('area_effect_start',            d => this.onEffectStart(d));
     s.on('area_effect_end',              d => this.onEffectEnd(d));
@@ -3766,6 +3767,15 @@ const Throwables = {
       p._spinT = (p._spinT || 0) + dt * 6;
       p.mesh.rotation.x = p._spinT;
       p.mesh.rotation.z = p._spinT * 0.5;
+      // Tiny scale-pulse for the first frames after a bounce.
+      if (p._bounceFlashT > 0) {
+        p._bounceFlashT -= dt;
+        const k = Math.max(0, p._bounceFlashT / 0.12);
+        const s = 1 + 0.20 * k;
+        p.mesh.scale.set(s, s, s);
+      } else {
+        p.mesh.scale.set(1, 1, 1);
+      }
 
       // Molotov-only ember trail.
       if (p.type === 'molotov') {
@@ -3905,6 +3915,20 @@ const Throwables = {
     }
     // Track server velocity so future prediction stays accurate.
     if (velocity) { p.vel.x = velocity.x; p.vel.y = velocity.y; p.vel.z = velocity.z; }
+  },
+
+  // Server says the projectile bounced — adopt the post-bounce position
+  // and velocity authoritatively so the client's predicted arc matches.
+  // This visually reads as the canister kicking off the surface.
+  onProjectileBounce({ id, position, velocity, kind }) {
+    const p = this.projectiles.get(id);
+    if (!p) return;
+    p.pos.x = position.x; p.pos.y = position.y; p.pos.z = position.z;
+    if (velocity) { p.vel.x = velocity.x; p.vel.y = velocity.y; p.vel.z = velocity.z; }
+    p._correction = { x: 0, y: 0, z: 0, t: 0 };
+    p._bounceFlashT = 0.12;   // tiny scale pulse on the mesh
+    // Soft audio cue, reusing the existing hit sample as a "thud".
+    try { AudioManager?.playHit?.(); } catch (_) {}
   },
 
   onImpact({ id, type, position }) {

@@ -387,6 +387,94 @@ function stopThrowableTick(match) {
   } catch (_) { /* swallow — cleanup must never throw */ }
 }
 
+// Reflect a projectile off the surface it just intersected, with
+// restitution + friction so it loses energy like a real canister.
+// Mutates p.position and p.velocity in place.
+function bounceProjectile(p, kind, cover, px, py, pz, nx, ny, nz, bcfg) {
+  const R   = bcfg.restitution;
+  const RW  = bcfg.wallRestitution;
+  const FR  = bcfg.friction;
+
+  if (kind === 'ground') {
+    // Snap above floor, bounce y, friction x/z.
+    p.position.x = nx;
+    p.position.y = 0.05;
+    p.position.z = nz;
+    p.velocity.y = Math.abs(p.velocity.y) * R;
+    p.velocity.x *= FR;
+    p.velocity.z *= FR;
+    return;
+  }
+  if (kind === 'wall') {
+    // Arena edge — reflect whichever axis went out of bounds.
+    if (Math.abs(nx) > 21) {
+      p.position.x = Math.sign(nx) * 20.5;
+      p.position.y = ny;
+      p.position.z = nz;
+      p.velocity.x = -p.velocity.x * RW;
+      p.velocity.y *= FR;
+      p.velocity.z *= FR;
+    } else {
+      p.position.x = nx;
+      p.position.y = ny;
+      p.position.z = Math.sign(nz) * 20.5;
+      p.velocity.z = -p.velocity.z * RW;
+      p.velocity.x *= FR;
+      p.velocity.y *= FR;
+    }
+    return;
+  }
+  // kind === 'cover' — figure out which face based on where we came from.
+  // Whichever axis the previous position was OUTSIDE on is the entry face.
+  if (cover) {
+    if (py >= cover.max.y) {
+      // Top — bounce up.
+      p.position.x = nx;
+      p.position.y = cover.max.y + 0.02;
+      p.position.z = nz;
+      p.velocity.y = Math.abs(p.velocity.y) * R;
+      p.velocity.x *= FR;
+      p.velocity.z *= FR;
+    } else if (px <= cover.min.x) {
+      p.position.x = cover.min.x - 0.02;
+      p.position.y = ny;
+      p.position.z = nz;
+      p.velocity.x = -Math.abs(p.velocity.x) * RW;
+      p.velocity.y *= FR;
+      p.velocity.z *= FR;
+    } else if (px >= cover.max.x) {
+      p.position.x = cover.max.x + 0.02;
+      p.position.y = ny;
+      p.position.z = nz;
+      p.velocity.x = Math.abs(p.velocity.x) * RW;
+      p.velocity.y *= FR;
+      p.velocity.z *= FR;
+    } else if (pz <= cover.min.z) {
+      p.position.x = nx;
+      p.position.y = ny;
+      p.position.z = cover.min.z - 0.02;
+      p.velocity.z = -Math.abs(p.velocity.z) * RW;
+      p.velocity.y *= FR;
+      p.velocity.x *= FR;
+    } else if (pz >= cover.max.z) {
+      p.position.x = nx;
+      p.position.y = ny;
+      p.position.z = cover.max.z + 0.02;
+      p.velocity.z = Math.abs(p.velocity.z) * RW;
+      p.velocity.y *= FR;
+      p.velocity.x *= FR;
+    } else {
+      // Started inside (shouldn't happen) — pop to the nearest face top.
+      p.position.x = nx;
+      p.position.y = cover.max.y + 0.02;
+      p.position.z = nz;
+      p.velocity.y = Math.abs(p.velocity.y) * R;
+      p.velocity.x *= FR;
+      p.velocity.z *= FR;
+    }
+  }
+}
+
 // Per-tick projectile + area-effect simulation.
 function tickThrowables(io, match) {
   if (!match || match.ended) { stopThrowableTick(match); return; }
@@ -396,47 +484,74 @@ function tickThrowables(io, match) {
 
   // ── Projectiles: arc physics with simple ground/cover collision ──────
   for (const [pid, p] of match.projectiles) {
-    // Apply gravity, then advance.
+    // Save previous position so collisions can pick the right reflect axis.
+    const px = p.position.x, py = p.position.y, pz = p.position.z;
+
     const cfg = THROWABLE_CONFIG[p.type];
     p.velocity.y -= cfg.gravity * dt;
     const nx = p.position.x + p.velocity.x * dt;
     const ny = p.position.y + p.velocity.y * dt;
     const nz = p.position.z + p.velocity.z * dt;
 
-    // Ground impact.
-    let impacted = (ny <= 0);
-    // Cover-box impact.
-    if (!impacted) {
+    // Classify this tick's collision (if any).
+    let hitKind = null;       // 'ground' | 'wall' | 'cover' | null
+    let hitCover = null;
+    if (ny <= 0) hitKind = 'ground';
+    if (!hitKind) {
       for (const c of (match.coverAabbs || [])) {
         if (nx >= c.min.x && nx <= c.max.x &&
             ny >= c.min.y && ny <= c.max.y &&
-            nz >= c.min.z && nz <= c.max.z) { impacted = true; break; }
+            nz >= c.min.z && nz <= c.max.z) {
+          hitKind = 'cover'; hitCover = c; break;
+        }
       }
     }
-    if (!impacted && (Math.abs(nx) > 21 || Math.abs(nz) > 21)) impacted = true;
+    if (!hitKind && (Math.abs(nx) > 21 || Math.abs(nz) > 21)) hitKind = 'wall';
 
-    // Expiration counts as an impact too — falls in place. This stops
-    // the client-side mesh from hanging in the air forever if physics
-    // somehow keeps the projectile aloft past the max flight time.
+    // Expiration → fall-in-place impact (prevents stuck-in-air ghosts).
     const expired = now >= p.expiresAt;
-    if (expired && !impacted) impacted = true;
+    if (!hitKind && expired) hitKind = 'ground';
 
-    if (impacted) {
-      const impactPos = { x: nx, y: 0, z: nz };
-      match.projectiles.delete(pid);
-      // Broadcast to every player in the match in one call.
-      ns.to(match.playerIds).emit('throwable_impact', {
-        id: pid, type: p.type, position: impactPos, ownerSocketId: p.ownerSocketId,
-      });
-      spawnAreaEffect(io, match, p.type, impactPos, p.ownerSocketId, p.ownerUserId, p.ownerTeam);
-    } else {
+    if (!hitKind) {
+      // No collision — advance and stream.
       p.position.x = nx; p.position.y = ny; p.position.z = nz;
-      // Stream position EVERY tick (100ms) so the client can interpolate
-      // smoothly — every-other-tick caused visible flicker/jitter.
       ns.to(match.playerIds).emit('throwable_projectile_update', {
         id: pid, position: p.position, velocity: p.velocity,
       });
+      continue;
     }
+
+    // SMOKE: bounce up to maxBounces times before detonating.
+    const bcfg = THROWABLE_CONFIG.smoke?.bounce;
+    if (p.type === 'smoke' && bcfg && !expired && (p.bounceCount || 0) < bcfg.maxBounces) {
+      bounceProjectile(p, hitKind, hitCover, px, py, pz, nx, ny, nz, bcfg);
+      p.bounceCount = (p.bounceCount || 0) + 1;
+      // If basically standstill after the bounce, settle and detonate.
+      const v2 = p.velocity.x*p.velocity.x + p.velocity.y*p.velocity.y + p.velocity.z*p.velocity.z;
+      if (v2 < bcfg.settleSpeed) {
+        const impactPos = { x: p.position.x, y: 0, z: p.position.z };
+        match.projectiles.delete(pid);
+        ns.to(match.playerIds).emit('throwable_impact', {
+          id: pid, type: p.type, position: impactPos, ownerSocketId: p.ownerSocketId,
+        });
+        spawnAreaEffect(io, match, p.type, impactPos, p.ownerSocketId, p.ownerUserId, p.ownerTeam);
+        continue;
+      }
+      // Broadcast the bounce so clients can sync.
+      ns.to(match.playerIds).emit('throwable_bounce', {
+        id: pid, position: p.position, velocity: p.velocity,
+        bounceCount: p.bounceCount, kind: hitKind,
+      });
+      continue;
+    }
+
+    // MOLOTOV (or smoke past max bounces / expired): detonate.
+    const impactPos = { x: nx, y: 0, z: nz };
+    match.projectiles.delete(pid);
+    ns.to(match.playerIds).emit('throwable_impact', {
+      id: pid, type: p.type, position: impactPos, ownerSocketId: p.ownerSocketId,
+    });
+    spawnAreaEffect(io, match, p.type, impactPos, p.ownerSocketId, p.ownerUserId, p.ownerTeam);
   }
 
   // ── Area effects: tick damage for fire, auto-expire all ──────────────
