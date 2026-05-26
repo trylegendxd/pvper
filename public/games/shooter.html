@@ -361,7 +361,10 @@ input:focus { border-color:var(--accent); }
       </div>
       <div class="vote-result" id="vote-result">Waiting for votes...</div>
     </div>
-    <p style="color:var(--dim);font-size:13px;letter-spacing:1px;">Waiting for opponent<span class="waiting-dots"></span></p>
+    <div id="match-countdown-row" style="display:none;font-size:14px;letter-spacing:2px;color:var(--accent);">
+      Match starts in <span id="match-countdown-secs" style="font-size:22px;font-weight:700;color:#ffce4a;">10</span>s
+    </div>
+    <p id="waiting-hint" style="color:var(--dim);font-size:13px;letter-spacing:1px;">Waiting for opponent<span class="waiting-dots"></span></p>
     <button class="btn-danger" onclick="App.leaveLobby()">CANCEL</button>
   </div>
 </div>
@@ -2240,6 +2243,34 @@ const UIManager = {
     document.getElementById('vote-rand').className = v === 'random'       ? 'active-rand' : '';
   },
 
+  // 10-second pre-match countdown so players have time to vote on the map.
+  // Server emits `match_countdown` with an absolute `startsAt` so client
+  // clock drift doesn't matter for the relative timing.
+  _countdownTimer: null,
+  startMatchCountdown(startsAt) {
+    this.stopMatchCountdown();
+    const row  = document.getElementById('match-countdown-row');
+    const cell = document.getElementById('match-countdown-secs');
+    const hint = document.getElementById('waiting-hint');
+    if (!row || !cell) return;
+    row.style.display = '';
+    if (hint) hint.style.display = 'none';
+    const tick = () => {
+      const left = Math.max(0, Math.ceil((startsAt - Date.now()) / 1000));
+      cell.textContent = left;
+      if (left <= 0) this.stopMatchCountdown();
+    };
+    tick();
+    this._countdownTimer = setInterval(tick, 250);
+  },
+  stopMatchCountdown() {
+    if (this._countdownTimer) { clearInterval(this._countdownTimer); this._countdownTimer = null; }
+    const row  = document.getElementById('match-countdown-row');
+    const hint = document.getElementById('waiting-hint');
+    if (row) row.style.display = 'none';
+    if (hint) hint.style.display = '';
+  },
+
   // ── HUD ────────────────────────────────────────────────────────────────
   updateHealth(hp) {
     const v = Math.max(0, hp);
@@ -2798,6 +2829,8 @@ const NetworkManager = {
     });
     s.on('lobby_update',        d => UIManager.renderLobbyCards(d));
     s.on('waiting_room_update', d => UIManager.renderWaitingPlayers(d));
+    s.on('match_countdown',     d => UIManager.startMatchCountdown(d?.startsAt));
+    s.on('match_countdown_cancel', () => UIManager.stopMatchCountdown());
     s.on('match_start',         d => App.onMatchStart(d));
     s.on('opponent_move',       d => GameEngine.onOpponentMove(d));
     s.on('hit_result',          d => {

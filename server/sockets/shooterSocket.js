@@ -201,11 +201,13 @@ async function startMatch(io, lobbyId) {
     health: MAX_HEALTH, kills: 0, deaths: 0, headshots: 0,
     shotsFired: 0, shotsHit: 0,
     weapon: DEFAULT_WEAPON,
-    weapons: {
-      rifle:   { ammo: WEAPONS.rifle.mag,   reloading: false, reloadStartedAt: 0 },
-      pistol:  { ammo: WEAPONS.pistol.mag,  reloading: false, reloadStartedAt: 0 },
-      shotgun: { ammo: WEAPONS.shotgun.mag, reloading: false, reloadStartedAt: 0 },
-    },
+    // One slot per weapon in WEAPONS — must include every key or the
+    // respawn loop will throw when it tries to access an undefined slot.
+    weapons: Object.fromEntries(
+      Object.keys(WEAPONS).map(k => [k,
+        { ammo: WEAPONS[k].mag, reloading: false, reloadStartedAt: 0 }
+      ])
+    ),
     lastShot: 0, positionHistory: [], respawning: false,
     lastPosition: { ...spawnPoints[spawnIdx] },
     // Server-authoritative tracking
@@ -349,7 +351,19 @@ function attach(io) {
       broadcastLobbies(io);
 
       if (lobby.players.length === 2) {
-        setTimeout(() => startMatch(io, lobbyId), 800);
+        // Give both players a 10-second window to vote on the map before
+        // the match starts. Broadcast a countdown so the lobby UI can
+        // show how long is left.
+        const COUNTDOWN_MS = 10000;
+        const startsAt = Date.now() + COUNTDOWN_MS;
+        lobby.startsAt = startsAt;
+        ns.to(lobbyId).emit('match_countdown', { startsAt, ms: COUNTDOWN_MS });
+        clearTimeout(lobby._startTimer);
+        lobby._startTimer = setTimeout(() => {
+          lobby.startsAt = null;
+          lobby._startTimer = null;
+          startMatch(io, lobbyId);
+        }, COUNTDOWN_MS);
       }
     });
 
@@ -649,26 +663,45 @@ function attach(io) {
           return;
         }
 
-        // Respawn opponent (already flagged respawning above)
+        // Respawn opponent (already flagged respawning above). All work
+        // wrapped in try/catch so an unexpected throw can't swallow the
+        // respawn event — that bug previously left players stuck on the
+        // death screen forever.
         const spawnIdx = match.playerIds.indexOf(oppSock);
         const spawn = { ...match.spawnPoints[spawnIdx] };
         setTimeout(() => {
-          if (!matches.has(match.id) || matches.get(match.id).ended) return;
-          oppState.health = MAX_HEALTH;
-          for (const k of Object.keys(WEAPONS)) {
-            oppState.weapons[k].ammo = WEAPONS[k].mag;
-            oppState.weapons[k].reloading = false;
-            oppState.weapons[k].reloadStartedAt = 0;
+          try {
+            if (!matches.has(match.id) || matches.get(match.id).ended) return;
+            oppState.health = MAX_HEALTH;
+            for (const k of Object.keys(WEAPONS)) {
+              // Lazily create any missing weapon slot.
+              if (!oppState.weapons[k]) {
+                oppState.weapons[k] = { ammo: WEAPONS[k].mag, reloading: false, reloadStartedAt: 0 };
+              } else {
+                oppState.weapons[k].ammo = WEAPONS[k].mag;
+                oppState.weapons[k].reloading = false;
+                oppState.weapons[k].reloadStartedAt = 0;
+              }
+            }
+            oppState.position = spawn;
+            oppState.lastPosition = { ...spawn };
+            oppState.positionHistory = [];
+            oppState.respawning = false;
+            oppState.lastMoveAt = Date.now();
+            oppState.lastSpeed  = 0;
+            Replay.log(match.id, 'player_spawn', { s: oppSock, p: spawn });
+            ns.to(oppSock).emit('respawn', { position: spawn, health: MAX_HEALTH });
+            ns.to(socket.id).emit('opponent_respawn', { position: spawn });
+          } catch (e) {
+            console.error('[shooter] respawn failed, forcing fallback', e);
+            // Still emit respawn so the player isn't stuck on the death
+            // overlay forever, even if their state didn't update cleanly.
+            try {
+              oppState.respawning = false;
+              ns.to(oppSock).emit('respawn', { position: spawn, health: MAX_HEALTH });
+              ns.to(socket.id).emit('opponent_respawn', { position: spawn });
+            } catch (_) {}
           }
-          oppState.position = spawn;
-          oppState.lastPosition = { ...spawn };
-          oppState.positionHistory = [];
-          oppState.respawning = false;
-          oppState.lastMoveAt = Date.now();
-          oppState.lastSpeed  = 0;
-          Replay.log(match.id, 'player_spawn', { s: oppSock, p: spawn });
-          ns.to(oppSock).emit('respawn', { position: spawn, health: MAX_HEALTH });
-          ns.to(socket.id).emit('opponent_respawn', { position: spawn });
         }, RESPAWN_DELAY_MS);
       }
     });
@@ -744,6 +777,14 @@ function attach(io) {
       if (lobby) {
         lobby.players = lobby.players.filter(id => id !== socket.id);
         delete lobby.mapVotes[socket.id];
+        // Cancel any pending 10s countdown — both players need to be
+        // present for the match to start.
+        if (lobby._startTimer) {
+          clearTimeout(lobby._startTimer);
+          lobby._startTimer = null;
+          lobby.startsAt = null;
+          ns.to(p.currentLobby).emit('match_countdown_cancel');
+        }
         ns.to(p.currentLobby).emit('waiting_room_update', buildWaitingUpdate(lobby));
       }
       socket.leave(p.currentLobby);
