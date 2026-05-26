@@ -62,7 +62,8 @@ function log(matchId, type, data = {}) {
 
 // Movement snapshot — throttled. Returns true if the snapshot was recorded.
 // `rotation` is optional but used by the killcam to reconstruct POV.
-function maybeMoveSnapshot(matchId, socketId, position, intervalMs, rotation) {
+// `extra` may carry { yOffset, crouching } so jump/crouch are visible.
+function maybeMoveSnapshot(matchId, socketId, position, intervalMs, rotation, extra) {
   const r = recorders.get(matchId);
   if (!r) return false;
   const last = r.lastMoveSnap[socketId] || 0;
@@ -82,6 +83,12 @@ function maybeMoveSnapshot(matchId, socketId, position, intervalMs, rotation) {
       Math.round((rotation.x || 0) * 1000) / 1000,
       Math.round((rotation.y || 0) * 1000) / 1000,
     ];
+  }
+  if (extra) {
+    if (typeof extra.yOffset === 'number' && extra.yOffset !== 0) {
+      evt.j = Math.round(extra.yOffset * 100) / 100;       // jump y-offset
+    }
+    if (extra.crouching) evt.c = 1;                         // crouched flag
   }
   log(matchId, 'movement', evt);
   return true;

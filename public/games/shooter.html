@@ -360,6 +360,24 @@ input:focus { border-color:var(--accent); }
         <button id="vote-rand" onclick="App.voteMap('random')">🔀 Random</button>
       </div>
       <div class="vote-result" id="vote-result">Waiting for votes...</div>
+
+      <div class="label" style="margin-top:14px;">VOTE WEAPON MODE</div>
+      <div class="map-vote-btns" id="mode-vote-btns">
+        <button data-mode="all"     onclick="App.voteMode('all')">All</button>
+        <button data-mode="rifle"   onclick="App.voteMode('rifle')">Rifle</button>
+        <button data-mode="pistol"  onclick="App.voteMode('pistol')">Pistol</button>
+        <button data-mode="shotgun" onclick="App.voteMode('shotgun')">Shotgun</button>
+        <button data-mode="sniper"  onclick="App.voteMode('sniper')">Sniper</button>
+      </div>
+      <div class="vote-result" id="mode-vote-result">Default: All weapons</div>
+
+      <div class="label" style="margin-top:14px;">VOTE ROUNDS (FIRST TO N KILLS)</div>
+      <div class="map-vote-btns" id="rounds-vote-btns">
+        <button data-rounds="3" onclick="App.voteRounds(3)">First to 3</button>
+        <button data-rounds="5" onclick="App.voteRounds(5)">First to 5</button>
+        <button data-rounds="7" onclick="App.voteRounds(7)">First to 7</button>
+      </div>
+      <div class="vote-result" id="rounds-vote-result">Default: First to 5</div>
     </div>
     <div id="match-countdown-row" style="display:none;font-size:14px;letter-spacing:2px;color:var(--accent);">
       Match starts in <span id="match-countdown-secs" style="font-size:22px;font-weight:700;color:#ffce4a;">10</span>s
@@ -1622,6 +1640,8 @@ const GameEngine = {
 
   switchWeapon(name) {
     if (!WEAPONS[name]) return;
+    // Reject if the current match's weapon mode forbids it.
+    if (this.weaponMode && this.weaponMode !== 'all' && name !== this.weaponMode) return;
     if (this.currentWeapon === name) return;
     if (this._wState().reloading) return;
     // Unscope on any weapon change.
@@ -1905,11 +1925,14 @@ const GameEngine = {
     // Gun animation (bob + recoil)
     this._updateGun(dt, moving);
 
-    // Send position (online mode only)
+    // Send position (online mode only). yOffset captures jump height and
+    // crouching state for the killcam — gameplay still uses y=0 for hit
+    // detection so this can't be abused to dodge bullets.
     if (!App.trainingMode) {
       NetworkManager.sendMove(
         { x: this.pos.x, y: 0, z: this.pos.z },
-        { x: this.pitch,  y: this.yaw }
+        { x: this.pitch,  y: this.yaw },
+        { yOffset: this._yPos, crouching: this.crouching }
       );
     }
   },
@@ -2229,13 +2252,15 @@ const UIManager = {
       e.innerHTML = '<span class="empty-slot">Waiting for opponent...</span>';
       c.appendChild(e);
     }
-    const votes  = data.players.map(p => p.mapVote).filter(Boolean);
-    const resEl  = document.getElementById('vote-result');
-    if (!votes.length)      resEl.textContent = 'No votes yet';
-    else if (votes.length === 1) resEl.textContent = `You voted: ${votes[0]}`;
-    else resEl.textContent = votes[0] === votes[1]
-      ? `Both voted ${votes[0]} — confirmed!`
-      : 'Votes differ — coin flip!';
+    const summarise = (key, label, def) => {
+      const v = data.players.map(p => p[key]).filter(x => x !== null && x !== undefined);
+      if (!v.length)               return `Default: ${def}`;
+      if (v.length === 1)          return `You voted: ${v[0]}`;
+      return v[0] === v[1] ? `Both voted ${v[0]} — confirmed!` : `Votes differ — coin flip!`;
+    };
+    document.getElementById('vote-result').textContent        = summarise('mapVote',    'map',     'random');
+    document.getElementById('mode-vote-result').textContent   = summarise('modeVote',   'mode',    'all weapons');
+    document.getElementById('rounds-vote-result').textContent = summarise('roundsVote', 'rounds',  'first to 5');
   },
 
   updateVoteButtons(v) {
@@ -2545,10 +2570,16 @@ function escapeHtml(s) {
 // ══════════════════════════════════════════════════════════════
 //  KILLCAM  — plays back the killer's last 3s in a Three.js scene
 //  rendered behind the death overlay.
+//
+//  Now records jump / crouch / shot origin so the victim can see:
+//   * the killer ducking (camera lowers to crouch eye-height)
+//   * the killer jumping (camera rises with the jump y-offset)
+//   * each shot fired as a muzzle flash + tracer in front of the cam
 // ══════════════════════════════════════════════════════════════
 const Killcam = {
   _scene: null, _camera: null, _renderer: null, _raf: null,
   _start: 0, _data: null, _victim: null, _muzzleFlash: null,
+  _muzzleSprite: null, _tracers: [],
   _lastShotProcessed: -1, _cleanupMeshes: [],
 
   // Build a richer scene each time so we can drop the victim avatar
@@ -2573,36 +2604,36 @@ const Killcam = {
     this._cleanupMeshes = [];
     this._scene = new THREE.Scene();
 
-    // Sky-ish background (dark dusk, more cinematic than gray).
-    this._scene.background = new THREE.Color(0x12161e);
-    this._scene.fog = new THREE.Fog(0x12161e, 25, 55);
+    // Brighter, more cinematic backdrop so the replay actually reads.
+    this._scene.background = new THREE.Color(0x2a3548);
+    this._scene.fog = new THREE.Fog(0x2a3548, 32, 70);
 
-    // Lighting — hemi for ambient gradient + warm directional for shape.
-    const hemi = new THREE.HemisphereLight(0x9ab4cc, 0x2a2418, 1.0);
+    // Lighting — bumped up so the scene isn't a black void.
+    const hemi = new THREE.HemisphereLight(0xc4d6f0, 0x3a3020, 1.4);
     this._scene.add(hemi);
-    const dir = new THREE.DirectionalLight(0xffe7c2, 1.1);
+    const dir = new THREE.DirectionalLight(0xffefcc, 1.4);
     dir.position.set(10, 18, 6);
     this._scene.add(dir);
-    const fill = new THREE.DirectionalLight(0x7090ff, 0.35);
+    const fill = new THREE.DirectionalLight(0x9bb4ff, 0.6);
     fill.position.set(-8, 12, -10);
     this._scene.add(fill);
 
-    // Floor (matches the live arena's earthy tone — not gray).
+    // Floor — warm earth tone with brighter grid lines for scale.
     const floorGeo = new THREE.PlaneGeometry(50, 50, 1, 1);
     const floor = new THREE.Mesh(
       floorGeo,
-      new THREE.MeshLambertMaterial({ color: 0x3a2e22 })
+      new THREE.MeshLambertMaterial({ color: 0x6a5238 })
     );
     floor.rotation.x = -Math.PI / 2;
     this._scene.add(floor); this._cleanupMeshes.push(floor);
 
-    // Grid texture overlay on the floor — gives it tangible scale.
-    const grid = new THREE.GridHelper(50, 25, 0x554433, 0x2a2218);
+    // Brighter grid lines so motion reads clearly.
+    const grid = new THREE.GridHelper(50, 25, 0xa68658, 0x4b3a26);
     grid.position.y = 0.01;
     this._scene.add(grid);
 
     // Arena walls so the scene doesn't feel like an empty plane.
-    const wallMat = new THREE.MeshLambertMaterial({ color: 0x2c333c });
+    const wallMat = new THREE.MeshLambertMaterial({ color: 0x4a5566 });
     const walls = [
       { x:0,  z:-20, w:42, h:3, d:0.5 },
       { x:0,  z: 20, w:42, h:3, d:0.5 },
@@ -2615,8 +2646,8 @@ const Killcam = {
       this._scene.add(m); this._cleanupMeshes.push(m);
     }
 
-    // Cover boxes — colored, with a slight rim for definition.
-    const coverMat = new THREE.MeshLambertMaterial({ color: 0x5a6470 });
+    // Cover boxes — slightly brighter so they read against the floor.
+    const coverMat = new THREE.MeshLambertMaterial({ color: 0x7e8b9a });
     for (const c of (coverBoxes || [])) {
       const m = new THREE.Mesh(
         new THREE.BoxGeometry(c.size.w, c.size.h, c.size.d),
@@ -2649,14 +2680,46 @@ const Killcam = {
       this._victim = null;
     }
 
-    // Muzzle flash placeholder — toggled on shot_fired events.
-    const flash = new THREE.PointLight(0xffaa55, 0, 6, 2);
+    // Muzzle flash: a point light AND a small bright sprite-like sphere
+    // so it's visible even on the back wall.
+    const flash = new THREE.PointLight(0xffd055, 0, 10, 2);
     this._scene.add(flash);
     this._muzzleFlash = flash;
+    const muzzleSphere = new THREE.Mesh(
+      new THREE.SphereGeometry(0.25, 8, 6),
+      new THREE.MeshBasicMaterial({ color: 0xfff2a0, transparent: true, opacity: 0 })
+    );
+    this._scene.add(muzzleSphere);
+    this._muzzleSprite = muzzleSphere;
+    this._cleanupMeshes.push(muzzleSphere);
+
+    // Tracer pool — pre-allocate a handful of yellow lines we can
+    // recycle every shot.
+    this._tracers = [];
+    for (let i = 0; i < 8; i++) {
+      const geo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-1),
+      ]);
+      const mat = new THREE.LineBasicMaterial({ color: 0xfff0a0, transparent: true, opacity: 0 });
+      const line = new THREE.Line(geo, mat);
+      this._scene.add(line);
+      this._tracers.push({ line, ttl: 0 });
+      this._cleanupMeshes.push(line);
+    }
 
     this._camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 200);
     this._camera.rotation.order = 'YXZ';
     return true;
+  },
+
+  _spawnTracer(origin, dir, len = 14) {
+    const slot = this._tracers.find(t => t.ttl <= 0) || this._tracers[0];
+    if (!slot) return;
+    const o = new THREE.Vector3(origin[0], origin[1], origin[2]);
+    const d = new THREE.Vector3(dir[0], dir[1], dir[2]).normalize().multiplyScalar(len);
+    slot.line.geometry.setFromPoints([o, o.clone().add(d)]);
+    slot.line.material.opacity = 0.95;
+    slot.ttl = 0.12; // seconds
   },
 
   _shortAngleLerp(a, b, k) {
@@ -2715,10 +2778,11 @@ const Killcam = {
     this._start = performance.now();
     this._lastShotProcessed = -1;
 
-    // Pre-compute shot event times relative to tFirst.
+    // Pre-compute shot event times relative to tFirst, with origin/direction
+    // so the killcam can draw tracers + muzzle flashes at the right spot.
     const shots = data.events
-      .filter(e => e.type === 'shot_fired' || e.type === 'kill' || e.type === 'headshot' || e.type === 'bodyshot')
-      .map(e => ({ t: e.t - tFirst, type: e.type }));
+      .filter(e => e.type === 'shot_fired')
+      .map(e => ({ t: e.t - tFirst, origin: e.o, dir: e.d }));
 
     const renderFrame = () => {
       try { return renderFrameInner(); }
@@ -2727,8 +2791,12 @@ const Killcam = {
         this.stop();
       }
     };
+    let lastFrameTs = performance.now();
     const renderFrameInner = () => {
-      const elapsed = performance.now() - this._start;
+      const now = performance.now();
+      const dt  = Math.max(0.001, (now - lastFrameTs) / 1000);
+      lastFrameTs = now;
+      const elapsed = now - this._start;
       if (elapsed > duration + 400) { this.stop(); return; }
       const target = tFirst + Math.min(elapsed, duration);
       // Find surrounding keyframes
@@ -2740,29 +2808,64 @@ const Killcam = {
       const k = Math.max(0, Math.min(1, (target - a.t) / span));
       const px = a.p[0] + (b.p[0] - a.p[0]) * k;
       const pz = a.p[2] + (b.p[2] - a.p[2]) * k;
-      const yaw   = this._shortAngleLerp(a.r[1] || 0, b.r[1] || 0, k);
-      const pitch = (a.r[0] || 0) + ((b.r[0] || 0) - (a.r[0] || 0)) * k;
-      // Account for the same 180° model/camera convention fix used live:
-      // killer's camera yaw=0 looks -Z, but we want yaw to map directly
-      // to view direction in the killcam. Use yaw + π so the perspective
-      // matches what the killer actually saw.
-      this._camera.position.set(px, 1.55, pz);
+      const yaw   = this._shortAngleLerp(a.r?.[1] || 0, b.r?.[1] || 0, k);
+      const pitch = (a.r?.[0] || 0) + ((b.r?.[0] || 0) - (a.r?.[0] || 0)) * k;
+
+      // Eye height: base + jump offset, minus a bit when crouched. We
+      // interpolate so it doesn't snap between snapshots.
+      const baseEye   = 1.7;
+      const crouchEye = 0.85;
+      const eyeA = (a.c ? crouchEye : baseEye) + (a.j || 0);
+      const eyeB = (b.c ? crouchEye : baseEye) + (b.j || 0);
+      const eyeH = eyeA + (eyeB - eyeA) * k;
+
+      // Camera yaw +π: killer's in-game yaw=0 looks -Z but our model's
+      // forward was +Z, same convention fix as the live opponent model.
+      this._camera.position.set(px, eyeH, pz);
       this._camera.rotation.set(pitch, yaw + Math.PI, 0);
 
-      // Trigger muzzle flash on shot events that have just occurred.
+      // Fire any shots whose timestamp just passed.
       for (const s of shots) {
-        if (s.t <= elapsed && s.t > this._lastShotProcessed) {
-          if (s.type === 'shot_fired') {
-            this._muzzleFlash.position.set(px, 1.5, pz);
-            this._muzzleFlash.intensity = 4;
+        if (s.t > this._lastShotProcessed && s.t <= elapsed) {
+          // Position the muzzle flash a bit in front of the camera.
+          const fx = Math.sin(yaw + Math.PI) * -0.35 + px;
+          const fz = Math.cos(yaw + Math.PI) * -0.35 + pz;
+          this._muzzleFlash.position.set(fx, eyeH - 0.1, fz);
+          this._muzzleFlash.intensity = 6;
+          this._muzzleSprite.position.set(fx, eyeH - 0.1, fz);
+          this._muzzleSprite.material.opacity = 1;
+          // Tracer: use the captured origin/direction if we have them,
+          // otherwise project from camera forward.
+          if (s.origin && s.dir) {
+            this._spawnTracer(s.origin, s.dir);
+          } else {
+            const dir = [
+              Math.sin(yaw + Math.PI) * -1,
+              Math.tan(-pitch) * -0.4,
+              Math.cos(yaw + Math.PI) * -1,
+            ];
+            this._spawnTracer([px, eyeH, pz], dir);
           }
         }
       }
       this._lastShotProcessed = elapsed;
-      // Decay muzzle flash quickly.
+
+      // Decay muzzle flash + sprite quickly.
       if (this._muzzleFlash.intensity > 0) {
-        this._muzzleFlash.intensity *= 0.86;
-        if (this._muzzleFlash.intensity < 0.05) this._muzzleFlash.intensity = 0;
+        this._muzzleFlash.intensity *= 0.78;
+        if (this._muzzleFlash.intensity < 0.1) this._muzzleFlash.intensity = 0;
+      }
+      if (this._muzzleSprite.material.opacity > 0) {
+        this._muzzleSprite.material.opacity = Math.max(0, this._muzzleSprite.material.opacity - dt * 8);
+      }
+      // Fade tracers.
+      for (const t of this._tracers) {
+        if (t.ttl > 0) {
+          t.ttl -= dt;
+          t.line.material.opacity = Math.max(0, t.ttl / 0.12) * 0.95;
+        } else {
+          t.line.material.opacity = 0;
+        }
       }
 
       this._renderer.render(this._scene, this._camera);
@@ -2863,14 +2966,21 @@ const NetworkManager = {
   joinLobby(id){ return new Promise(r => this.socket.emit('join_lobby', { lobbyId: id }, r)); },
   leaveLobby() { this.socket.emit('leave_lobby'); },
   voteMap(t)   { this.socket.emit('vote_map', { mapType: t }); },
+  voteMode(m)  { this.socket.emit('vote_mode', { mode: m }); },
+  voteRounds(n){ this.socket.emit('vote_rounds', { rounds: Number(n) }); },
   sendReload()  { this.socket.emit('reload'); },
   sendSwitchWeapon(weapon) { this.socket.emit('switch_weapon', { weapon }); },
 
-  sendMove(position, rotation) {
+  sendMove(position, rotation, extra) {
     const now = performance.now();
     if (now - this._lastMove < 1000 / CFG.MOVE_HZ) return;
     this._lastMove = now;
-    this.socket.emit('player_move', { position, rotation, timestamp: Date.now() });
+    this.socket.emit('player_move', {
+      position, rotation,
+      timestamp: Date.now(),
+      yOffset:   extra?.yOffset || 0,
+      crouching: !!extra?.crouching,
+    });
   },
 
   sendShoot(origin, direction, directions) {
@@ -3099,6 +3209,18 @@ const App = {
     NetworkManager.voteMap(type);
     UIManager.updateVoteButtons(type);
   },
+  voteMode(m) {
+    NetworkManager.voteMode(m);
+    document.querySelectorAll('#mode-vote-btns button').forEach(b => {
+      b.classList.toggle('active-sym', b.dataset.mode === m);
+    });
+  },
+  voteRounds(n) {
+    NetworkManager.voteRounds(n);
+    document.querySelectorAll('#rounds-vote-btns button').forEach(b => {
+      b.classList.toggle('active-sym', Number(b.dataset.rounds) === Number(n));
+    });
+  },
 
   // ── Training mode ──────────────────────────────────────────────────────
   startTraining() {
@@ -3220,11 +3342,22 @@ const App = {
     const oppName = data.players[oppId]?.username ?? 'Opponent';
 
     UIManager.setOpponentLabel(oppName);
+    // Per-match settings (voted on in the lobby).
+    GameEngine.weaponMode = data.weaponMode || 'all';
+    GameEngine.killsToWin = Number(data.killsToWin) || 5;
+    const startingW = (GameEngine.weaponMode === 'all') ? 'rifle' : GameEngine.weaponMode;
+    GameEngine.currentWeapon = startingW;
     const ml = document.getElementById('hud-mode-label');
-    if (ml) { ml.textContent = 'FIRST TO 5'; ml.style.color = '#555'; }
+    if (ml) {
+      const modeLabel = GameEngine.weaponMode === 'all'
+        ? 'ALL WEAPONS'
+        : `${GameEngine.weaponMode.toUpperCase()} ONLY`;
+      ml.textContent = `${modeLabel} · FIRST TO ${GameEngine.killsToWin}`;
+      ml.style.color = '#aaa';
+    }
     UIManager.updateScore(0, 0);
     UIManager.updateHealth(CFG.MAX_HEALTH);
-    UIManager.updateAmmo(WEAPONS.rifle.mag, WEAPONS.rifle.mag, WEAPONS.rifle.name);
+    UIManager.updateAmmo(WEAPONS[startingW].mag, WEAPONS[startingW].mag, WEAPONS[startingW].name);
     UIManager.setCrosshairSpread(0);
     UIManager.clearKillfeed();
     UIManager.hidePause();

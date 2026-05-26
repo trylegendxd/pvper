@@ -20,6 +20,7 @@ const {
   WEAPON_SWITCH_COOLDOWN_MS, SHOT_AFTER_SWITCH_MS,
   POSITION_HISTORY_MS, MOVEMENT_SNAPSHOT_INTERVAL_MS,
   MAX_SHOT_DIRECTION_DEVIATION,
+  WEAPON_MODES, ROUND_OPTIONS, resolveWeaponMode, resolveRounds,
   lobbies, matches, players,
   rayHitDistance, playerBox, headBox, coverAabb, positionAtTime,
   symmetricalMap, randomMap, resolveMapType, lobbySnapshot,
@@ -45,7 +46,9 @@ function buildWaitingUpdate(lobby) {
       const p = players.get(id);
       return {
         id, username: p?.username ?? '?',
-        mapVote: lobby.mapVotes[id] ?? null,
+        mapVote:    lobby.mapVotes[id]    ?? null,
+        modeVote:   lobby.modeVotes[id]   ?? null,
+        roundsVote: lobby.roundsVotes[id] ?? null,
       };
     }),
   };
@@ -180,6 +183,11 @@ async function startMatch(io, lobbyId) {
   const mapType = resolveMapType(lobby.mapVotes);
   const coverBoxes = mapType === 'symmetrical' ? symmetricalMap() : randomMap();
   const spawnPoints = [{ x:0, y:0, z:17 }, { x:0, y:0, z:-17 }];
+  // Per-match settings voted on in the waiting room.
+  const weaponMode = resolveWeaponMode(lobby.modeVotes);
+  const killsToWin = resolveRounds(lobby.roundsVotes);
+  // Default loadout obeys the weapon-mode restriction.
+  const defaultWeapon = (weaponMode === 'all') ? DEFAULT_WEAPON : weaponMode;
 
   // Wallet escrow
   let dbResult;
@@ -190,7 +198,8 @@ async function startMatch(io, lobbyId) {
     // Kick both back to lobby browser
     io.of('/shooter').to(p1Id).emit('match_error', { error: e.message });
     io.of('/shooter').to(p2Id).emit('match_error', { error: e.message });
-    lobby.players = []; lobby.mapVotes = {}; lobby.status = 'waiting';
+    lobby.players = []; lobby.mapVotes = {}; lobby.modeVotes = {}; lobby.roundsVotes = {};
+    lobby.status = 'waiting';
     broadcastLobbies(io);
     return;
   }
@@ -200,7 +209,7 @@ async function startMatch(io, lobbyId) {
     position: { ...spawnPoints[spawnIdx] }, rotation: { x:0, y:0 },
     health: MAX_HEALTH, kills: 0, deaths: 0, headshots: 0,
     shotsFired: 0, shotsHit: 0,
-    weapon: DEFAULT_WEAPON,
+    weapon: defaultWeapon,
     // One slot per weapon in WEAPONS — must include every key or the
     // respawn loop will throw when it tries to access an undefined slot.
     weapons: Object.fromEntries(
@@ -229,6 +238,8 @@ async function startMatch(io, lobbyId) {
     betAmount: lobby.bet,
     ended: false,
     coverAabbs: coverBoxes.map(coverAabb),
+    weaponMode,
+    killsToWin,
   };
   matches.set(match.id, match);
   p1.currentMatch = match.id;
@@ -248,6 +259,8 @@ async function startMatch(io, lobbyId) {
   // Clear lobby immediately so new players can queue while this match runs
   lobby.players = [];
   lobby.mapVotes = {};
+  lobby.modeVotes = {};
+  lobby.roundsVotes = {};
   lobby.status = 'waiting';
   p1.currentLobby = null;
   p2.currentLobby = null;
@@ -259,6 +272,7 @@ async function startMatch(io, lobbyId) {
   const basePayload = {
     matchId: match.id, mapType, coverBoxes, spawnPoints,
     endTime: match.endTime,
+    weaponMode, killsToWin,
     players: {
       [p1Id]: { username: p1.username, spawnIndex: 0 },
       [p2Id]: { username: p2.username, spawnIndex: 1 },
@@ -377,13 +391,34 @@ function attach(io) {
       ns.to(p.currentLobby).emit('waiting_room_update', buildWaitingUpdate(lobby));
     });
 
+    socket.on('vote_mode', ({ mode } = {}) => {
+      const p = players.get(socket.id);
+      if (!p?.currentLobby) return;
+      if (!WEAPON_MODES.includes(mode)) return;
+      const lobby = lobbies.get(p.currentLobby);
+      if (!lobby || lobby.status === 'in_progress') return;
+      lobby.modeVotes[socket.id] = mode;
+      ns.to(p.currentLobby).emit('waiting_room_update', buildWaitingUpdate(lobby));
+    });
+
+    socket.on('vote_rounds', ({ rounds } = {}) => {
+      const p = players.get(socket.id);
+      if (!p?.currentLobby) return;
+      const n = Number(rounds);
+      if (!ROUND_OPTIONS.includes(n)) return;
+      const lobby = lobbies.get(p.currentLobby);
+      if (!lobby || lobby.status === 'in_progress') return;
+      lobby.roundsVotes[socket.id] = n;
+      ns.to(p.currentLobby).emit('waiting_room_update', buildWaitingUpdate(lobby));
+    });
+
     socket.on('leave_lobby', (_, cb) => {
       handleLeave(socket);
       cb?.({ ok: true });
     });
 
     // ── player_move ───────────────────────────────────────────────────
-    socket.on('player_move', ({ position, rotation, timestamp } = {}) => {
+    socket.on('player_move', ({ position, rotation, timestamp, yOffset, crouching } = {}) => {
       const p = players.get(socket.id);
       if (!p?.currentMatch) return;
       const match = matches.get(p.currentMatch);
@@ -447,10 +482,18 @@ function attach(io) {
         state.positionHistory.shift();
       }
 
+      // Capture jump/crouch state on the in-memory player record so the
+      // replay layer can include them in movement snapshots. Gameplay
+      // still uses y=0 for hit detection (these fields are visual only).
+      state.yOffset   = Number(yOffset) || 0;
+      state.crouching = !!crouching;
+
       // Throttled replay snapshot (every MOVEMENT_SNAPSHOT_INTERVAL_MS).
-      // Rotation is included so the killcam can replay the killer's POV.
+      // Rotation, jump height and crouch state ride along so the killcam
+      // can replay the killer's POV faithfully.
       Replay.maybeMoveSnapshot(match.id, socket.id, state.position,
-        MOVEMENT_SNAPSHOT_INTERVAL_MS, state.rotation);
+        MOVEMENT_SNAPSHOT_INTERVAL_MS, state.rotation,
+        { yOffset: state.yOffset, crouching: state.crouching });
 
       const oppSock = match.playerIds.find(id => id !== socket.id);
       if (oppSock) ns.to(oppSock).emit('opponent_move', {
@@ -463,6 +506,10 @@ function attach(io) {
       if (!p?.currentMatch) return;
       const match = matches.get(p.currentMatch);
       if (!match || !WEAPONS[weapon]) return;
+      // Honour the lobby weapon-mode vote.
+      if (match.weaponMode && match.weaponMode !== 'all' && weapon !== match.weaponMode) {
+        return noteSuspicious(match, socket.id, 'weapon_disallowed', { mode: match.weaponMode, attempted: weapon });
+      }
       const state = match.gameState[socket.id];
       if (!state) return;
 
@@ -490,6 +537,10 @@ function attach(io) {
       const W = WEAPONS[wKey];
       const wState = state.weapons[wKey];
       if (!W || !wState) return;
+      // Honour the lobby weapon-mode vote.
+      if (match.weaponMode && match.weaponMode !== 'all' && wKey !== match.weaponMode) {
+        return noteSuspicious(match, socket.id, 'weapon_disallowed', { mode: match.weaponMode, attempted: wKey });
+      }
       if (wState.reloading) return noteSuspicious(match, socket.id, 'shot_while_reloading');
 
       const now = Date.now();
@@ -525,7 +576,21 @@ function attach(io) {
       state.lastShot = now;
       wState.ammo--;
       state.shotsFired++;
-      Replay.log(match.id, 'shot_fired', { s: socket.id, w: wKey, ammo: wState.ammo });
+      Replay.log(match.id, 'shot_fired', {
+        s: socket.id, w: wKey, ammo: wState.ammo,
+        // Origin + direction let the killcam draw a tracer / muzzle flash
+        // in the right place. Rounded so the event stays compact.
+        o: origin ? [
+          Math.round((origin.x ?? 0) * 100) / 100,
+          Math.round((origin.y ?? 0) * 100) / 100,
+          Math.round((origin.z ?? 0) * 100) / 100,
+        ] : null,
+        d: direction ? [
+          Math.round((direction.x ?? 0) * 1000) / 1000,
+          Math.round((direction.y ?? 0) * 1000) / 1000,
+          Math.round((direction.z ?? 0) * 1000) / 1000,
+        ] : null,
+      });
 
       const oppSock = match.playerIds.find(id => id !== socket.id);
       const oppState = match.gameState[oppSock];
@@ -619,7 +684,7 @@ function attach(io) {
       if (fatal) {
         state.kills++;
         oppState.deaths++;
-        const winnerSock = state.kills >= KILLS_TO_WIN ? socket.id : null;
+        const winnerSock = state.kills >= (match.killsToWin || KILLS_TO_WIN) ? socket.id : null;
 
         const killPayload = {
           killerId: socket.id, killedId: oppSock,
@@ -777,6 +842,8 @@ function attach(io) {
       if (lobby) {
         lobby.players = lobby.players.filter(id => id !== socket.id);
         delete lobby.mapVotes[socket.id];
+        delete lobby.modeVotes[socket.id];
+        delete lobby.roundsVotes[socket.id];
         // Cancel any pending 10s countdown — both players need to be
         // present for the match to start.
         if (lobby._startTimer) {
