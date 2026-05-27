@@ -1359,14 +1359,16 @@ const Bot = {
 //  look without touching the loader code.
 // ══════════════════════════════════════════════════════════════
 const WEAPON_TUNING = {
-  // We don't hand-tune scale anymore — every mesh is auto-fit to the
-  // `targetLen` below (longest dimension in metres). `scaleMul` is a
-  // per-weapon nudge on top of that. `pos` / `rot` are the in-hand
-  // offset relative to the camera.
-  rifle:   { src: 'Gun-AK47', targetLen: 0.55, scaleMul: 1.0, pos: [0.20, -0.20, -0.48], rot: [0,  Math.PI, 0] },
-  pistol:  { src: 'Pistol',   targetLen: 0.30, scaleMul: 1.0, pos: [0.16, -0.18, -0.36], rot: [0,  Math.PI, 0] },
-  shotgun: { src: 'ShotGun',  targetLen: 0.60, scaleMul: 1.0, pos: [0.22, -0.22, -0.50], rot: [0,  Math.PI, 0] },
-  sniper:  { src: 'Sniper',   targetLen: 0.75, scaleMul: 1.0, pos: [0.20, -0.18, -0.56], rot: [0,  Math.PI, 0] },
+  // Auto-fit: longest model dimension lands at targetLen (metres).
+  // After the fit, the longest axis is auto-rotated to point along
+  // camera-forward (-Z) so the gun never appears backwards / sideways
+  // regardless of how the FBX was authored. `rot` then applies on
+  // top in case fine-tuning is needed (yaw flip = Math.PI).
+  // `pos` is the in-hand camera-local offset.
+  rifle:   { src: 'Gun-AK47', targetLen: 0.42, scaleMul: 1.0, pos: [0.22, -0.22, -0.55], rot: [0, 0, 0] },
+  pistol:  { src: 'Pistol',   targetLen: 0.22, scaleMul: 1.0, pos: [0.18, -0.20, -0.42], rot: [0, 0, 0] },
+  shotgun: { src: 'ShotGun',  targetLen: 0.48, scaleMul: 1.0, pos: [0.24, -0.24, -0.58], rot: [0, 0, 0] },
+  sniper:  { src: 'Sniper',   targetLen: 0.55, scaleMul: 1.0, pos: [0.22, -0.20, -0.62], rot: [0, 0, 0] },
 };
 
 const WeaponAssets = {
@@ -1474,8 +1476,44 @@ const WeaponAssets = {
     const size   = bbox.getSize(new THREE.Vector3());
     inner.position.sub(center);
 
-    // Auto-fit to a target physical length so any future asset (or a
-    // weird scale axis) just works.
+    // Auto-orient: rotate the inner mesh so its LONGEST axis points
+    // along camera-forward (-Z), and the shortest axis points up (+Y).
+    // We do this before the user-supplied `rot` so manual rotation
+    // overrides remain meaningful. Without this, an FBX whose "length"
+    // is along X looks sideways in first-person.
+    const axes = [
+      { ax: 'x', len: size.x },
+      { ax: 'y', len: size.y },
+      { ax: 'z', len: size.z },
+    ].sort((a, b) => b.len - a.len);
+    const longAx = axes[0].ax;
+    const shortAx = axes[2].ax;
+    // Build a swap so long -> -z (forward), short -> y (up).
+    //   X is length, Y is short → rotate Y by +90° so X goes to -Z
+    //   X is length, Z is short → rotate Z by +90° so X goes to Y (then Y by 90° down)
+    //   Y is length, ... → rotate X by 90° so Y goes to -Z
+    //   Z is length, Y is short → already correct, but maybe need to flip
+    //   Z is length, X is short → rotate Z by 90° so X -> Y
+    // Simpler: build the canonical rotation by treating each case.
+    if (longAx === 'x') {
+      // Long axis along X. Rotate Y by +π/2 so X maps to -Z.
+      inner.rotation.y = -Math.PI / 2;
+      // After that, the original Y or Z becomes the new vertical.
+      if (shortAx === 'z') inner.rotation.x = Math.PI / 2;
+    } else if (longAx === 'y') {
+      // Long axis along Y. Rotate X by π/2 so Y maps to -Z.
+      inner.rotation.x = -Math.PI / 2;
+      if (shortAx === 'x') inner.rotation.z = Math.PI / 2;
+    } else /* longAx === 'z' */ {
+      // Already along Z, but verify forward orientation. If +Z is the
+      // "barrel" direction we need to flip (we want -Z forward).
+      // Heuristic: flip 180° around Y so the model faces the camera's
+      // forward axis (-Z). Works for most FBX exports.
+      inner.rotation.y = Math.PI;
+      if (shortAx === 'x') inner.rotation.z = Math.PI / 2;
+    }
+
+    // Auto-fit to a target physical length.
     const maxDim    = Math.max(size.x, size.y, size.z, 1e-4);
     const autoScale = (t.targetLen || 0.5) / maxDim;
     const finalScale = autoScale * (t.scaleMul || 1);
@@ -1484,6 +1522,7 @@ const WeaponAssets = {
     wrapper.add(inner);
     wrapper.scale.setScalar(finalScale);
     wrapper.position.set(t.pos[0], t.pos[1], t.pos[2]);
+    // User-supplied rotation is applied AFTER auto-orient as a nudge.
     wrapper.rotation.set(t.rot[0], t.rot[1], t.rot[2]);
 
     // Force draw-on-top + double-sided so the gun reads in front of
@@ -2433,8 +2472,13 @@ const GameEngine = {
       if (this._spread < 0.32) { this._spread = 0.32; UIManager.setCrosshairSpread(this._spread); }
     }
 
-    this.pos.x = Math.max(-19.5, Math.min(19.5, this.pos.x));
-    this.pos.z = Math.max(-19.5, Math.min(19.5, this.pos.z));
+    // Clamp player inside the arena. Half-side minus 0.5m so they
+    // can't squeeze into the boundary wall. Uses the per-match
+    // arenaSize set by onMatchStart (defaults to the legacy 40x40
+    // arena when not yet set or in training mode).
+    const arenaHalf = ((this._arenaSize || 40) / 2) - 0.5;
+    this.pos.x = Math.max(-arenaHalf, Math.min(arenaHalf, this.pos.x));
+    this.pos.z = Math.max(-arenaHalf, Math.min(arenaHalf, this.pos.z));
 
     // Jump physics
     if (!this._grounded) {
