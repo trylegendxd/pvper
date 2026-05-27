@@ -1360,15 +1360,15 @@ const Bot = {
 // ══════════════════════════════════════════════════════════════
 const WEAPON_TUNING = {
   // Auto-fit: longest model dimension lands at targetLen (metres).
-  // After the fit, the longest axis is auto-rotated to point along
-  // camera-forward (-Z) so the gun never appears backwards / sideways
-  // regardless of how the FBX was authored. `rot` then applies on
-  // top in case fine-tuning is needed (yaw flip = Math.PI).
+  // Imphenzia models the weapons along +X with barrel pointing +X, so
+  // we rotate -90° around Y to point the barrel forward (camera -Z).
+  // If a specific gun ends up backwards: change ry to +Math.PI/2.
+  // If upside down: add Math.PI to rx. If sideways: add Math.PI/2 to rx.
   // `pos` is the in-hand camera-local offset.
-  rifle:   { src: 'Gun-AK47', targetLen: 0.42, scaleMul: 1.0, pos: [0.22, -0.22, -0.55], rot: [0, 0, 0] },
-  pistol:  { src: 'Pistol',   targetLen: 0.22, scaleMul: 1.0, pos: [0.18, -0.20, -0.42], rot: [0, 0, 0] },
-  shotgun: { src: 'ShotGun',  targetLen: 0.48, scaleMul: 1.0, pos: [0.24, -0.24, -0.58], rot: [0, 0, 0] },
-  sniper:  { src: 'Sniper',   targetLen: 0.55, scaleMul: 1.0, pos: [0.22, -0.20, -0.62], rot: [0, 0, 0] },
+  rifle:   { src: 'Gun-AK47', targetLen: 0.42, scaleMul: 1.0, pos: [0.22, -0.22, -0.55], rot: [0, -Math.PI / 2, 0] },
+  pistol:  { src: 'Pistol',   targetLen: 0.22, scaleMul: 1.0, pos: [0.18, -0.20, -0.42], rot: [0, -Math.PI / 2, 0] },
+  shotgun: { src: 'ShotGun',  targetLen: 0.48, scaleMul: 1.0, pos: [0.24, -0.24, -0.58], rot: [0, -Math.PI / 2, 0] },
+  sniper:  { src: 'Sniper',   targetLen: 0.55, scaleMul: 1.0, pos: [0.22, -0.20, -0.62], rot: [0, -Math.PI / 2, 0] },
 };
 
 const WeaponAssets = {
@@ -1476,42 +1476,10 @@ const WeaponAssets = {
     const size   = bbox.getSize(new THREE.Vector3());
     inner.position.sub(center);
 
-    // Auto-orient: rotate the inner mesh so its LONGEST axis points
-    // along camera-forward (-Z), and the shortest axis points up (+Y).
-    // We do this before the user-supplied `rot` so manual rotation
-    // overrides remain meaningful. Without this, an FBX whose "length"
-    // is along X looks sideways in first-person.
-    const axes = [
-      { ax: 'x', len: size.x },
-      { ax: 'y', len: size.y },
-      { ax: 'z', len: size.z },
-    ].sort((a, b) => b.len - a.len);
-    const longAx = axes[0].ax;
-    const shortAx = axes[2].ax;
-    // Build a swap so long -> -z (forward), short -> y (up).
-    //   X is length, Y is short → rotate Y by +90° so X goes to -Z
-    //   X is length, Z is short → rotate Z by +90° so X goes to Y (then Y by 90° down)
-    //   Y is length, ... → rotate X by 90° so Y goes to -Z
-    //   Z is length, Y is short → already correct, but maybe need to flip
-    //   Z is length, X is short → rotate Z by 90° so X -> Y
-    // Simpler: build the canonical rotation by treating each case.
-    if (longAx === 'x') {
-      // Long axis along X. Rotate Y by +π/2 so X maps to -Z.
-      inner.rotation.y = -Math.PI / 2;
-      // After that, the original Y or Z becomes the new vertical.
-      if (shortAx === 'z') inner.rotation.x = Math.PI / 2;
-    } else if (longAx === 'y') {
-      // Long axis along Y. Rotate X by π/2 so Y maps to -Z.
-      inner.rotation.x = -Math.PI / 2;
-      if (shortAx === 'x') inner.rotation.z = Math.PI / 2;
-    } else /* longAx === 'z' */ {
-      // Already along Z, but verify forward orientation. If +Z is the
-      // "barrel" direction we need to flip (we want -Z forward).
-      // Heuristic: flip 180° around Y so the model faces the camera's
-      // forward axis (-Z). Works for most FBX exports.
-      inner.rotation.y = Math.PI;
-      if (shortAx === 'x') inner.rotation.z = Math.PI / 2;
-    }
+    // Orientation is set by WEAPON_TUNING[key].rot on the wrapper
+    // group (applied below). The previous attempt at auto-orient
+    // double-rotated the mesh and produced a diagonal layout; a
+    // single explicit rotation per weapon is more reliable.
 
     // Auto-fit to a target physical length.
     const maxDim    = Math.max(size.x, size.y, size.z, 1e-4);
