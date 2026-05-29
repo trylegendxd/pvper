@@ -1784,22 +1784,39 @@ const GameEngine = {
   },
 
   // ── Opponent mesh — humanoid soldier (cylinders + sized cubes) ────────
-  _buildOpponentMesh() {
-    this.opponentGroup = new THREE.Group();
-    this.opponentGroup.visible = false;
+  // Build the full humanoid soldier model. Used for both the 1v1
+  // opponent (no team tint) and every other player in team matches
+  // (with the team's accent colour applied to vest, helmet stripe,
+  // and shoulder pads). Returns a new Group; the caller owns it.
+  //
+  // team:        'a' | 'b' | null
+  // assignToOpp: when true (only for the 1v1 path) the function also
+  //              writes _oppLegL/_oppLegR so the existing leg-swing
+  //              animation finds them.
+  _buildPlayerMesh(team = null, assignToOpp = false) {
+    const accent = team === 'a' ? 0x4a8cff
+                 : team === 'b' ? 0xff5a5a
+                 : 0x4a5a30; // neutral olive for 1v1
+    const accentDark = team === 'a' ? 0x2c5cb0
+                     : team === 'b' ? 0xb03434
+                     : 0x4c5a2f;
 
-    // Palette
+    const group = new THREE.Group();
+    group.visible = false;
+
+    // Palette — vest, helmet, shoulder pads use the team accent.
     const skin     = new THREE.MeshLambertMaterial({ color: 0xd9a173 });
     const stubble  = new THREE.MeshLambertMaterial({ color: 0x6b4a32 });
     const eyeWhite = new THREE.MeshLambertMaterial({ color: 0xffffff });
     const pupil    = new THREE.MeshLambertMaterial({ color: 0x101010 });
     const mouth    = new THREE.MeshLambertMaterial({ color: 0x501818 });
     const uniform  = new THREE.MeshLambertMaterial({ color: 0x6a7b3f });
-    const vest     = new THREE.MeshLambertMaterial({ color: 0x4a5a30 });
+    const vest     = new THREE.MeshLambertMaterial({ color: accent });
+    const vestDark = new THREE.MeshLambertMaterial({ color: accentDark });
     const pouch    = new THREE.MeshLambertMaterial({ color: 0x2f3a18 });
     const pants    = new THREE.MeshLambertMaterial({ color: 0x3d4220 });
     const boots    = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
-    const helmetM  = new THREE.MeshLambertMaterial({ color: 0x4c5a2f });
+    const helmetM  = new THREE.MeshLambertMaterial({ color: accentDark });
     const gunMat   = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
     const gunGrip  = new THREE.MeshLambertMaterial({ color: 0x3a2a18 });
 
@@ -1918,22 +1935,50 @@ const GameEngine = {
     const rBoot  = box(0.22, 0.10, 0.30, boots);
     rBoot.position.set( 0.13, -0.02, 0.04);
 
-    // Leg groups for swing animation
-    this._oppLegL = new THREE.Group();
-    this._oppLegR = new THREE.Group();
-    this._oppLegL.add(lThigh, lShin, lBoot);
-    this._oppLegR.add(rThigh, rShin, rBoot);
+    // Shoulder pads — flat plates in the team accent colour.
+    const shoulderL = box(0.20, 0.10, 0.22, vest);
+    shoulderL.position.set(-0.42, 1.42, 0);
+    const shoulderR = box(0.20, 0.10, 0.22, vest);
+    shoulderR.position.set( 0.42, 1.42, 0);
 
-    this.opponentGroup.add(
-      head, neck, helmet, brim, strap,
+    // Helmet stripe — a thin band of team accent across the brow.
+    const stripe = box(0.38, 0.04, 0.04, vest);
+    stripe.position.set(0, 1.86, 0.18);
+
+    // Leg groups for swing animation.
+    const legL = new THREE.Group();
+    const legR = new THREE.Group();
+    legL.add(lThigh, lShin, lBoot);
+    legR.add(rThigh, rShin, rBoot);
+
+    group.add(
+      head, neck, helmet, brim, strap, stripe,
       eyeL, eyeR, pupL, pupR, browL, browR,
       mouthBg, teethBar, div1, div2, div3,
       earL, earR,
       chest, tacVest, waist, pouchL, pouchR, belt, buckle,
+      shoulderL, shoulderR,
       lUpper, rUpper, lFore, rFore, lHand, rHand,
       gunGrp,
-      this._oppLegL, this._oppLegR,
+      legL, legR,
     );
+
+    // Store leg groups on the group itself so per-frame animation can
+    // walk the swing without needing engine-level state.
+    group.userData.legL = legL;
+    group.userData.legR = legR;
+    if (assignToOpp) {
+      this._oppLegL = legL;
+      this._oppLegR = legR;
+    }
+    return group;
+  },
+
+  // Original 1v1 setup — builds the single opponentGroup and adds it
+  // to the scene. Internals delegate to _buildPlayerMesh so the team
+  // and 1v1 paths share one model.
+  _buildOpponentMesh() {
+    this.opponentGroup = this._buildPlayerMesh(null, /*assignToOpp*/ true);
     this.scene.add(this.opponentGroup);
   },
 
@@ -2296,6 +2341,54 @@ const GameEngine = {
       pad.position.set(p.x, 0.03, p.z);
       add(pad);
     });
+
+    // ── Drifting cloud blocks in the sky ──────────────────────────────
+    // A handful of fluffy white cubes positioned high above the arena.
+    // Each tracks its drift speed; the main update loop nudges them
+    // along their x axis and wraps them at the arena edge so the sky
+    // looks alive without using particle systems.
+    this._clouds = [];
+    const cloudMat = new THREE.MeshLambertMaterial({ color: 0xfafcff });
+    const cloudY   = Math.max(18, arenaSize * 0.4);
+    const cloudReach = arenaSize * 0.9;
+    const cloudCount = Math.max(8, Math.round(arenaSize / 6));
+    for (let i = 0; i < cloudCount; i++) {
+      // Each cloud is a group of 4-6 cubes clustered to look puffy.
+      const cluster = new THREE.Group();
+      const blocks = 4 + Math.floor(Math.random() * 3);
+      for (let b = 0; b < blocks; b++) {
+        const sx = 1.4 + Math.random() * 2.2;
+        const sy = 0.9 + Math.random() * 1.0;
+        const sz = 1.4 + Math.random() * 2.2;
+        const m  = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), cloudMat);
+        m.position.set(
+          (Math.random() - 0.5) * 4,
+          (Math.random() - 0.5) * 0.6,
+          (Math.random() - 0.5) * 4,
+        );
+        cluster.add(m);
+      }
+      cluster.position.set(
+        (Math.random() - 0.5) * cloudReach * 2,
+        cloudY + (Math.random() - 0.5) * 4,
+        (Math.random() - 0.5) * cloudReach * 2,
+      );
+      cluster.userData.driftX = 0.4 + Math.random() * 0.5;  // m/s
+      add(cluster);
+      this._clouds.push({ group: cluster, halfRange: cloudReach * 1.1 });
+    }
+  },
+
+  // Drift clouds slowly across the sky. Called once per frame from the
+  // main game loop.
+  _updateClouds(dt) {
+    if (!this._clouds || !this._clouds.length) return;
+    for (const c of this._clouds) {
+      c.group.position.x += c.group.userData.driftX * dt;
+      if (c.group.position.x > c.halfRange) {
+        c.group.position.x = -c.halfRange;
+      }
+    }
   },
 
   _addStaticBox(pos, size) {
@@ -2685,6 +2778,7 @@ const GameEngine = {
     // Multi-player (team-mode) opponent lerps.
     if (this._otherPlayers) {
       for (const e of this._otherPlayers.values()) {
+        const prev = e.curPos.clone();
         e.curPos.lerp(e.tgtPos, Math.min(1, dt * 18));
         let yawDiff = e.tgtYaw - e.curYaw;
         while (yawDiff >  Math.PI) yawDiff -= 2 * Math.PI;
@@ -2696,6 +2790,14 @@ const GameEngine = {
         e.group.position.set(e.curPos.x, e.curY, e.curPos.z);
         e.group.scale.set(1, sy, 1);
         e.group.rotation.y = e.curYaw + Math.PI;
+        // Leg-swing animation when the player is moving.
+        const moveSpeed = prev.distanceTo(e.curPos) / Math.max(dt, 0.001);
+        e.gait = (e.gait || 0) + dt * Math.min(moveSpeed * 1.6, 14);
+        const swing = moveSpeed > 0.2 ? Math.sin(e.gait) * 0.5 : 0;
+        const lL = e.group.userData.legL;
+        const lR = e.group.userData.legR;
+        if (lL) lL.rotation.x =  swing;
+        if (lR) lR.rotation.x = -swing;
       }
     }
 
@@ -2856,6 +2958,8 @@ const GameEngine = {
     const dt = Math.min(ts - (this._lastTime ?? ts), 100) / 1000;
     this._lastTime = ts;
     this._update(dt);
+    // Drifting sky clouds.
+    this._updateClouds(dt);
     // Tick throwable visuals (fire flicker, smoke drift, in-hand anim).
     try { if (typeof Throwables !== 'undefined') Throwables.tick(dt); } catch (_) {}
     // Smoothly animate FOV toward scope target.
@@ -2966,36 +3070,16 @@ const GameEngine = {
   // ── Multi-player (team mode) — one mesh per other player ──────────────
   _otherPlayers: null,  // Map<sockId, { group, curPos, tgtPos, curYaw, tgtYaw, curY, tgtY, curCrouch, tgtCrouch }>
 
-  _buildTeamPlayerMesh(team) {
-    // Cheap, readable model: a colored capsule body + smaller head box.
-    // Team A = blue, Team B = red. Smaller than the full hero model so
-    // 4+ players don't clutter the scene.
-    const color = team === 'a' ? 0x4a8cff : 0xff5a5a;
-    const headCol = team === 'a' ? 0x3576dc : 0xdc3535;
-    const g = new THREE.Group();
-    const bodyMat = new THREE.MeshLambertMaterial({ color });
-    const headMat = new THREE.MeshLambertMaterial({ color: headCol });
-    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.30, 0.32, 1.45, 14), bodyMat);
-    body.position.y = 0.85;
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.34, 0.30), headMat);
-    head.position.y = 1.70;
-    // Eye stripe so we can tell which way they're looking.
-    const eye = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.04, 0.02), new THREE.MeshBasicMaterial({ color: 0xfff5a0 }));
-    eye.position.set(0, 1.74, 0.16);
-    // Legs
-    const lLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.10, 0.12, 0.42, 10), new THREE.MeshLambertMaterial({ color: 0x222 }));
-    lLeg.position.set(-0.13, 0.21, 0);
-    const rLeg = lLeg.clone();
-    rLeg.position.x = 0.13;
-    g.add(body, head, eye, lLeg, rLeg);
-    return g;
-  },
-
   _updateOtherPlayer(sockId, team, position, rotation, yOffset, crouching) {
     if (!this._otherPlayers) this._otherPlayers = new Map();
     let entry = this._otherPlayers.get(sockId);
     if (!entry) {
-      const group = this._buildTeamPlayerMesh(team || 'b');
+      // Use the SAME detailed soldier model as the 1v1 opponent, just
+      // tinted by team colour. Previously this used a simplified
+      // capsule + box "team player" mesh that looked wildly different
+      // from the 1v1 model — now both paths share the hero model.
+      const group = this._buildPlayerMesh(team || 'b', /*assignToOpp*/ false);
+      group.visible = true; // _buildPlayerMesh leaves it hidden by default
       this.scene.add(group);
       entry = {
         group, team,
@@ -3003,6 +3087,7 @@ const GameEngine = {
         tgtPos: new THREE.Vector3(position.x, 0, position.z),
         curYaw: rotation?.y || 0, tgtYaw: rotation?.y || 0,
         curY: 0, tgtY: 0, curCrouch: 0, tgtCrouch: 0,
+        gait: 0,
       };
       this._otherPlayers.set(sockId, entry);
     }
