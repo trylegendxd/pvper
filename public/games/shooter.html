@@ -1493,20 +1493,35 @@ const WeaponAssets = {
     // User-supplied rotation is applied AFTER auto-orient as a nudge.
     wrapper.rotation.set(t.rot[0], t.rot[1], t.rot[2]);
 
-    // Force draw-on-top + double-sided so the gun reads in front of
-    // walls and doesn't disappear due to inverted FBX winding.
+    // FPS-gun render trick: we want the gun (a) drawn ON TOP of the
+    // world so walls can't clip it, AND (b) its own polygons sorted
+    // correctly so the model doesn't look disfigured.
+    //
+    // The previous push had depthTest:false + DoubleSide which
+    // achieved (a) but broke (b) — back faces bled through the front
+    // and overlapping parts z-fought, producing the "skin looks
+    // disfigured" effect.
+    //
+    // The fix: keep normal depth-test on every material (so the gun's
+    // own polygons sort against each other) but clear the depth
+    // buffer just before the gun renders, so it draws on top of the
+    // world regardless of where it physically is in the scene. The
+    // depth-clear is attached to the wrapper's onBeforeRender so it
+    // runs once per frame, right before the gun's children draw.
     wrapper.traverse(o => {
       if (o.material) {
         const mats = Array.isArray(o.material) ? o.material : [o.material];
         for (const m of mats) {
-          m.depthTest  = false;
-          m.depthWrite = false;
-          m.side       = THREE.DoubleSide;
+          m.depthTest   = true;
+          m.depthWrite  = true;
+          m.side        = THREE.FrontSide; // correct winding from FBX
+          m.transparent = false;
           if (m.shininess !== undefined) m.shininess = 0;
         }
       }
       o.renderOrder = 999;
     });
+    wrapper.onBeforeRender = (renderer) => { renderer.clearDepth(); };
     group.add(wrapper);
     group.userData.importedClone = wrapper;
     this.loadedKeys.add(key);
