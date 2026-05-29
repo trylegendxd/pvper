@@ -888,12 +888,15 @@ const CFG = {
 // weapon — CS2-style: lighter guns walk faster, heavier guns slower.
 // There's no sprint anymore; this IS the top speed.
 const WEAPONS = {
-  rifle:   { name:'AK-47',   fireMode:'auto', fireMs:105,  mag:30, dmg:22, headDmg:100, reloadMs:2000, pellets:1, spread:0.022, spreadMove:0.35, spreadDecay:4,   moveSpeed: 4.6 },
-  pistol:  { name:'PISTOL',  fireMode:'semi', fireMs:180,  mag:12, dmg:34, headDmg:100, reloadMs:1500, pellets:1, spread:0.014, spreadMove:0.20, spreadDecay:5,   moveSpeed: 5.2 },
-  shotgun: { name:'SHOTGUN', fireMode:'semi', fireMs:700,  mag:6,  dmg:16, headDmg:60,  reloadMs:2500, pellets:6, spread:0.10,  spreadMove:0.50, spreadDecay:3,   moveSpeed: 4.8 },
-  sniper:  { name:'M40A3',   fireMode:'semi', fireMs:1500, mag:5,  dmg:50, headDmg:100, reloadMs:3500, pellets:1, spread:0.003, spreadMove:0.28, spreadDecay:1.5, moveSpeed: 4.2 },
+  rifle:   { name:'AK-47',   fireMode:'auto',  fireMs:105,  mag:30,  dmg:22, headDmg:100, reloadMs:2000, pellets:1, spread:0.022, spreadMove:0.35, spreadDecay:4,   moveSpeed: 4.6 },
+  pistol:  { name:'PISTOL',  fireMode:'semi',  fireMs:180,  mag:12,  dmg:34, headDmg:100, reloadMs:1500, pellets:1, spread:0.014, spreadMove:0.20, spreadDecay:5,   moveSpeed: 5.2 },
+  shotgun: { name:'SHOTGUN', fireMode:'semi',  fireMs:700,  mag:6,   dmg:16, headDmg:60,  reloadMs:2500, pellets:6, spread:0.10,  spreadMove:0.50, spreadDecay:3,   moveSpeed: 4.8 },
+  sniper:  { name:'M40A3',   fireMode:'semi',  fireMs:1500, mag:5,   dmg:50, headDmg:100, reloadMs:3500, pellets:1, spread:0.003, spreadMove:0.28, spreadDecay:1.5, moveSpeed: 4.2 },
+  // Knife — fastest move speed, infinite "ammo", short reach. Server
+  // enforces the reach cap so clients can't fake a long-range hit.
+  knife:   { name:'KNIFE',   fireMode:'melee', fireMs:500,  mag:999, dmg:55, headDmg:80,  reloadMs:0,    pellets:1, spread:0,     spreadMove:0,    spreadDecay:0,   moveSpeed: 5.8 },
 };
-const WEAPON_ORDER = ['rifle', 'pistol', 'shotgun', 'sniper'];
+const WEAPON_ORDER = ['rifle', 'pistol', 'shotgun', 'sniper', 'knife'];
 
 // ══════════════════════════════════════════════════════════════
 //  HELPERS
@@ -1382,6 +1385,10 @@ const WEAPON_TUNING = {
              rot: [Math.PI / 2, Math.PI, -Math.PI / 2] },
   sniper:  { src: 'Sniper',   targetLen: 0.55, scaleMul: 2.14, pos: [0.22, -0.20, -0.38],
              rot: [-Math.PI / 2, 0, Math.PI / 2] },
+  // Knife — same canonical orientation as the other guns; tweak the
+  // tuner if it sits wrong in hand.
+  knife:   { src: 'Knife',    targetLen: 0.28, scaleMul: 1.50, pos: [0.20, -0.22, -0.30],
+             rot: [Math.PI / 2, Math.PI, -Math.PI / 2] },
 };
 
 const WeaponAssets = {
@@ -2254,7 +2261,57 @@ const GameEngine = {
       }
     });
 
-    this._arenaTex = { grass, wall, wood, metal, plated: platedFor };
+    // GRAFFITI WALL — a brick texture with bright spray-paint shapes
+    // and tags on top. Painted onto the warehouse interior walls of
+    // the Depot map so the route reads like a real industrial site.
+    const graffiti = mkCanvasTex(256, 128, 1, (g, W, H) => {
+      // Brick base.
+      g.fillStyle = '#c8a967';
+      g.fillRect(0, 0, W, H);
+      const rows = 5, cols = 12;
+      const cw = W / cols, ch = H / rows;
+      for (let r = 0; r < rows; r++) {
+        const off = (r % 2) * (cw / 2);
+        for (let c = 0; c < cols + 1; c++) {
+          const x = c * cw + off - cw / 2;
+          const y = r * ch;
+          g.fillStyle = ['#caa666', '#b89858', '#d2b573', '#bf9c5d'][(r * 7 + c) % 4];
+          g.fillRect(x + 1, y + 1, cw - 2, ch - 2);
+        }
+      }
+      // Spray paint blob 1 — magenta cloud.
+      g.fillStyle = 'rgba(220,60,180,0.7)';
+      for (let i = 0; i < 18; i++) {
+        const x = 50 + Math.random() * 80;
+        const y = 30 + Math.random() * 50;
+        const s = 8 + Math.random() * 12;
+        g.fillRect(x, y, s, s);
+      }
+      // Tag text "PVP" in cyan.
+      g.fillStyle = '#1ad6f0';
+      g.font = 'bold 36px sans-serif';
+      g.fillText('PVP', 78, 75);
+      // Yellow accent strokes.
+      g.strokeStyle = '#ffd84a';
+      g.lineWidth = 4;
+      g.beginPath();
+      g.moveTo(35, 88); g.lineTo(165, 92); g.stroke();
+      // Star tag (red).
+      g.fillStyle = '#e63946';
+      g.beginPath();
+      const cx = 200, cy = 60, R = 18, r2 = 8;
+      for (let i = 0; i < 10; i++) {
+        const a = (Math.PI / 5) * i;
+        const rr = (i % 2) ? r2 : R;
+        const px = cx + Math.cos(a - Math.PI / 2) * rr;
+        const py = cy + Math.sin(a - Math.PI / 2) * rr;
+        if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
+      }
+      g.closePath();
+      g.fill();
+    });
+
+    this._arenaTex = { grass, wall, wood, metal, graffiti, plated: platedFor };
     return this._arenaTex;
   },
 
@@ -2315,8 +2372,12 @@ const GameEngine = {
     // each obstacle reads as a wood crate, metal container, etc.
     // Existing palette: tan, lime, purple, red, teal, yellow.
     const boxColors = [0xe7a85f, 0xc4d35c, 0x9b88c2, 0xe25a5a, 0x4ec4b4, 0xe2c54a];
-    const textureFor = (i) => {
+    const textureFor = (i, size) => {
       const colour = boxColors[i % boxColors.length];
+      // Long flat walls (the warehouse perimeter) → graffiti panels.
+      if (size && (size.w >= 10 || size.d >= 10)) {
+        return { tex: tex.graffiti, tint: 0xffffff };
+      }
       // Tan + yellow tones → wood crates.
       if (colour === 0xe7a85f || colour === 0xe2c54a) return { tex: tex.wood, tint: 0xffffff };
       // Teal → metal container.
@@ -2325,7 +2386,7 @@ const GameEngine = {
       return { tex: tex.plated(colour), tint: 0xffffff };
     };
     coverBoxes.forEach(({ position, size }, i) => {
-      const { tex: boxTex, tint } = textureFor(i);
+      const { tex: boxTex, tint } = textureFor(i, size);
       // Tile the texture based on the largest face (~1 tile per metre).
       const t = boxTex.clone();
       t.wrapS = t.wrapT = THREE.RepeatWrapping;
@@ -2401,9 +2462,14 @@ const GameEngine = {
   },
 
   _addStaticBox(pos, size) {
+    // Track the box's TOP world-y so step-up logic can decide whether
+    // the player can climb onto it (any box whose top is below the
+    // step-up threshold is climbable instead of solid).
+    const topY = pos[1] + size[1] / 2;
     this._staticBoxes.push({
       min: { x: pos[0] - size[0]/2, z: pos[2] - size[2]/2 },
       max: { x: pos[0] + size[0]/2, z: pos[2] + size[2]/2 },
+      topY,
     });
   },
 
@@ -2414,6 +2480,7 @@ const GameEngine = {
       'Digit1','Digit2','Digit3','Digit4',
       'Digit5','Digit6',            // throwable select
       'KeyG',                       // throw
+      'KeyQ',                       // knife
       'ControlLeft','ControlRight', // crouch
     ]);
 
@@ -2430,6 +2497,7 @@ const GameEngine = {
       if (e.code === 'Digit2') this.switchWeapon('pistol');
       if (e.code === 'Digit3') this.switchWeapon('shotgun');
       if (e.code === 'Digit4') this.switchWeapon('sniper');
+      if (e.code === 'KeyQ')   this.switchWeapon('knife');   // melee
       // Throwable selection + throw.
       if (e.code === 'Digit5') Throwables.select('molotov');
       if (e.code === 'Digit6') Throwables.select('smoke');
@@ -2728,14 +2796,53 @@ const GameEngine = {
   },
 
   // ── Collision ──────────────────────────────────────────────────────────
+  // A box is solid if its TOP is above where the player can step up.
+  // Boxes whose top is at or below (floorY + STEP_UP_MAX) are treated
+  // as climbable — collision returns false AND the player's floorY is
+  // raised to the box top, so they "walk up" stairs / low cover.
+  STEP_UP_MAX: 0.7,
+
   _collides(x, z) {
     const r = 0.38;
+    const floorY = this._floorY || 0;
     for (const b of this._staticBoxes) {
       const cx = Math.max(b.min.x, Math.min(b.max.x, x));
       const cz = Math.max(b.min.z, Math.min(b.max.z, z));
-      if (Math.hypot(x - cx, z - cz) < r) return true;
+      if (Math.hypot(x - cx, z - cz) < r) {
+        // If the box top is within step height ABOVE our current floor,
+        // step up onto it instead of being blocked.
+        const top = b.topY ?? 0;
+        if (top > floorY + 0.01 && top <= floorY + this.STEP_UP_MAX) {
+          this._floorY = top;
+          continue; // walk onto the box
+        }
+        // If the box top is at or below our current floor, we're already
+        // ABOVE it — not a collision.
+        if (top <= floorY + 0.01) continue;
+        return true;
+      }
     }
     return false;
+  },
+
+  // Recompute the floor Y from the player's current x/z position. Used
+  // each frame so walking OFF a box drops the player back down.
+  _refreshFloorY() {
+    const floor = (this._floorY || 0);
+    let best = 0;
+    const r = 0.38;
+    for (const b of this._staticBoxes) {
+      const top = b.topY ?? 0;
+      if (top <= 0) continue;
+      // Standing-above check: player center inside the box footprint?
+      if (this.pos.x >= b.min.x - r && this.pos.x <= b.max.x + r &&
+          this.pos.z >= b.min.z - r && this.pos.z <= b.max.z + r) {
+        // Can the player actually stand at this box top?
+        // (Only count tops that the player has reached.)
+        if (top > best && top <= floor + 0.01) best = top;
+      }
+    }
+    this._floorY = best;
   },
 
   // ── Update ─────────────────────────────────────────────────────────────
@@ -2870,16 +2977,32 @@ const GameEngine = {
     this.pos.x = Math.max(-arenaHalf, Math.min(arenaHalf, this.pos.x));
     this.pos.z = Math.max(-arenaHalf, Math.min(arenaHalf, this.pos.z));
 
-    // Jump physics
+    // Recompute floor Y from the player's current foot position so
+    // walking off a low cover box drops them back to ground.
+    this._refreshFloorY();
+
+    // Jump physics — gravity always pulls toward the current floor Y.
     if (!this._grounded) {
       this._yVel -= 14 * dt;
       this._yPos += this._yVel * dt;
+      const floorRel = (this._floorY || 0); // box top above world-zero
+      // _yPos is RELATIVE to floor; once it reaches 0 (or below) we're
+      // grounded on the current floor.
       if (this._yPos <= 0) {
         this._yPos = 0;
         this._yVel = 0;
         this._grounded = true;
       }
+    } else {
+      // While grounded, gradual drop if floor dropped beneath us
+      // (walked off a ledge). Don't fall instantly — apply gravity.
+      if (this._floorY < (this._lastFloorY || 0) - 0.01) {
+        this._grounded = false;
+        this._yVel = 0;
+        this._yPos = ((this._lastFloorY || 0) - this._floorY);
+      }
     }
+    this._lastFloorY = this._floorY || 0;
 
     // Footsteps — only when grounded + moving + NOT silent-walking
     // (Shift) and NOT crouching. Cadence tracks actual walk speed so
@@ -2891,8 +3014,12 @@ const GameEngine = {
       this._footT = 0;
     }
 
-    // Update camera (crouch lowers eye height smoothly)
-    const targetEyeH = (this.crouching ? CFG.CROUCH_HEIGHT : CFG.EYE_HEIGHT) + this._yPos;
+    // Update camera (crouch lowers eye height smoothly).
+    // Eye height = base + jump offset + current floor offset (for
+    // standing on cover boxes / stair platforms).
+    const baseEye   = (this.crouching ? CFG.CROUCH_HEIGHT : CFG.EYE_HEIGHT);
+    const floorY    = this._floorY || 0;
+    const targetEyeH = baseEye + this._yPos + floorY;
     this._currentEyeH = this._currentEyeH !== undefined
       ? this._currentEyeH + (targetEyeH - this._currentEyeH) * Math.min(1, dt * 14)
       : targetEyeH;

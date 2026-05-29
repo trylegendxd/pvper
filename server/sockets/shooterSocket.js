@@ -1857,17 +1857,22 @@ function attach(io) {
         const bodyB = playerBox(cPos);
         const headB = headBox(cPos);
 
+        // Per-weapon max ray length — knife caps at ~2.2m so it can't
+        // be used as a free hitscan. Guns use 80m.
+        const MR = W.maxRange || 80;
         let dmgHere = 0, hitHere = false, headHere = false, nearestHere = Infinity;
         for (const ray of rays) {
           let coverDist = Infinity;
           for (const c of match.coverAabbs) {
-            const d = rayHitDistance(ray, c, 80); if (d < coverDist) coverDist = d;
+            const d = rayHitDistance(ray, c, MR); if (d < coverDist) coverDist = d;
           }
           for (const w of walls) {
-            const d = rayHitDistance(ray, w, 80); if (d < coverDist) coverDist = d;
+            const d = rayHitDistance(ray, w, MR); if (d < coverDist) coverDist = d;
           }
-          const headDist = rayHitDistance(ray, headB, 80);
-          const bodyDist = rayHitDistance(ray, bodyB, 80);
+          const headDist = rayHitDistance(ray, headB, MR);
+          const bodyDist = rayHitDistance(ray, bodyB, MR);
+          // Reject hits past the weapon's max reach.
+          if (headDist > MR && bodyDist > MR) continue;
           if (headDist < coverDist && headDist <= bodyDist) {
             dmgHere += W.headDmg; hitHere = true; headHere = true;
             if (headDist < nearestHere) nearestHere = headDist;

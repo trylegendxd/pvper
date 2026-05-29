@@ -38,10 +38,14 @@ const MAX_SHOT_DIRECTION_DEVIATION = 0.6; // dot-product floor between shot dir 
 
 // Weapon configs — must mirror client's WEAPONS
 const WEAPONS = {
-  rifle:   { fireMs: 105,  mag: 30, dmg: 22, headDmg: 100, reloadMs: 2000, pellets: 1, spread: 0.0  },
-  pistol:  { fireMs: 180,  mag: 12, dmg: 34, headDmg: 100, reloadMs: 1500, pellets: 1, spread: 0.0  },
-  shotgun: { fireMs: 700,  mag: 6,  dmg: 16, headDmg: 60,  reloadMs: 2500, pellets: 6, spread: 0.10 },
-  sniper:  { fireMs: 1500, mag: 5,  dmg: 50, headDmg: 100, reloadMs: 3500, pellets: 1, spread: 0.0  },
+  rifle:   { fireMs: 105,  mag: 30,  dmg: 22, headDmg: 100, reloadMs: 2000, pellets: 1, spread: 0.0,  melee: false, maxRange: 80 },
+  pistol:  { fireMs: 180,  mag: 12,  dmg: 34, headDmg: 100, reloadMs: 1500, pellets: 1, spread: 0.0,  melee: false, maxRange: 80 },
+  shotgun: { fireMs: 700,  mag: 6,   dmg: 16, headDmg: 60,  reloadMs: 2500, pellets: 6, spread: 0.10, melee: false, maxRange: 80 },
+  sniper:  { fireMs: 1500, mag: 5,   dmg: 50, headDmg: 100, reloadMs: 3500, pellets: 1, spread: 0.0,  melee: false, maxRange: 80 },
+  // Knife is a melee weapon: infinite "ammo", short reach. The server
+  // rejects any hit beyond maxRange so it can't be used like a free
+  // hitscan gun.
+  knife:   { fireMs: 500,  mag: 999, dmg: 55, headDmg: 80,  reloadMs: 0,    pellets: 1, spread: 0.0,  melee: true,  maxRange: 2.2 },
 };
 const DEFAULT_WEAPON = 'rifle';
 
@@ -224,6 +228,48 @@ function csDepotMap() {
     { position:{x:17, y:0, z:-5},  size:{w:3, h:1.8, d:6} },
     { position:{x:-2, y:0, z:14},  size:{w:2, h:1.2, d:5} },
     { position:{x:2, y:0, z:-14},  size:{w:2, h:1.2, d:5} },
+
+    // ── CATWALK STAIRCASE A (north side, mid-west) ─────────────────
+    // Four climbable steps lead up to a 2m-tall catwalk that overlooks
+    // the central yard. Each step is 0.5m tall and 1.5m wide so the
+    // client-side step-up logic (STEP_UP_MAX = 0.7m) lets the player
+    // walk up them naturally.
+    { position:{x:-12, y:0, z:9},   size:{w:1.8, h:0.5,  d:1.5} },  // step 1
+    { position:{x:-12, y:0, z:7.5}, size:{w:1.8, h:1.0,  d:1.5} },  // step 2
+    { position:{x:-12, y:0, z:6},   size:{w:1.8, h:1.5,  d:1.5} },  // step 3
+    { position:{x:-12, y:0, z:4.5}, size:{w:1.8, h:2.0,  d:1.5} },  // step 4 / platform edge
+    // The catwalk itself (8m long elevated platform).
+    { position:{x:-7,  y:0, z:4.5}, size:{w:9, h:2.0,  d:2}   },
+    // Wooden guard rail along the inner edge of the catwalk so you
+    // can take cover up there.
+    { position:{x:-7,  y:0, z:3.3}, size:{w:9, h:2.6,  d:0.25} },
+
+    // ── CATWALK STAIRCASE B (south-east mirror) ────────────────────
+    { position:{x:12,  y:0, z:-9},   size:{w:1.8, h:0.5,  d:1.5} },
+    { position:{x:12,  y:0, z:-7.5}, size:{w:1.8, h:1.0,  d:1.5} },
+    { position:{x:12,  y:0, z:-6},   size:{w:1.8, h:1.5,  d:1.5} },
+    { position:{x:12,  y:0, z:-4.5}, size:{w:1.8, h:2.0,  d:1.5} },
+    { position:{x:7,   y:0, z:-4.5}, size:{w:9, h:2.0,  d:2}   },
+    { position:{x:7,   y:0, z:-3.3}, size:{w:9, h:2.6,  d:0.25} },
+
+    // ── BIG SHIPPING CONTAINER (climbable cube near long lane) ────
+    // 0.6m kick-up step + the container body. You can hop up the step
+    // and use the container as an elevated sniper perch over long.
+    { position:{x:-18, y:0, z:-2},   size:{w:1.5, h:0.6, d:1.5} },
+    { position:{x:-16, y:0, z:-3},   size:{w:3.5, h:2.4, d:5}   },
+
+    // ── LOW STACKED CRATES near the warehouse openings ────────────
+    // Pairs of half-height crates that the player can step on, but
+    // still provide cover from incoming fire.
+    { position:{x:-3,  y:0, z:22},   size:{w:1.5, h:0.6, d:1.5} },
+    { position:{x:3,   y:0, z:22},   size:{w:1.5, h:0.6, d:1.5} },
+    { position:{x:-3,  y:0, z:-22},  size:{w:1.5, h:0.6, d:1.5} },
+    { position:{x:3,   y:0, z:-22},  size:{w:1.5, h:0.6, d:1.5} },
+
+    // ── RAMP RUN (south-west) — three quarter-steps, walk straight up ─
+    { position:{x:-19, y:0, z:18},   size:{w:3, h:0.4, d:1.8} },
+    { position:{x:-19, y:0, z:16.2}, size:{w:3, h:0.8, d:1.8} },
+    { position:{x:-19, y:0, z:14.4}, size:{w:3, h:1.2, d:1.8} },
   ];
 }
 
