@@ -582,6 +582,7 @@ function tickThrowables(io, match) {
       // Notify the victim.
       ns.to(sid).emit('you_hit', {
         health: state.health, headshot: false, fatal, source: 'molotov',
+        attackerPos: { x: eff.position.x, z: eff.position.z },
       });
       Replay.log(match.id, 'damage_dealt', {
         s: eff.ownerSocketId, target: sid, dmg: cfg.tickDamage, kind: 'fire',
@@ -954,12 +955,54 @@ async function startPrivateMatch(io, lobby) {
 
 async function startMatch(io, lobbyId) {
   const lobby = lobbies.get(lobbyId);
-  if (!lobby || lobby.players.length !== 2) return;
+  if (!lobby) return;
+  const ns = io.of('/shooter');
+
+  // Recovery: if a player's socket id in lobby.players is stale (they
+  // reconnected with a new id during the countdown), patch the slot to
+  // their CURRENT socket id by looking through `players` for the same
+  // userId. Without this, startMatch would silently early-return and
+  // both clients would sit on "waiting for players" forever.
+  for (let i = 0; i < lobby.players.length; i++) {
+    const sid = lobby.players[i];
+    if (players.has(sid)) continue;
+    // Find any active socket whose userId we know belonged to this slot.
+    // We do this by sweeping all current player records looking for the
+    // SAME socket-room membership (they'd have rejoined the lobby room
+    // on reconnect).
+    let recovered = null;
+    for (const [otherSid, otherP] of players) {
+      const otherSock = ns.sockets.get(otherSid);
+      if (!otherSock) continue;
+      if (otherSock.rooms.has(lobbyId)) { recovered = otherSid; break; }
+    }
+    if (recovered) {
+      lobby.players[i] = recovered;
+      // Move per-socket vote state across too.
+      for (const map of [lobby.mapVotes, lobby.modeVotes, lobby.roundsVotes]) {
+        if (map[sid] !== undefined) { map[recovered] = map[sid]; delete map[sid]; }
+      }
+    }
+  }
+  if (lobby.players.length !== 2) {
+    // Lobby is no longer full. Tell anyone still here so the UI exits
+    // the "Match starts in 0s" stuck state.
+    ns.to(lobbyId).emit('match_error', { error: 'lobby_empty' });
+    return;
+  }
 
   const [p1Id, p2Id] = lobby.players;
   const p1 = players.get(p1Id);
   const p2 = players.get(p2Id);
-  if (!p1 || !p2) return;
+  if (!p1 || !p2) {
+    // A player's record is gone (full reconnect we couldn't recover).
+    // Reset the lobby so the connected player can try again.
+    ns.to(lobbyId).emit('match_error', { error: 'player_disconnected' });
+    lobby.players = []; lobby.mapVotes = {}; lobby.modeVotes = {}; lobby.roundsVotes = {};
+    lobby.status = 'waiting';
+    broadcastLobbies(io);
+    return;
+  }
 
   const mapType   = resolveMapType(lobby.mapVotes);
   const mapDef    = buildMapByType(mapType);
@@ -1053,7 +1096,6 @@ async function startMatch(io, lobbyId) {
   lobby.status = 'waiting';
   p1.currentLobby = null;
   p2.currentLobby = null;
-  const ns = io.of('/shooter');
   ns.sockets.get(p1Id)?.leave(lobbyId);
   ns.sockets.get(p2Id)?.leave(lobbyId);
   broadcastLobbies(io);
@@ -1206,7 +1248,16 @@ function attach(io) {
         lobby._startTimer = setTimeout(() => {
           lobby.startsAt = null;
           lobby._startTimer = null;
-          startMatch(io, lobbyId);
+          // startMatch is async — without this catch any thrown
+          // promise would be an unhandled rejection and the clients
+          // would stay stuck on the countdown screen forever.
+          Promise.resolve(startMatch(io, lobbyId)).catch(err => {
+            console.error('[shooter] startMatch promise rejected', err);
+            ns.to(lobbyId).emit('match_error', { error: 'start_failed' });
+            lobby.players = []; lobby.mapVotes = {}; lobby.modeVotes = {}; lobby.roundsVotes = {};
+            lobby.status = 'waiting';
+            broadcastLobbies(io);
+          });
         }, COUNTDOWN_MS);
       }
     });
@@ -1925,10 +1976,17 @@ function attach(io) {
       socket.emit('hit_result', { hit: true, headshot: didHead, damage: totalDmg, ammo: wState.ammo, weapon: wKey });
       // Only inform the victim of damage if they were not already dead.
       // (If `fatal` then `you_hit` would arrive on the death screen.)
+      // Include the attacker's world position so the client can render
+      // the directional damage indicator without guessing.
+      const attackerPos = { x: state.position.x, z: state.position.z };
       if (!fatal) {
-        ns.to(oppSock).emit('you_hit', { health: oppState.health, headshot: didHead });
+        ns.to(oppSock).emit('you_hit', {
+          health: oppState.health, headshot: didHead, attackerPos,
+        });
       } else {
-        ns.to(oppSock).emit('you_hit', { health: 0, headshot: didHead, fatal: true });
+        ns.to(oppSock).emit('you_hit', {
+          health: 0, headshot: didHead, fatal: true, attackerPos,
+        });
       }
 
       if (fatal) {

@@ -719,6 +719,22 @@ input:focus { border-color:var(--accent); }
 
   <div class="hud-el" id="hud-hit-marker"></div>
 
+  <!-- Mini-radar (top-right). Shows top-down positions of all players
+       with you at the centre. Drawn by GameEngine._drawRadar() each
+       frame. -->
+  <canvas id="hud-radar" class="hud-el" width="180" height="180"
+          style="top:14px;right:14px;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.18);border-radius:6px;"></canvas>
+
+  <!-- Directional damage arrows ring. The four arrows fade in
+       independently when you take damage from each cardinal direction.
+       GameEngine.flashDamageArrow(dir) sets the opacity. -->
+  <div id="hud-dmg-ring" class="hud-el" style="inset:0;position:absolute;pointer-events:none;">
+    <div id="dmg-arrow-top"    style="position:absolute;top:80px;left:50%;transform:translateX(-50%) rotate(0deg);font-size:40px;color:#e63946;opacity:0;text-shadow:0 0 12px #e63946;">▲</div>
+    <div id="dmg-arrow-bot"    style="position:absolute;bottom:160px;left:50%;transform:translateX(-50%) rotate(180deg);font-size:40px;color:#e63946;opacity:0;text-shadow:0 0 12px #e63946;">▲</div>
+    <div id="dmg-arrow-left"   style="position:absolute;left:80px;top:50%;transform:translateY(-50%) rotate(-90deg);font-size:40px;color:#e63946;opacity:0;text-shadow:0 0 12px #e63946;">▲</div>
+    <div id="dmg-arrow-right"  style="position:absolute;right:80px;top:50%;transform:translateY(-50%) rotate(90deg);font-size:40px;color:#e63946;opacity:0;text-shadow:0 0 12px #e63946;">▲</div>
+  </div>
+
   <div class="hud-el" id="hud-health">
     <div class="hp-row"><span class="hp-icon">♥</span><span class="hp-value" id="hp-value">100</span></div>
     <div class="hp-bar"><div class="hp-bar-fill" id="hp-bar" style="width:100%;background:#e63946;"></div></div>
@@ -2461,6 +2477,127 @@ const GameEngine = {
     }
   },
 
+  // ── Mini-radar ─────────────────────────────────────────────────────
+  // Top-down 180×180 canvas in the top-right corner. You at centre,
+  // facing up. Cover boxes drawn as grey rectangles, opponent(s) as
+  // red dots, teammates (if team match) as blue dots.
+  _drawRadar() {
+    const cv = this._radarCanvas || (this._radarCanvas = document.getElementById('hud-radar'));
+    if (!cv) return;
+    const ctx = cv.getContext('2d');
+    if (!ctx) return;
+    const W = cv.width, H = cv.height;
+    ctx.clearRect(0, 0, W, H);
+    // Radar covers a slice of the arena around the player; tweak SCALE
+    // to zoom in/out. SCALE = px-per-metre.
+    const SCALE = 3.0;
+    const cx = W / 2, cy = H / 2;
+    const myYaw = this.yaw || 0;
+    // Helper: world (x,z) → canvas pixel, rotated by -myYaw so the
+    // player always faces "up" on the radar.
+    const project = (wx, wz) => {
+      const dx = wx - this.pos.x;
+      const dz = wz - this.pos.z;
+      const c = Math.cos(-myYaw), s = Math.sin(-myYaw);
+      const rx =  dx * c + dz * s;
+      const rz = -dx * s + dz * c;
+      return { x: cx + rx * SCALE, y: cy + rz * SCALE };
+    };
+    // 1) cover boxes
+    ctx.fillStyle = 'rgba(180,180,180,0.45)';
+    if (this._staticBoxes) {
+      for (const b of this._staticBoxes) {
+        const w = b.max.x - b.min.x;
+        const d = b.max.z - b.min.z;
+        if (w >= 38 || d >= 38) continue; // skip boundary walls
+        const corners = [
+          project(b.min.x, b.min.z), project(b.max.x, b.min.z),
+          project(b.max.x, b.max.z), project(b.min.x, b.max.z),
+        ];
+        ctx.beginPath();
+        ctx.moveTo(corners[0].x, corners[0].y);
+        for (let i = 1; i < 4; i++) ctx.lineTo(corners[i].x, corners[i].y);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+    // 2) opponent (1v1)
+    if (this._oppVisible) {
+      const p = project(this._oppCurPos.x, this._oppCurPos.z);
+      ctx.fillStyle = '#ff5a5a';
+      ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); ctx.fill();
+    }
+    // 3) team mode — colour by team
+    if (this._otherPlayers) {
+      for (const e of this._otherPlayers.values()) {
+        const p = project(e.curPos.x, e.curPos.z);
+        const isAlly = App.yourTeam && e.team === App.yourTeam;
+        ctx.fillStyle = isAlly ? '#4a8cff' : '#ff5a5a';
+        ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    // 4) you — green triangle pointing up.
+    ctx.fillStyle = '#3fd07f';
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - 7);
+    ctx.lineTo(cx - 5, cy + 5);
+    ctx.lineTo(cx + 5, cy + 5);
+    ctx.closePath();
+    ctx.fill();
+    // 5) radar ring
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+    ctx.beginPath(); ctx.arc(cx, cy, W/2 - 4, 0, Math.PI * 2); ctx.stroke();
+  },
+
+  // ── Directional damage arrows ──────────────────────────────────────
+  // The four cardinal arrows around the centre of the screen each have
+  // their own fade-out timer. When hit, the radius from attacker → me
+  // is rotated into camera-local space and the closest arrow is lit.
+  _dmgArrowT: { top: 0, bot: 0, left: 0, right: 0 },
+
+  flashDamageArrow(fromWorldPos) {
+    if (!fromWorldPos) {
+      // Unknown source — flash all four briefly (less informative but
+      // still tells you "you got hit").
+      this._dmgArrowT.top = this._dmgArrowT.bot = this._dmgArrowT.left = this._dmgArrowT.right = 0.4;
+      return;
+    }
+    const dx = fromWorldPos.x - this.pos.x;
+    const dz = fromWorldPos.z - this.pos.z;
+    const myYaw = this.yaw || 0;
+    const c = Math.cos(-myYaw), s = Math.sin(-myYaw);
+    const rx =  dx * c + dz * s;
+    const rz = -dx * s + dz * c;
+    // rz > 0 = behind, rz < 0 = front (camera looks toward -z).
+    const ax = Math.abs(rx), az = Math.abs(rz);
+    if (az > ax) {
+      if (rz < 0) this._dmgArrowT.top = 1.5;
+      else        this._dmgArrowT.bot = 1.5;
+    } else {
+      if (rx > 0) this._dmgArrowT.right = 1.5;
+      else        this._dmgArrowT.left  = 1.5;
+    }
+  },
+
+  _updateDamageArrows(dt) {
+    const map = {
+      top:   'dmg-arrow-top',
+      bot:   'dmg-arrow-bot',
+      left:  'dmg-arrow-left',
+      right: 'dmg-arrow-right',
+    };
+    for (const k of Object.keys(this._dmgArrowT)) {
+      if (this._dmgArrowT[k] > 0) {
+        this._dmgArrowT[k] = Math.max(0, this._dmgArrowT[k] - dt);
+        const el = document.getElementById(map[k]);
+        if (el) el.style.opacity = Math.min(1, this._dmgArrowT[k]);
+      } else {
+        const el = document.getElementById(map[k]);
+        if (el && el.style.opacity !== '0') el.style.opacity = 0;
+      }
+    }
+  },
+
   _addStaticBox(pos, size) {
     // Track the box's TOP world-y so step-up logic can decide whether
     // the player can climb onto it (any box whose top is below the
@@ -2944,9 +3081,13 @@ const GameEngine = {
     UIManager.updateSilentWalk(this.silentWalking);
 
     const baseSpeed = WEAPONS[this.currentWeapon]?.moveSpeed || CFG.PLAYER_SPEED;
-    const speed = this.crouching
+    // Tag-on-hit: when recently shot, movement slows to 50% for ~0.4s.
+    // CS-style — crossing open lanes carries a real penalty if traded.
+    const tagged = (this._taggedUntil || 0) > performance.now();
+    const tagMul = tagged ? 0.5 : 1.0;
+    const speed = (this.crouching
       ? baseSpeed * CFG.CROUCH_SPEED_MULT
-      : (this.silentWalking ? baseSpeed * 0.55 : baseSpeed);
+      : (this.silentWalking ? baseSpeed * 0.55 : baseSpeed)) * tagMul;
     let mx = 0, mz = 0;
     if (this._keys['KeyW']) mz -= 1;
     if (this._keys['KeyS']) mz += 1;
@@ -3100,6 +3241,8 @@ const GameEngine = {
     this._update(dt);
     // Drifting sky clouds.
     this._updateClouds(dt);
+    this._drawRadar();
+    this._updateDamageArrows(dt);
     // Tick throwable visuals (fire flicker, smoke drift, in-hand anim).
     try { if (typeof Throwables !== 'undefined') Throwables.tick(dt); } catch (_) {}
     // Smoothly animate FOV toward scope target.
@@ -5229,7 +5372,15 @@ const NetworkManager = {
       alert('Connection lost — please refresh the page.');
     });
     s.io.on('reconnect', () => console.info('[shooter] socket reconnected'));
-    s.on('match_error', d => { alert('Could not start match: ' + (d?.error || 'unknown')); });
+    s.on('match_error', d => {
+      // The countdown can stick if the server's match start is aborted
+      // (timed-out reconnect, etc.). Force the UI back to the lobby
+      // browser so the user can re-queue instead of staring at "0s".
+      UIManager.stopMatchCountdown?.();
+      App.currentLobby = null;
+      UIManager.show('lobby');
+      alert('Could not start match: ' + (d?.error || 'unknown'));
+    });
 
     // Stash the initial lobby snapshot in case App.login() hasn't attached its handler yet
     this._initialLobbies = null;
@@ -5717,7 +5868,7 @@ const App = {
     AudioManager.stopMusic();
   },
 
-  onYouHit({ health, fatal }) {
+  onYouHit({ health, fatal, attackerPos }) {
     // Death-screen invulnerability: once you're dead, drop any further
     // damage events that arrive before the server stops sending them.
     if (GameEngine.isDead && !fatal) return;
@@ -5725,6 +5876,26 @@ const App = {
     UIManager.updateHealth(health);
     UIManager.flashDamageVignette();
     AudioManager.playDamage();
+    // Tag-on-hit: brief movement slowdown for ~0.4s. CS-style — makes
+    // running across open lanes risky.
+    GameEngine._taggedUntil = performance.now() + 400;
+    // Directional damage arrow — server provides attackerPos when it
+    // knows; otherwise fall back to the last-known opponent position
+    // for 1v1 / the closest enemy in team matches.
+    let src = attackerPos;
+    if (!src && GameEngine._oppVisible) {
+      src = { x: GameEngine._oppCurPos.x, z: GameEngine._oppCurPos.z };
+    }
+    if (!src && GameEngine._otherPlayers) {
+      let best = null, bestD = Infinity;
+      for (const e of GameEngine._otherPlayers.values()) {
+        if (App.yourTeam && e.team === App.yourTeam) continue;
+        const d = (e.curPos.x - GameEngine.pos.x) ** 2 + (e.curPos.z - GameEngine.pos.z) ** 2;
+        if (d < bestD) { bestD = d; best = { x: e.curPos.x, z: e.curPos.z }; }
+      }
+      src = best;
+    }
+    GameEngine.flashDamageArrow(src);
   },
 
   onKillcamData(data) {
