@@ -1359,16 +1359,20 @@ const Bot = {
 //  look without touching the loader code.
 // ══════════════════════════════════════════════════════════════
 const WEAPON_TUNING = {
-  // Auto-fit: longest model dimension lands at targetLen (metres).
-  // Imphenzia models the weapons along +X with barrel pointing +X, so
-  // we rotate -90° around Y to point the barrel forward (camera -Z).
-  // If a specific gun ends up backwards: change ry to +Math.PI/2.
-  // If upside down: add Math.PI to rx. If sideways: add Math.PI/2 to rx.
-  // `pos` is the in-hand camera-local offset.
-  rifle:   { src: 'Gun-AK47', targetLen: 0.42, scaleMul: 1.0, pos: [0.22, -0.22, -0.55], rot: [0, Math.PI / 2, 0] },
-  pistol:  { src: 'Pistol',   targetLen: 0.22, scaleMul: 1.0, pos: [0.18, -0.20, -0.42], rot: [0, Math.PI / 2, 0] },
-  shotgun: { src: 'ShotGun',  targetLen: 0.48, scaleMul: 1.0, pos: [0.24, -0.24, -0.58], rot: [0, Math.PI / 2, 0] },
-  sniper:  { src: 'Sniper',   targetLen: 0.55, scaleMul: 1.0, pos: [0.22, -0.20, -0.62], rot: [0, Math.PI / 2, 0] },
+  // These are the user-tuned defaults baked from the in-game tuner.
+  // Rotations have been normalised modulo 2π — the tuner produced
+  // values like `19π` because each "+rot" button bump adds 15°, and
+  // those just collapse to the same orientation in fewer turns.
+  // To re-tune: press `(backtick)` in-game, nudge until happy, click
+  // PRINT ALL → CONSOLE, and paste the resulting block here.
+  rifle:   { src: 'Gun-AK47', targetLen: 0.42, scaleMul: 1.95, pos: [0.22, -0.22, -0.27],
+             rot: [Math.PI / 2, Math.PI, -Math.PI / 2] },
+  pistol:  { src: 'Pistol',   targetLen: 0.22, scaleMul: 1.46, pos: [0.18, -0.20, -0.32],
+             rot: [Math.PI / 2, Math.PI, -Math.PI / 2] },
+  shotgun: { src: 'ShotGun',  targetLen: 0.48, scaleMul: 2.14, pos: [0.24, -0.24, -0.48],
+             rot: [Math.PI / 2, Math.PI, -Math.PI / 2] },
+  sniper:  { src: 'Sniper',   targetLen: 0.55, scaleMul: 2.14, pos: [0.22, -0.20, -0.38],
+             rot: [-Math.PI / 2, 0, Math.PI / 2] },
 };
 
 const WeaponAssets = {
@@ -1493,32 +1497,45 @@ const WeaponAssets = {
     // User-supplied rotation is applied AFTER auto-orient as a nudge.
     wrapper.rotation.set(t.rot[0], t.rot[1], t.rot[2]);
 
-    // FPS-gun render trick: we want the gun (a) drawn ON TOP of the
-    // world so walls can't clip it, AND (b) its own polygons sorted
-    // correctly so the model doesn't look disfigured.
-    //
-    // The previous push had depthTest:false + DoubleSide which
-    // achieved (a) but broke (b) — back faces bled through the front
-    // and overlapping parts z-fought, producing the "skin looks
-    // disfigured" effect.
-    //
-    // The fix: keep normal depth-test on every material (so the gun's
-    // own polygons sort against each other) but clear the depth
-    // buffer just before the gun renders, so it draws on top of the
-    // world regardless of where it physically is in the scene. The
-    // depth-clear is attached to the wrapper's onBeforeRender so it
-    // runs once per frame, right before the gun's children draw.
+    // FPS-gun render setup that fixes the "disfigured" look:
+    //   * depthTest TRUE so the gun's own polygons sort
+    //   * depthClear before drawing the gun so it stays on top of the
+    //     world (no wall clipping)
+    //   * DoubleSide so any back-faced triangle in the Imphenzia FBX
+    //     still renders (some pieces in the pack are single-quad
+    //     planes with no thickness)
+    //   * polygonOffset so overlapping co-planar surfaces inside the
+    //     model (e.g. the orange handguard touching the black
+    //     receiver) don't z-fight and bleed through each other
+    //   * flatShading swaps to faceted normals — matches the game's
+    //     low-poly aesthetic AND hides smooth-shading artifacts at
+    //     the seams between body parts. We rebuild every material as
+    //     a fresh MeshLambertMaterial keyed by colour so the original
+    //     palette is preserved without inheriting Phong / Standard
+    //     shader settings that don't suit this look.
     wrapper.traverse(o => {
-      if (o.material) {
-        const mats = Array.isArray(o.material) ? o.material : [o.material];
-        for (const m of mats) {
-          m.depthTest   = true;
-          m.depthWrite  = true;
-          m.side        = THREE.FrontSide; // correct winding from FBX
-          m.transparent = false;
-          if (m.shininess !== undefined) m.shininess = 0;
-        }
-      }
+      if (!o.material) return;
+      const oldMats = Array.isArray(o.material) ? o.material : [o.material];
+      const newMats = oldMats.map(om => {
+        // Try to read the original colour; fall back to a neutral grey.
+        const color = (om && om.color && om.color.isColor)
+          ? om.color.clone() : new THREE.Color(0xb0b0b0);
+        const m = new THREE.MeshLambertMaterial({
+          color,
+          side: THREE.DoubleSide,
+          flatShading: true,
+          transparent: false,
+          depthTest: true,
+          depthWrite: true,
+          polygonOffset: true,
+          polygonOffsetFactor: 1,
+          polygonOffsetUnits: 1,
+        });
+        return m;
+      });
+      // Dispose the originals so they don't leak GPU resources.
+      oldMats.forEach(om => om && om.dispose && om.dispose());
+      o.material = Array.isArray(o.material) ? newMats : newMats[0];
       o.renderOrder = 999;
     });
     wrapper.onBeforeRender = (renderer) => { renderer.clearDepth(); };
