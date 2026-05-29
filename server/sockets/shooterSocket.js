@@ -703,6 +703,64 @@ function findPrivateLobbyForUser(userId) {
   return null;
 }
 
+// ── Reconnect grace for private lobbies ─────────────────────────────────
+// When a tab refreshes, the browser drops its socket; without a grace
+// window the disconnect handler would immediately leave the lobby (or
+// disband it if the host was the only one), so the moment the new
+// socket connects there's nothing to come back to. We delay the leave
+// by RECONNECT_GRACE_MS and cancel it on the next /shooter connection
+// for the same user.
+const RECONNECT_GRACE_MS = 15000;
+const pendingDisconnects = new Map(); // userId → setTimeout handle
+
+function scheduleLeavePrivate(io, userId, socket) {
+  // If the user already has a pending leave, reset the timer.
+  if (pendingDisconnects.has(userId)) {
+    clearTimeout(pendingDisconnects.get(userId));
+  }
+  const timer = setTimeout(() => {
+    pendingDisconnects.delete(userId);
+    // Only actually leave if the user hasn't reconnected — verify by
+    // checking the member's current socketId against the connected
+    // sockets. If the lobby is gone already, nothing to do.
+    const existing = findPrivateLobbyForUser(userId);
+    if (!existing) return;
+    // If a live socket exists for this user, they came back — bail.
+    const sock = io.of('/shooter').sockets.get(existing.member.socketId);
+    if (sock) return;
+    // Otherwise, perform the actual leave.
+    const lobby = existing.lobby;
+    lobby.members = lobby.members.filter(m => m.userId !== userId);
+    if (!lobby.members.length) {
+      disbandPrivateLobby(io, lobby, 'host_left');
+      return;
+    }
+    if (lobby.hostUserId === userId) {
+      const next = lobby.members.find(m => m.socketId && players.has(m.socketId)) || lobby.members[0];
+      if (!next?.socketId || !players.has(next.socketId)) {
+        disbandPrivateLobby(io, lobby, 'host_left');
+        return;
+      }
+      lobby.hostUserId = next.userId;
+      lobby.hostSocketId = next.socketId;
+      unreadyNonHost(lobby);
+      io.of('/shooter').to('priv:' + lobby.id).emit('host_transferred', {
+        newHostUserId: next.userId, newHostUsername: next.username,
+      });
+    }
+    if (lobby.status === 'ready') lobby.status = 'waiting';
+    broadcastPrivateLobbyUpdate(io, lobby);
+  }, RECONNECT_GRACE_MS);
+  pendingDisconnects.set(userId, timer);
+}
+
+function cancelLeavePrivate(userId) {
+  if (pendingDisconnects.has(userId)) {
+    clearTimeout(pendingDisconnects.get(userId));
+    pendingDisconnects.delete(userId);
+  }
+}
+
 // Settings change → clear ready states for everyone except the host (the
 // host implicitly accepts whatever they just chose). Used whenever the
 // host changes bet / mode / size / kills / etc.
@@ -1047,6 +1105,8 @@ function attach(io) {
       // to the room so live updates resume without a refresh.
       const existing = findPrivateLobbyForUser(userId);
       if (existing) {
+        // Cancel any pending "leave due to disconnect" — they came back.
+        cancelLeavePrivate(userId);
         playerRec.privateLobby = existing.lobby.id;
         existing.member.socketId = socket.id;
         if (existing.lobby.hostUserId === userId) existing.lobby.hostSocketId = socket.id;
@@ -1071,15 +1131,23 @@ function attach(io) {
     // initial broadcast on reconnect was missed.
     socket.on('request_lobby_state', (_, cb) => {
       const me = players.get(socket.id);
-      if (!me?.privateLobby) return cb?.({ ok: true, lobby: null });
-      const lobby = privateLobbies.get(me.privateLobby);
-      if (!lobby) { me.privateLobby = null; return cb?.({ ok: true, lobby: null }); }
+      // Even if their player record doesn't currently link to a private
+      // lobby (e.g. fresh connection after a refresh), try to find one
+      // by userId so the grace-period reconnect path still works.
+      const userId = me?.userId || socket.data?.userId;
+      if (!userId) return cb?.({ ok: true, lobby: null });
+      cancelLeavePrivate(userId);
+      const existing = findPrivateLobbyForUser(userId);
+      if (!existing) {
+        if (me) me.privateLobby = null;
+        return cb?.({ ok: true, lobby: null });
+      }
       // Refresh stored socket id & make sure the room subscription is live.
-      const mem = lobby.members.find(m => m.userId === me.userId);
-      if (mem) mem.socketId = socket.id;
-      if (lobby.hostUserId === me.userId) lobby.hostSocketId = socket.id;
-      socket.join('priv:' + lobby.id);
-      cb?.({ ok: true, lobby: snapshotPrivate(lobby) });
+      existing.member.socketId = socket.id;
+      if (existing.lobby.hostUserId === userId) existing.lobby.hostSocketId = socket.id;
+      if (me) me.privateLobby = existing.lobby.id;
+      socket.join('priv:' + existing.lobby.id);
+      cb?.({ ok: true, lobby: snapshotPrivate(existing.lobby) });
     });
 
     // Allow the client to ask for a fresh stats snapshot (e.g. after match)
@@ -2157,9 +2225,13 @@ function attach(io) {
         }
       }
     }
-    // If they were in a private lobby (pre-match), clean that up too.
+    // If they were in a private lobby (pre-match), defer the leave on
+    // disconnect so a tab refresh / network blip doesn't kill the
+    // lobby. Explicit leave (button) goes through leave_private_lobby
+    // and stays immediate.
     if (p.privateLobby) {
-      handleLeavePrivate(socket);
+      if (fromDisconnect) scheduleLeavePrivate(io, p.userId, socket);
+      else                handleLeavePrivate(socket);
     }
 
     // Leave lobby and refund-not-needed (we hadn't escrowed yet — escrow happens in startMatch)
