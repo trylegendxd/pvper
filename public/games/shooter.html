@@ -741,11 +741,17 @@ input:focus { border-color:var(--accent); }
     <span id="hud-throw-key" style="color:#666;font-size:10px;margin-left:6px;">[LMB]</span>
   </div>
 
-  <div class="hud-el" id="hud-sprint">
+  <!-- Sprint bar removed: top speed is now per-weapon walking; Shift
+       is silent-walk. The element is kept but hidden so any leftover
+       code that pokes at it doesn't throw. -->
+  <div class="hud-el" id="hud-sprint" style="display:none;">
     <div class="sprint-label">SPRINT</div>
     <div class="sprint-track"><div class="sprint-fill" id="sprint-fill" style="width:100%"></div></div>
   </div>
-  <div class="hud-el" id="hud-crouch" style="bottom:0;left:140px;background:rgba(0,0,0,.75);padding:6px 12px 10px;display:none;">
+  <div class="hud-el" id="hud-walk" style="bottom:0;left:80px;background:rgba(0,0,0,.75);padding:6px 12px 10px;display:none;">
+    <div style="font-size:9px;color:#9bc6ff;letter-spacing:1px;text-transform:uppercase;">SILENT WALK</div>
+  </div>
+  <div class="hud-el" id="hud-crouch" style="bottom:0;left:200px;background:rgba(0,0,0,.75);padding:6px 12px 10px;display:none;">
     <div style="font-size:9px;color:#888;letter-spacing:1px;text-transform:uppercase;">CROUCH</div>
   </div>
 
@@ -878,11 +884,14 @@ const CFG = {
 };
 
 // Weapon configs — MUST match server.js WEAPONS
+// `moveSpeed` is the top walking speed (m/s) while holding that
+// weapon — CS2-style: lighter guns walk faster, heavier guns slower.
+// There's no sprint anymore; this IS the top speed.
 const WEAPONS = {
-  rifle:   { name:'AK-47',   fireMode:'auto', fireMs:105,  mag:30, dmg:22, headDmg:100, reloadMs:2000, pellets:1, spread:0.022, spreadMove:0.35, spreadDecay:4 },
-  pistol:  { name:'PISTOL',  fireMode:'semi', fireMs:180,  mag:12, dmg:34, headDmg:100, reloadMs:1500, pellets:1, spread:0.014, spreadMove:0.20, spreadDecay:5 },
-  shotgun: { name:'SHOTGUN', fireMode:'semi', fireMs:700,  mag:6,  dmg:16, headDmg:60,  reloadMs:2500, pellets:6, spread:0.10,  spreadMove:0.50, spreadDecay:3 },
-  sniper:  { name:'M40A3',   fireMode:'semi', fireMs:1500, mag:5,  dmg:50, headDmg:100, reloadMs:3500, pellets:1, spread:0.003, spreadMove:0.28, spreadDecay:1.5 },
+  rifle:   { name:'AK-47',   fireMode:'auto', fireMs:105,  mag:30, dmg:22, headDmg:100, reloadMs:2000, pellets:1, spread:0.022, spreadMove:0.35, spreadDecay:4,   moveSpeed: 4.6 },
+  pistol:  { name:'PISTOL',  fireMode:'semi', fireMs:180,  mag:12, dmg:34, headDmg:100, reloadMs:1500, pellets:1, spread:0.014, spreadMove:0.20, spreadDecay:5,   moveSpeed: 5.2 },
+  shotgun: { name:'SHOTGUN', fireMode:'semi', fireMs:700,  mag:6,  dmg:16, headDmg:60,  reloadMs:2500, pellets:6, spread:0.10,  spreadMove:0.50, spreadDecay:3,   moveSpeed: 4.8 },
+  sniper:  { name:'M40A3',   fireMode:'semi', fireMs:1500, mag:5,  dmg:50, headDmg:100, reloadMs:3500, pellets:1, spread:0.003, spreadMove:0.28, spreadDecay:1.5, moveSpeed: 4.2 },
 };
 const WEAPON_ORDER = ['rifle', 'pistol', 'shotgun', 'sniper'];
 
@@ -2813,22 +2822,24 @@ const GameEngine = {
     // Full-auto firing (only for auto-fire weapons while holding mouse button)
     if (this._firing && this._wCfg().fireMode === 'auto') this._shoot();
 
-    // Sprint (disabled while crouching)
+    // CS-style movement model: no sprint. Top speed comes from the
+    // currently-equipped weapon (lighter gun → faster walk). Shift is
+    // silent-walk: ~55% speed and footsteps muted, like CSGO's WALK
+    // key. Crouch overrides silent-walk if both are held — crouch is
+    // always slowest.
     const shift  = this._keys['ShiftLeft'] || this._keys['ShiftRight'];
     const moving = this._keys['KeyW'] || this._keys['KeyS'] || this._keys['KeyA'] || this._keys['KeyD'];
-    this.sprinting = shift && moving && this.sprintFuel > 0 && !this.crouching;
-    this.sprintFuel = this.sprinting
-      ? Math.max(0, this.sprintFuel - dt * 1000)
-      : Math.min(CFG.SPRINT_MAX_MS, this.sprintFuel + dt * CFG.SPRINT_REGEN);
-    UIManager.updateSprint(this.sprintFuel / CFG.SPRINT_MAX_MS);
+    this.silentWalking = shift && moving && !this.crouching;
+    // Legacy compatibility: a few other systems still read `.sprinting`
+    // (gun bob amplitude, opponent gait). Keep the flag but always false.
+    this.sprinting = false;
     UIManager.updateCrouch(this.crouching);
+    UIManager.updateSilentWalk(this.silentWalking);
 
-    // Movement speed: sprint > normal > crouch
-    const speed = this.sprinting
-      ? CFG.SPRINT_SPEED
-      : this.crouching
-        ? CFG.PLAYER_SPEED * CFG.CROUCH_SPEED_MULT
-        : CFG.PLAYER_SPEED;
+    const baseSpeed = WEAPONS[this.currentWeapon]?.moveSpeed || CFG.PLAYER_SPEED;
+    const speed = this.crouching
+      ? baseSpeed * CFG.CROUCH_SPEED_MULT
+      : (this.silentWalking ? baseSpeed * 0.55 : baseSpeed);
     let mx = 0, mz = 0;
     if (this._keys['KeyW']) mz -= 1;
     if (this._keys['KeyS']) mz += 1;
@@ -2870,9 +2881,11 @@ const GameEngine = {
       }
     }
 
-    // Footsteps (only when grounded + moving)
-    if (moving && this._grounded) {
-      this._footT += dt * (this.sprinting ? 4.0 : 2.8);
+    // Footsteps — only when grounded + moving + NOT silent-walking
+    // (Shift) and NOT crouching. Cadence tracks actual walk speed so
+    // a slow heavy weapon plays slower steps than the fast pistol.
+    if (moving && this._grounded && !this.silentWalking && !this.crouching) {
+      this._footT += dt * (speed * 0.55);
       if (this._footT >= 1) { this._footT = 0; AudioManager.playFootstep(); }
     } else {
       this._footT = 0;
@@ -3372,10 +3385,16 @@ const UIManager = {
     }
   },
 
-  updateSprint(f) { document.getElementById('sprint-fill').style.width = `${f*100}%`; },
+  // Sprint HUD bar is removed (no more sprint mechanic), but the
+  // stub is kept so legacy code calls don't throw.
+  updateSprint() { /* no-op */ },
   updateCrouch(c) {
     const el = document.getElementById('hud-crouch');
     if (el) el.style.display = c ? 'block' : 'none';
+  },
+  updateSilentWalk(on) {
+    const el = document.getElementById('hud-walk');
+    if (el) el.style.display = on ? 'block' : 'none';
   },
 
   updateScore(mine, opp) {
