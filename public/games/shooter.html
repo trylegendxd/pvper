@@ -1497,45 +1497,54 @@ const WeaponAssets = {
     // User-supplied rotation is applied AFTER auto-orient as a nudge.
     wrapper.rotation.set(t.rot[0], t.rot[1], t.rot[2]);
 
-    // FPS-gun render setup that fixes the "disfigured" look:
-    //   * depthTest TRUE so the gun's own polygons sort
-    //   * depthClear before drawing the gun so it stays on top of the
-    //     world (no wall clipping)
-    //   * DoubleSide so any back-faced triangle in the Imphenzia FBX
-    //     still renders (some pieces in the pack are single-quad
-    //     planes with no thickness)
-    //   * polygonOffset so overlapping co-planar surfaces inside the
-    //     model (e.g. the orange handguard touching the black
-    //     receiver) don't z-fight and bleed through each other
-    //   * flatShading swaps to faceted normals — matches the game's
-    //     low-poly aesthetic AND hides smooth-shading artifacts at
-    //     the seams between body parts. We rebuild every material as
-    //     a fresh MeshLambertMaterial keyed by colour so the original
-    //     palette is preserved without inheriting Phong / Standard
-    //     shader settings that don't suit this look.
+    // FPS-gun render setup that fixes the "disfigured" look WITHOUT
+    // throwing away the FBX's palette texture (the previous push
+    // rebuilt materials and dropped the .map, leaving every gun white).
+    //   * Modify materials IN PLACE so the texture map, vertex colours,
+    //     and palette stay intact.
+    //   * depthTest TRUE so the gun's own polygons sort.
+    //   * depthClear via wrapper.onBeforeRender keeps it on top of
+    //     the world (no wall clipping).
+    //   * DoubleSide so any back-faced triangle (some Imphenzia pieces
+    //     are single-quad sights / vents) still renders.
+    //   * polygonOffset pushes co-planar surfaces apart so the orange
+    //     handguard can't bleed through the black receiver.
+    //   * Enable flat-shading on the GEOMETRY (not the material) for
+    //     the low-poly look — and recompute vertex normals so flat
+    //     shading actually reads as faceted facets.
     wrapper.traverse(o => {
+      if (o.isMesh && o.geometry) {
+        // Switch to faceted normals so the low-poly aesthetic reads
+        // and seams between body parts don't catch the light weirdly.
+        try {
+          o.geometry = o.geometry.clone();
+          o.geometry.deleteAttribute('normal');
+          o.geometry.computeVertexNormals();
+        } catch (_) {}
+      }
       if (!o.material) return;
-      const oldMats = Array.isArray(o.material) ? o.material : [o.material];
-      const newMats = oldMats.map(om => {
-        // Try to read the original colour; fall back to a neutral grey.
-        const color = (om && om.color && om.color.isColor)
-          ? om.color.clone() : new THREE.Color(0xb0b0b0);
-        const m = new THREE.MeshLambertMaterial({
-          color,
-          side: THREE.DoubleSide,
-          flatShading: true,
-          transparent: false,
-          depthTest: true,
-          depthWrite: true,
-          polygonOffset: true,
-          polygonOffsetFactor: 1,
-          polygonOffsetUnits: 1,
-        });
-        return m;
-      });
-      // Dispose the originals so they don't leak GPU resources.
-      oldMats.forEach(om => om && om.dispose && om.dispose());
-      o.material = Array.isArray(o.material) ? newMats : newMats[0];
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const m of mats) {
+        if (!m) continue;
+        m.side               = THREE.DoubleSide;
+        m.transparent        = false;
+        m.depthTest          = true;
+        m.depthWrite         = true;
+        m.polygonOffset      = true;
+        m.polygonOffsetFactor= 1;
+        m.polygonOffsetUnits = 1;
+        if ('flatShading' in m) m.flatShading = true;
+        if ('shininess' in m)   m.shininess = 0;
+        // If the source material has a texture (Imphenzia palette png)
+        // make sure pixel-art sampling is used so the swatches stay
+        // crisp at the small in-hand scale.
+        if (m.map) {
+          m.map.magFilter = THREE.NearestFilter;
+          m.map.minFilter = THREE.NearestFilter;
+          m.map.needsUpdate = true;
+        }
+        m.needsUpdate = true;
+      }
       o.renderOrder = 999;
     });
     wrapper.onBeforeRender = (renderer) => { renderer.clearDepth(); };
