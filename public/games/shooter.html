@@ -1365,10 +1365,10 @@ const WEAPON_TUNING = {
   // If a specific gun ends up backwards: change ry to +Math.PI/2.
   // If upside down: add Math.PI to rx. If sideways: add Math.PI/2 to rx.
   // `pos` is the in-hand camera-local offset.
-  rifle:   { src: 'Gun-AK47', targetLen: 0.42, scaleMul: 1.0, pos: [0.22, -0.22, -0.55], rot: [0, -Math.PI / 2, 0] },
-  pistol:  { src: 'Pistol',   targetLen: 0.22, scaleMul: 1.0, pos: [0.18, -0.20, -0.42], rot: [0, -Math.PI / 2, 0] },
-  shotgun: { src: 'ShotGun',  targetLen: 0.48, scaleMul: 1.0, pos: [0.24, -0.24, -0.58], rot: [0, -Math.PI / 2, 0] },
-  sniper:  { src: 'Sniper',   targetLen: 0.55, scaleMul: 1.0, pos: [0.22, -0.20, -0.62], rot: [0, -Math.PI / 2, 0] },
+  rifle:   { src: 'Gun-AK47', targetLen: 0.42, scaleMul: 1.0, pos: [0.22, -0.22, -0.55], rot: [0, Math.PI / 2, 0] },
+  pistol:  { src: 'Pistol',   targetLen: 0.22, scaleMul: 1.0, pos: [0.18, -0.20, -0.42], rot: [0, Math.PI / 2, 0] },
+  shotgun: { src: 'ShotGun',  targetLen: 0.48, scaleMul: 1.0, pos: [0.24, -0.24, -0.58], rot: [0, Math.PI / 2, 0] },
+  sniper:  { src: 'Sniper',   targetLen: 0.55, scaleMul: 1.0, pos: [0.22, -0.20, -0.62], rot: [0, Math.PI / 2, 0] },
 };
 
 const WeaponAssets = {
@@ -1516,6 +1516,101 @@ const WeaponAssets = {
       { autoScale: +autoScale.toFixed(4),
         finalScale: +finalScale.toFixed(4),
         bbox: { w:+size.x.toFixed(2), h:+size.y.toFixed(2), d:+size.z.toFixed(2) } });
+  },
+
+  // ── Live tuner ──────────────────────────────────────────────────
+  // Open with `WeaponAssets.tuner()` in the dev console, or press
+  // backtick (`) in-game. Pos/rot/scale of the CURRENT weapon can be
+  // nudged with the on-screen buttons; values update live and print
+  // to the console so you can paste them back into WEAPON_TUNING.
+  // Safe to leave wired up in production — only opens on key press.
+  tuner() {
+    if (document.getElementById('weapon-tuner')) {
+      document.getElementById('weapon-tuner').remove();
+      return;
+    }
+    const panel = document.createElement('div');
+    panel.id = 'weapon-tuner';
+    panel.style.cssText = 'position:fixed;top:80px;right:14px;z-index:99999;background:rgba(0,0,0,.85);color:#fff;font:12px monospace;padding:10px 12px;border:1px solid #4b9eff;border-radius:6px;min-width:240px;';
+    panel.innerHTML = `
+      <div style="font-weight:700;letter-spacing:2px;color:#4b9eff;margin-bottom:6px;">WEAPON TUNER · <span id="wt-key">?</span></div>
+      <div id="wt-vals" style="margin-bottom:6px;line-height:1.45;"></div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:3px;margin-bottom:6px;">
+        ${[['posX','x','pos'],['posY','y','pos'],['posZ','z','pos'],
+            ['rotX','x','rot'],['rotY','y','rot'],['rotZ','z','rot']]
+            .map(([id,axis,kind]) => `
+              <button data-act="${id}" data-dir="-1" style="background:#222;color:#fff;border:1px solid #555;padding:3px;">−${kind} ${axis}</button>
+            `).join('')}
+        ${[['posX','x','pos'],['posY','y','pos'],['posZ','z','pos'],
+            ['rotX','x','rot'],['rotY','y','rot'],['rotZ','z','rot']]
+            .map(([id,axis,kind]) => `
+              <button data-act="${id}" data-dir="+1" style="background:#222;color:#fff;border:1px solid #555;padding:3px;">+${kind} ${axis}</button>
+            `).join('')}
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:3px;margin-bottom:6px;">
+        <button data-act="scaleD" style="background:#222;color:#fff;border:1px solid #555;padding:3px;">− size</button>
+        <button data-act="scaleU" style="background:#222;color:#fff;border:1px solid #555;padding:3px;">+ size</button>
+        <button data-act="rotY90" style="background:#333;color:#fff;border:1px solid #777;padding:3px;">spin Y 90°</button>
+        <button data-act="rotX90" style="background:#333;color:#fff;border:1px solid #777;padding:3px;">spin X 90°</button>
+      </div>
+      <button id="wt-print" style="width:100%;background:#1aa758;color:#fff;border:0;padding:6px;font-weight:700;">PRINT ALL → CONSOLE</button>
+      <div style="margin-top:6px;color:#888;font-size:10px;">Tunes current weapon. Press \` to close.</div>
+    `;
+    document.body.appendChild(panel);
+    const POS_STEP = 0.02, ROT_STEP = Math.PI / 12, SCALE_STEP = 1.10;
+    const refresh = () => {
+      const k = GameEngine.currentWeapon;
+      const t = WEAPON_TUNING[k];
+      document.getElementById('wt-key').textContent = k;
+      document.getElementById('wt-vals').textContent =
+        `pos [${t.pos.map(n => n.toFixed(2)).join(', ')}]\n` +
+        `rot [${t.rot.map(n => (n / Math.PI).toFixed(2) + 'π').join(', ')}]\n` +
+        `scale ${t.scaleMul.toFixed(2)}x  targetLen ${t.targetLen}`;
+    };
+    const reapply = () => {
+      const k = GameEngine.currentWeapon;
+      WeaponAssets._applyToGroup(GameEngine, k);
+      // _applyToGroup hides fallback children — make sure the current
+      // gun is the visible one after we rebuild.
+      for (const key of Object.keys(GameEngine._gunModels)) {
+        GameEngine._gunModels[key].visible = (key === k);
+      }
+      GameEngine.gunGroup = GameEngine._gunModels[k];
+      refresh();
+    };
+    panel.querySelectorAll('button[data-act]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const act = btn.dataset.act;
+        const dir = parseInt(btn.dataset.dir || '1', 10);
+        const t = WEAPON_TUNING[GameEngine.currentWeapon];
+        if (act.startsWith('pos')) {
+          const i = { posX: 0, posY: 1, posZ: 2 }[act];
+          t.pos[i] = +(t.pos[i] + dir * POS_STEP).toFixed(3);
+        } else if (act.startsWith('rot')) {
+          const m = { rotX: 0, rotY: 1, rotZ: 2 }[act];
+          if (m !== undefined) t.rot[m] = t.rot[m] + dir * ROT_STEP;
+          else if (act === 'rotY90') t.rot[1] = t.rot[1] + Math.PI / 2;
+          else if (act === 'rotX90') t.rot[0] = t.rot[0] + Math.PI / 2;
+        } else if (act === 'scaleU') t.scaleMul *= SCALE_STEP;
+        else if (act === 'scaleD') t.scaleMul /= SCALE_STEP;
+        reapply();
+      });
+    });
+    document.getElementById('wt-print').addEventListener('click', () => {
+      const lines = Object.entries(WEAPON_TUNING).map(([k, t]) =>
+        `  ${k.padEnd(7)}: { src: '${t.src}', targetLen: ${t.targetLen}, scaleMul: ${t.scaleMul.toFixed(2)}, pos: [${t.pos.map(n => n.toFixed(3)).join(', ')}], rot: [${t.rot.map((n,i) => {
+          const r = n / Math.PI; if (Math.abs(r) < 1e-5) return '0';
+          if (Math.abs(r - 0.5) < 1e-5) return 'Math.PI / 2';
+          if (Math.abs(r + 0.5) < 1e-5) return '-Math.PI / 2';
+          if (Math.abs(r - 1) < 1e-5) return 'Math.PI';
+          if (Math.abs(r + 1) < 1e-5) return '-Math.PI';
+          return n.toFixed(3);
+        }).join(', ')}] },`
+      );
+      console.log('// Paste into WEAPON_TUNING:\nconst WEAPON_TUNING = {\n' + lines.join('\n') + '\n};');
+    });
+    refresh();
   },
 };
 
@@ -5282,6 +5377,14 @@ const App = {
 // us a console line to diagnose with.
 window.addEventListener('error', (e) => {
   try { console.error('[global error]', e.message, e.filename + ':' + e.lineno); } catch (_) {}
+});
+
+// Backtick (`) toggles the weapon tuner panel — only useful during a
+// match. Bypasses pointer-lock since the panel is HTML overlay.
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Backquote' && typeof WeaponAssets !== 'undefined') {
+    try { WeaponAssets.tuner(); } catch (_) {}
+  }
 });
 window.addEventListener('unhandledrejection', (e) => {
   try { console.error('[unhandled rejection]', e.reason); } catch (_) {}
