@@ -2063,6 +2063,147 @@ const GameEngine = {
   // arenaSize is the floor side-length in metres. Old maps still use 40
   // by default. New maps (Depot = 70) just pass the bigger size and the
   // floor + boundary walls scale up automatically.
+  // Procedural texture cache — built once on first use, reused
+  // for every match so we don't repaint canvases on every respawn.
+  _ensureArenaTextures() {
+    if (this._arenaTex) return this._arenaTex;
+
+    const mkCanvasTex = (w, h, repeat, paint) => {
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      paint(c.getContext('2d'), w, h);
+      const t = new THREE.CanvasTexture(c);
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.repeat.set(repeat, repeat);
+      t.magFilter = THREE.NearestFilter;
+      t.minFilter = THREE.NearestMipmapLinearFilter;
+      return t;
+    };
+
+    // GRASS — bright green with darker tufts (low-poly look matches the
+    // rest of the game). Tile size deliberately small so it tessellates
+    // visibly without looking like a photo.
+    const grass = mkCanvasTex(64, 64, 1, (g, W, H) => {
+      g.fillStyle = '#6cc04b';
+      g.fillRect(0, 0, W, H);
+      // Tuft dots
+      for (let i = 0; i < 220; i++) {
+        const x = Math.random() * W, y = Math.random() * H;
+        const s = 1 + Math.random() * 2;
+        g.fillStyle = ['#5fb83e', '#4e9e34', '#79cc58'][Math.floor(Math.random() * 3)];
+        g.fillRect(x | 0, y | 0, s, s);
+      }
+      // Lighter highlights
+      for (let i = 0; i < 35; i++) {
+        const x = Math.random() * W, y = Math.random() * H;
+        g.fillStyle = '#9bdb7a';
+        g.fillRect(x | 0, y | 0, 1, 2);
+      }
+    });
+
+    // BRICK / SAND WALL — rows of tan blocks with grout lines.
+    const wall = mkCanvasTex(128, 64, 1, (g, W, H) => {
+      g.fillStyle = '#c8a967';
+      g.fillRect(0, 0, W, H);
+      const rows = 4, cols = 8;
+      const cw = W / cols, ch = H / rows;
+      for (let r = 0; r < rows; r++) {
+        const offset = (r % 2) * (cw / 2);
+        for (let c = 0; c < cols + 1; c++) {
+          const x = c * cw + offset - cw / 2;
+          const y = r * ch;
+          // Each brick slightly varied shade.
+          const shade = ['#d2b573', '#b89858', '#caa666', '#bf9c5d'][(r * 7 + c) % 4];
+          g.fillStyle = shade;
+          g.fillRect(x + 1, y + 1, cw - 2, ch - 2);
+        }
+      }
+      // Dark grout lines on top.
+      g.strokeStyle = '#7a5d2c';
+      g.lineWidth = 1.5;
+      for (let r = 0; r <= rows; r++) {
+        g.beginPath(); g.moveTo(0, r * ch); g.lineTo(W, r * ch); g.stroke();
+      }
+    });
+
+    // WOOD CRATE — vertical planks with grain.
+    const wood = mkCanvasTex(64, 64, 1, (g, W, H) => {
+      g.fillStyle = '#a47042';
+      g.fillRect(0, 0, W, H);
+      const planks = 4;
+      const pw = W / planks;
+      for (let p = 0; p < planks; p++) {
+        const shade = ['#b07c4c', '#9a6539', '#a47042', '#8e5d33'][p % 4];
+        g.fillStyle = shade;
+        g.fillRect(p * pw, 0, pw - 1, H);
+        // Grain lines
+        g.strokeStyle = 'rgba(60,35,15,0.4)';
+        g.lineWidth = 1;
+        for (let i = 0; i < 4; i++) {
+          const lx = p * pw + 3 + i * (pw / 5) + (Math.random() * 2 - 1);
+          g.beginPath();
+          g.moveTo(lx, 0);
+          g.lineTo(lx + (Math.random() * 2 - 1), H);
+          g.stroke();
+        }
+      }
+      // Plank seams (vertical dark lines).
+      g.strokeStyle = '#4a2d14';
+      g.lineWidth = 1.5;
+      for (let p = 1; p < planks; p++) {
+        g.beginPath(); g.moveTo(p * pw, 0); g.lineTo(p * pw, H); g.stroke();
+      }
+      // Top/bottom nail row.
+      g.fillStyle = '#3a2a18';
+      for (let p = 0; p < planks; p++) {
+        g.fillRect(p * pw + pw / 2 - 1, 2, 2, 2);
+        g.fillRect(p * pw + pw / 2 - 1, H - 4, 2, 2);
+      }
+    });
+
+    // METAL CONTAINER — ribbed shipping-container panels.
+    const metal = mkCanvasTex(64, 64, 1, (g, W, H) => {
+      g.fillStyle = '#506478';
+      g.fillRect(0, 0, W, H);
+      // Vertical ribs
+      const ribs = 6;
+      const rw = W / ribs;
+      for (let i = 0; i < ribs; i++) {
+        const x = i * rw;
+        g.fillStyle = '#465a6e';
+        g.fillRect(x, 0, 1, H);
+        g.fillStyle = '#5e7388';
+        g.fillRect(x + rw / 2, 0, 2, H);
+      }
+      // Rust streaks
+      g.fillStyle = 'rgba(150,75,30,0.25)';
+      for (let i = 0; i < 5; i++) {
+        const x = Math.random() * W;
+        const y = Math.random() * H;
+        g.fillRect(x, y, 2, 6 + Math.random() * 10);
+      }
+    });
+
+    // GENERIC PLATED CRATE for the other palette colours — kept solid
+    // but with a subtle highlight + bevel so it doesn't look flat.
+    const platedFor = (hex) => mkCanvasTex(32, 32, 1, (g, W, H) => {
+      g.fillStyle = '#' + hex.toString(16).padStart(6, '0');
+      g.fillRect(0, 0, W, H);
+      // Inner panel border
+      g.strokeStyle = 'rgba(0,0,0,0.25)';
+      g.lineWidth = 2;
+      g.strokeRect(3, 3, W - 6, H - 6);
+      // Corner studs
+      g.fillStyle = 'rgba(0,0,0,0.35)';
+      for (const [x, y] of [[2,2],[W-4,2],[2,H-4],[W-4,H-4]]) {
+        g.fillRect(x, y, 2, 2);
+      }
+    });
+
+    this._arenaTex = { grass, wall, wood, metal, plated: platedFor };
+    return this._arenaTex;
+  },
+
   buildArena(coverBoxes, arenaSize = 40, spawnPoints = null) {
     // Clear bullet holes from previous match
     for (const h of this._bulletHoles) {
@@ -2078,16 +2219,23 @@ const GameEngine = {
 
     const add = (mesh) => { this.scene.add(mesh); this._arenaObjects.push(mesh); };
     const half = arenaSize / 2;
+    const tex = this._ensureArenaTextures();
 
-    // Bright cartoon grass floor (saturated green)
-    const floorMat = new THREE.MeshLambertMaterial({ color: 0x6cc04b });
+    // ── FLOOR — grass texture tiled per metre so the pattern stays
+    // crisp at any arena size. The texture itself is shared.
+    const floorTex = tex.grass.clone();
+    floorTex.needsUpdate = true;
+    floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
+    floorTex.repeat.set(arenaSize / 2, arenaSize / 2);
+    floorTex.magFilter = THREE.NearestFilter;
+    floorTex.minFilter = THREE.NearestMipmapLinearFilter;
+    const floorMat = new THREE.MeshLambertMaterial({ map: floorTex, color: 0xffffff });
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(arenaSize, arenaSize), floorMat);
     floor.rotation.x = -Math.PI / 2;
     add(floor);
 
-    // Boundary walls — saturated tan/sand. Sit half a metre past the
-    // floor edge so static-box collision keeps players inside.
-    const wallMat = new THREE.MeshLambertMaterial({ color: 0xd2b884 });
+    // ── BOUNDARY WALLS — brick texture, tiled by length.
+    const wallMat = new THREE.MeshLambertMaterial({ map: tex.wall, color: 0xffffff });
     const walls = [
       { pos: [0, 1.5, -half], size: [arenaSize, 3, 0.5] },
       { pos: [0, 1.5,  half], size: [arenaSize, 3, 0.5] },
@@ -2095,16 +2243,41 @@ const GameEngine = {
       { pos: [ half, 1.5, 0], size: [0.5, 3, arenaSize] },
     ];
     walls.forEach(({ pos, size }) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(...size), wallMat);
+      // Per-wall texture clone so repeats scale with wall length.
+      const m = new THREE.Mesh(new THREE.BoxGeometry(...size), wallMat.clone());
+      const t = tex.wall.clone();
+      const longest = Math.max(size[0], size[2]);
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.repeat.set(longest / 4, size[1] / 2);
+      t.needsUpdate = true;
+      m.material.map = t;
+      m.material.needsUpdate = true;
       m.position.set(...pos);
       add(m);
       this._addStaticBox(pos, size);
     });
 
-    // Cover boxes — vivid blocky palette (Minecraft / Pixel Gun feel)
+    // ── COVER BOXES — pick a texture based on the palette colour so
+    // each obstacle reads as a wood crate, metal container, etc.
+    // Existing palette: tan, lime, purple, red, teal, yellow.
     const boxColors = [0xe7a85f, 0xc4d35c, 0x9b88c2, 0xe25a5a, 0x4ec4b4, 0xe2c54a];
+    const textureFor = (i) => {
+      const colour = boxColors[i % boxColors.length];
+      // Tan + yellow tones → wood crates.
+      if (colour === 0xe7a85f || colour === 0xe2c54a) return { tex: tex.wood, tint: 0xffffff };
+      // Teal → metal container.
+      if (colour === 0x4ec4b4) return { tex: tex.metal, tint: 0xc0d0e0 };
+      // Everything else → plated panel in that colour.
+      return { tex: tex.plated(colour), tint: 0xffffff };
+    };
     coverBoxes.forEach(({ position, size }, i) => {
-      const mat = new THREE.MeshLambertMaterial({ color: boxColors[i % boxColors.length] });
+      const { tex: boxTex, tint } = textureFor(i);
+      // Tile the texture based on the largest face (~1 tile per metre).
+      const t = boxTex.clone();
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.repeat.set(Math.max(1, Math.round(size.w)), Math.max(1, Math.round(size.h)));
+      t.needsUpdate = true;
+      const mat = new THREE.MeshLambertMaterial({ map: t, color: tint });
       const m   = new THREE.Mesh(new THREE.BoxGeometry(size.w, size.h, size.d), mat);
       m.position.set(position.x, size.h / 2, position.z);
       add(m);
