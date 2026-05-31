@@ -580,9 +580,8 @@ function tickThrowables(io, match) {
       const fatal = state.health <= 0;
       if (fatal) state.respawning = true;
       // Notify the victim.
-      ns.to(sid).emit('you_hit', {
+      emitYouHit(ns, sid, eff.position, {
         health: state.health, headshot: false, fatal, source: 'molotov',
-        attackerPos: { x: eff.position.x, z: eff.position.z },
       });
       Replay.log(match.id, 'damage_dealt', {
         s: eff.ownerSocketId, target: sid, dmg: cfg.tickDamage, kind: 'fire',
@@ -704,6 +703,42 @@ function findPrivateLobbyForUser(userId) {
   return null;
 }
 
+// Same lookup for public arena lobbies. lobby.players holds socket ids
+// so we have to resolve to userId via the players map. Returns the
+// slot index so callers can replace the stale socket id in place.
+function findPublicLobbyForUser(userId) {
+  for (const lobby of lobbies.values()) {
+    for (let i = 0; i < lobby.players.length; i++) {
+      const p = players.get(lobby.players[i]);
+      if (p?.userId === userId) return { lobby, slot: i, oldSid: lobby.players[i] };
+    }
+  }
+  return null;
+}
+
+// Shared reset for public arena lobbies. Used by every path that has
+// to abort a half-formed match (escrow failed, start aborted, lobby
+// empty, etc.).
+function resetPublicLobby(lobby) {
+  lobby.players = [];
+  lobby.mapVotes = {};
+  lobby.modeVotes = {};
+  lobby.roundsVotes = {};
+  lobby.status = 'waiting';
+  if (lobby._startTimer) { clearTimeout(lobby._startTimer); lobby._startTimer = null; }
+  lobby.startsAt = null;
+}
+
+// Single point of truth for `you_hit` emits. Centralises the
+// attackerPos plumbing so adding another damage source (grenade etc.)
+// doesn't re-duplicate the field shape.
+function emitYouHit(ns, victimSid, attackerPos, payload) {
+  ns.to(victimSid).emit('you_hit', {
+    ...payload,
+    attackerPos: attackerPos ? { x: attackerPos.x, z: attackerPos.z } : null,
+  });
+}
+
 // ── Reconnect grace for private lobbies ─────────────────────────────────
 // When a tab refreshes, the browser drops its socket; without a grace
 // window the disconnect handler would immediately leave the lobby (or
@@ -759,6 +794,46 @@ function cancelLeavePrivate(userId) {
   if (pendingDisconnects.has(userId)) {
     clearTimeout(pendingDisconnects.get(userId));
     pendingDisconnects.delete(userId);
+  }
+}
+
+// ── Reconnect grace for PUBLIC arena lobbies ────────────────────────────
+// Same problem as private lobbies: a background-tab disconnect during the
+// 10s match countdown was dropping the player from lobby.players, then
+// startMatch silently bailed because players.get(oldSid) === undefined.
+// We delay the public-lobby leave too, and the connection handler re-seats
+// the user when they come back.
+const pendingPublicLeaves = new Map(); // userId → setTimeout
+
+function schedulePublicLobbyLeave(io, userId) {
+  if (pendingPublicLeaves.has(userId)) clearTimeout(pendingPublicLeaves.get(userId));
+  const timer = setTimeout(() => {
+    pendingPublicLeaves.delete(userId);
+    const existing = findPublicLobbyForUser(userId);
+    if (!existing) return;
+    const sock = io.of('/shooter').sockets.get(existing.oldSid);
+    if (sock) return; // they came back with the same id somehow
+    // Actually leave: drop the slot, clear votes, cancel countdown.
+    const { lobby, slot, oldSid } = existing;
+    lobby.players.splice(slot, 1);
+    delete lobby.mapVotes[oldSid];
+    delete lobby.modeVotes[oldSid];
+    delete lobby.roundsVotes[oldSid];
+    if (lobby._startTimer) {
+      clearTimeout(lobby._startTimer); lobby._startTimer = null;
+      lobby.startsAt = null;
+      io.of('/shooter').to(lobby.id).emit('match_countdown_cancel');
+    }
+    io.of('/shooter').to(lobby.id).emit('waiting_room_update', buildWaitingUpdate(lobby));
+    broadcastLobbies(io);
+  }, RECONNECT_GRACE_MS);
+  pendingPublicLeaves.set(userId, timer);
+}
+
+function cancelPublicLobbyLeave(userId) {
+  if (pendingPublicLeaves.has(userId)) {
+    clearTimeout(pendingPublicLeaves.get(userId));
+    pendingPublicLeaves.delete(userId);
   }
 }
 
@@ -958,51 +1033,36 @@ async function startMatch(io, lobbyId) {
   if (!lobby) return;
   const ns = io.of('/shooter');
 
-  // Recovery: if a player's socket id in lobby.players is stale (they
-  // reconnected with a new id during the countdown), patch the slot to
-  // their CURRENT socket id by looking through `players` for the same
-  // userId. Without this, startMatch would silently early-return and
-  // both clients would sit on "waiting for players" forever.
-  for (let i = 0; i < lobby.players.length; i++) {
-    const sid = lobby.players[i];
-    if (players.has(sid)) continue;
-    // Find any active socket whose userId we know belonged to this slot.
-    // We do this by sweeping all current player records looking for the
-    // SAME socket-room membership (they'd have rejoined the lobby room
-    // on reconnect).
-    let recovered = null;
-    for (const [otherSid, otherP] of players) {
-      const otherSock = ns.sockets.get(otherSid);
-      if (!otherSock) continue;
-      if (otherSock.rooms.has(lobbyId)) { recovered = otherSid; break; }
-    }
-    if (recovered) {
-      lobby.players[i] = recovered;
-      // Move per-socket vote state across too.
-      for (const map of [lobby.mapVotes, lobby.modeVotes, lobby.roundsVotes]) {
-        if (map[sid] !== undefined) { map[recovered] = map[sid]; delete map[sid]; }
-      }
-    }
+  try { return await _startMatchInner(io, lobby); }
+  catch (err) {
+    console.error('[shooter] startMatch failed', err);
+    ns.to(lobby.id).emit('match_error', { error: err.message || 'start_failed' });
+    resetPublicLobby(lobby);
+    broadcastLobbies(io);
   }
+}
+
+async function _startMatchInner(io, lobby) {
+  const ns = io.of('/shooter');
+  // The connection handler patches stale socket ids on reconnect, so
+  // lobby.players is always current here. We just verify both slots
+  // resolve to a live player; if not, emit match_error and reset.
   if (lobby.players.length !== 2) {
-    // Lobby is no longer full. Tell anyone still here so the UI exits
-    // the "Match starts in 0s" stuck state.
-    ns.to(lobbyId).emit('match_error', { error: 'lobby_empty' });
+    ns.to(lobby.id).emit('match_error', { error: 'lobby_empty' });
+    resetPublicLobby(lobby);
+    broadcastLobbies(io);
     return;
   }
-
   const [p1Id, p2Id] = lobby.players;
   const p1 = players.get(p1Id);
   const p2 = players.get(p2Id);
   if (!p1 || !p2) {
-    // A player's record is gone (full reconnect we couldn't recover).
-    // Reset the lobby so the connected player can try again.
-    ns.to(lobbyId).emit('match_error', { error: 'player_disconnected' });
-    lobby.players = []; lobby.mapVotes = {}; lobby.modeVotes = {}; lobby.roundsVotes = {};
-    lobby.status = 'waiting';
+    ns.to(lobby.id).emit('match_error', { error: 'player_disconnected' });
+    resetPublicLobby(lobby);
     broadcastLobbies(io);
     return;
   }
+  const lobbyId = lobby.id;
 
   const mapType   = resolveMapType(lobby.mapVotes);
   const mapDef    = buildMapByType(mapType);
@@ -1025,8 +1085,7 @@ async function startMatch(io, lobbyId) {
     // Kick both back to lobby browser
     io.of('/shooter').to(p1Id).emit('match_error', { error: e.message });
     io.of('/shooter').to(p2Id).emit('match_error', { error: e.message });
-    lobby.players = []; lobby.mapVotes = {}; lobby.modeVotes = {}; lobby.roundsVotes = {};
-    lobby.status = 'waiting';
+    resetPublicLobby(lobby);
     broadcastLobbies(io);
     return;
   }
@@ -1154,6 +1213,21 @@ function attach(io) {
         if (existing.lobby.hostUserId === userId) existing.lobby.hostSocketId = socket.id;
         socket.join('priv:' + existing.lobby.id);
       }
+      // Same restore for PUBLIC arena lobbies — re-seat the user in
+      // their slot if their old socket id is still parked there, so a
+      // background-tab disconnect during the 10s countdown doesn't
+      // strand them once the countdown fires.
+      const pub = findPublicLobbyForUser(userId);
+      if (pub) {
+        cancelPublicLobbyLeave(userId);
+        // Patch the slot to the new socket id and migrate vote state.
+        pub.lobby.players[pub.slot] = socket.id;
+        for (const map of [pub.lobby.mapVotes, pub.lobby.modeVotes, pub.lobby.roundsVotes]) {
+          if (map[pub.oldSid] !== undefined) { map[socket.id] = map[pub.oldSid]; delete map[pub.oldSid]; }
+        }
+        playerRec.currentLobby = pub.lobby.id;
+        socket.join(pub.lobby.id);
+      }
       players.set(socket.id, playerRec);
       socket.emit('shooter_ready', {
         lobbies: lobbySnapshot(),
@@ -1248,16 +1322,9 @@ function attach(io) {
         lobby._startTimer = setTimeout(() => {
           lobby.startsAt = null;
           lobby._startTimer = null;
-          // startMatch is async — without this catch any thrown
-          // promise would be an unhandled rejection and the clients
-          // would stay stuck on the countdown screen forever.
-          Promise.resolve(startMatch(io, lobbyId)).catch(err => {
-            console.error('[shooter] startMatch promise rejected', err);
-            ns.to(lobbyId).emit('match_error', { error: 'start_failed' });
-            lobby.players = []; lobby.mapVotes = {}; lobby.modeVotes = {}; lobby.roundsVotes = {};
-            lobby.status = 'waiting';
-            broadcastLobbies(io);
-          });
+          // startMatch owns its own try/catch + match_error emit — no
+          // wrapper needed here.
+          startMatch(io, lobbyId);
         }, COUNTDOWN_MS);
       }
     });
@@ -1974,20 +2041,13 @@ function attach(io) {
         s: socket.id, target: oppSock, dmg: totalDmg,
       });
       socket.emit('hit_result', { hit: true, headshot: didHead, damage: totalDmg, ammo: wState.ammo, weapon: wKey });
-      // Only inform the victim of damage if they were not already dead.
-      // (If `fatal` then `you_hit` would arrive on the death screen.)
-      // Include the attacker's world position so the client can render
-      // the directional damage indicator without guessing.
-      const attackerPos = { x: state.position.x, z: state.position.z };
-      if (!fatal) {
-        ns.to(oppSock).emit('you_hit', {
-          health: oppState.health, headshot: didHead, attackerPos,
-        });
-      } else {
-        ns.to(oppSock).emit('you_hit', {
-          health: 0, headshot: didHead, fatal: true, attackerPos,
-        });
-      }
+      // Notify the victim. The single helper carries attackerPos so
+      // future damage sources don't re-duplicate the payload shape.
+      emitYouHit(ns, oppSock, state.position, {
+        health: fatal ? 0 : oppState.health,
+        headshot: didHead,
+        fatal,
+      });
 
       if (fatal) {
         state.kills++;
@@ -2297,26 +2357,35 @@ function attach(io) {
       else                handleLeavePrivate(socket);
     }
 
-    // Leave lobby and refund-not-needed (we hadn't escrowed yet — escrow happens in startMatch)
+    // Public arena lobby. Disconnects get a reconnect-grace window so a
+    // background-tab blip during the countdown doesn't strand both
+    // players. Explicit leave (leave_lobby button) goes through
+    // handleLeave with fromDisconnect=false → immediate.
     if (p.currentLobby) {
-      const lobby = lobbies.get(p.currentLobby);
-      if (lobby) {
-        lobby.players = lobby.players.filter(id => id !== socket.id);
-        delete lobby.mapVotes[socket.id];
-        delete lobby.modeVotes[socket.id];
-        delete lobby.roundsVotes[socket.id];
-        // Cancel any pending 10s countdown — both players need to be
-        // present for the match to start.
-        if (lobby._startTimer) {
-          clearTimeout(lobby._startTimer);
-          lobby._startTimer = null;
-          lobby.startsAt = null;
-          ns.to(p.currentLobby).emit('match_countdown_cancel');
+      if (fromDisconnect) {
+        // Leave the player parked in the lobby — schedulePublicLobbyLeave
+        // will drop them in RECONNECT_GRACE_MS unless they come back.
+        schedulePublicLobbyLeave(io, p.userId);
+        socket.leave(p.currentLobby);
+        p.currentLobby = null;
+      } else {
+        const lobby = lobbies.get(p.currentLobby);
+        if (lobby) {
+          lobby.players = lobby.players.filter(id => id !== socket.id);
+          delete lobby.mapVotes[socket.id];
+          delete lobby.modeVotes[socket.id];
+          delete lobby.roundsVotes[socket.id];
+          if (lobby._startTimer) {
+            clearTimeout(lobby._startTimer);
+            lobby._startTimer = null;
+            lobby.startsAt = null;
+            ns.to(p.currentLobby).emit('match_countdown_cancel');
+          }
+          ns.to(p.currentLobby).emit('waiting_room_update', buildWaitingUpdate(lobby));
         }
-        ns.to(p.currentLobby).emit('waiting_room_update', buildWaitingUpdate(lobby));
+        socket.leave(p.currentLobby);
+        p.currentLobby = null;
       }
-      socket.leave(p.currentLobby);
-      p.currentLobby = null;
     }
 
     broadcastLobbies(io);

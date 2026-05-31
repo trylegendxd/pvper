@@ -2481,6 +2481,16 @@ const GameEngine = {
   // Top-down 180×180 canvas in the top-right corner. You at centre,
   // facing up. Cover boxes drawn as grey rectangles, opponent(s) as
   // red dots, teammates (if team match) as blue dots.
+  // World (x,z) → camera-local (rx,rz). Camera-local +rz is BEHIND.
+  // Caller supplies the precomputed sin/cos of -yaw so this stays cheap
+  // in tight loops (radar). Shared by the radar projection and the
+  // damage-arrow direction pick.
+  _toCameraSpace(wx, wz, c, s) {
+    const dx = wx - this.pos.x;
+    const dz = wz - this.pos.z;
+    return { rx: dx * c + dz * s, rz: -dx * s + dz * c };
+  },
+
   _drawRadar() {
     const cv = this._radarCanvas || (this._radarCanvas = document.getElementById('hud-radar'));
     if (!cv) return;
@@ -2493,50 +2503,51 @@ const GameEngine = {
     const SCALE = 3.0;
     const cx = W / 2, cy = H / 2;
     const myYaw = this.yaw || 0;
-    // Helper: world (x,z) → canvas pixel, rotated by -myYaw so the
-    // player always faces "up" on the radar.
+    // Sin/cos hoisted out of every per-corner projection.
+    const cosY = Math.cos(-myYaw), sinY = Math.sin(-myYaw);
     const project = (wx, wz) => {
-      const dx = wx - this.pos.x;
-      const dz = wz - this.pos.z;
-      const c = Math.cos(-myYaw), s = Math.sin(-myYaw);
-      const rx =  dx * c + dz * s;
-      const rz = -dx * s + dz * c;
+      const { rx, rz } = this._toCameraSpace(wx, wz, cosY, sinY);
       return { x: cx + rx * SCALE, y: cy + rz * SCALE };
     };
-    // 1) cover boxes
+    // Cover boxes — skip boundary walls AND anything outside the radar
+    // radius before doing the per-corner projection.
+    const RADAR_R   = W / 2 / SCALE;
+    const RADAR_R2  = RADAR_R * RADAR_R;
     ctx.fillStyle = 'rgba(180,180,180,0.45)';
     if (this._staticBoxes) {
+      const px = this.pos.x, pz = this.pos.z;
       for (const b of this._staticBoxes) {
         const w = b.max.x - b.min.x;
         const d = b.max.z - b.min.z;
         if (w >= 38 || d >= 38) continue; // skip boundary walls
-        const corners = [
-          project(b.min.x, b.min.z), project(b.max.x, b.min.z),
-          project(b.max.x, b.max.z), project(b.min.x, b.max.z),
-        ];
+        // Closest point on the AABB to the player.
+        const cxp = Math.max(b.min.x, Math.min(px, b.max.x));
+        const czp = Math.max(b.min.z, Math.min(pz, b.max.z));
+        const dx = cxp - px, dz = czp - pz;
+        if (dx*dx + dz*dz > RADAR_R2) continue;
+        const c1 = project(b.min.x, b.min.z), c2 = project(b.max.x, b.min.z);
+        const c3 = project(b.max.x, b.max.z), c4 = project(b.min.x, b.max.z);
         ctx.beginPath();
-        ctx.moveTo(corners[0].x, corners[0].y);
-        for (let i = 1; i < 4; i++) ctx.lineTo(corners[i].x, corners[i].y);
+        ctx.moveTo(c1.x, c1.y); ctx.lineTo(c2.x, c2.y);
+        ctx.lineTo(c3.x, c3.y); ctx.lineTo(c4.x, c4.y);
         ctx.closePath();
         ctx.fill();
       }
     }
-    // 2) opponent (1v1)
-    if (this._oppVisible) {
-      const p = project(this._oppCurPos.x, this._oppCurPos.z);
-      ctx.fillStyle = '#ff5a5a';
-      ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); ctx.fill();
-    }
-    // 3) team mode — colour by team
-    if (this._otherPlayers) {
+    // Opponents — team mode if populated, 1v1 fallback otherwise.
+    if (this._otherPlayers && this._otherPlayers.size) {
       for (const e of this._otherPlayers.values()) {
         const p = project(e.curPos.x, e.curPos.z);
         const isAlly = App.yourTeam && e.team === App.yourTeam;
         ctx.fillStyle = isAlly ? '#4a8cff' : '#ff5a5a';
         ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); ctx.fill();
       }
+    } else if (this._oppVisible) {
+      const p = project(this._oppCurPos.x, this._oppCurPos.z);
+      ctx.fillStyle = '#ff5a5a';
+      ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); ctx.fill();
     }
-    // 4) you — green triangle pointing up.
+    // You — green triangle, pointing up.
     ctx.fillStyle = '#3fd07f';
     ctx.beginPath();
     ctx.moveTo(cx, cy - 7);
@@ -2544,56 +2555,71 @@ const GameEngine = {
     ctx.lineTo(cx + 5, cy + 5);
     ctx.closePath();
     ctx.fill();
-    // 5) radar ring
+    // Radar ring
     ctx.strokeStyle = 'rgba(255,255,255,0.15)';
     ctx.beginPath(); ctx.arc(cx, cy, W/2 - 4, 0, Math.PI * 2); ctx.stroke();
   },
 
   // ── Directional damage arrows ──────────────────────────────────────
-  // The four cardinal arrows around the centre of the screen each have
-  // their own fade-out timer. When hit, the radius from attacker → me
-  // is rotated into camera-local space and the closest arrow is lit.
+  // Four cardinal red arrows around the centre. flashDamageArrow rotates
+  // the attacker direction into camera-local space and lights the
+  // closest of the four. If no attacker position is known we try the
+  // last visible opponent / closest enemy ourselves so callers don't
+  // have to reach into GameEngine internals.
   _dmgArrowT: { top: 0, bot: 0, left: 0, right: 0 },
 
   flashDamageArrow(fromWorldPos) {
-    if (!fromWorldPos) {
-      // Unknown source — flash all four briefly (less informative but
-      // still tells you "you got hit").
+    let src = fromWorldPos;
+    if (!src && this._oppVisible) {
+      src = { x: this._oppCurPos.x, z: this._oppCurPos.z };
+    }
+    if (!src && this._otherPlayers) {
+      let bestD = Infinity;
+      for (const e of this._otherPlayers.values()) {
+        if (App.yourTeam && e.team === App.yourTeam) continue;
+        const dx = e.curPos.x - this.pos.x, dz = e.curPos.z - this.pos.z;
+        const d2 = dx*dx + dz*dz;
+        if (d2 < bestD) { bestD = d2; src = { x: e.curPos.x, z: e.curPos.z }; }
+      }
+    }
+    if (!src) {
+      // Last resort — flash all four briefly so the player still gets
+      // feedback that they were hit.
       this._dmgArrowT.top = this._dmgArrowT.bot = this._dmgArrowT.left = this._dmgArrowT.right = 0.4;
       return;
     }
-    const dx = fromWorldPos.x - this.pos.x;
-    const dz = fromWorldPos.z - this.pos.z;
     const myYaw = this.yaw || 0;
-    const c = Math.cos(-myYaw), s = Math.sin(-myYaw);
-    const rx =  dx * c + dz * s;
-    const rz = -dx * s + dz * c;
-    // rz > 0 = behind, rz < 0 = front (camera looks toward -z).
+    const { rx, rz } = this._toCameraSpace(src.x, src.z, Math.cos(-myYaw), Math.sin(-myYaw));
     const ax = Math.abs(rx), az = Math.abs(rz);
-    if (az > ax) {
-      if (rz < 0) this._dmgArrowT.top = 1.5;
-      else        this._dmgArrowT.bot = 1.5;
-    } else {
-      if (rx > 0) this._dmgArrowT.right = 1.5;
-      else        this._dmgArrowT.left  = 1.5;
-    }
+    // Single mapping for the four cardinals — clearer than nested ifs.
+    const key = az > ax ? (rz < 0 ? 'top' : 'bot')
+                        : (rx > 0 ? 'right' : 'left');
+    this._dmgArrowT[key] = 1.5;
   },
 
   _updateDamageArrows(dt) {
-    const map = {
-      top:   'dmg-arrow-top',
-      bot:   'dmg-arrow-bot',
-      left:  'dmg-arrow-left',
-      right: 'dmg-arrow-right',
-    };
+    // Cache the four DOM elements once — getElementById is hot in the
+    // main loop. Same pattern the radar canvas uses.
+    if (!this._dmgArrowEls) {
+      this._dmgArrowEls = {
+        top:   document.getElementById('dmg-arrow-top'),
+        bot:   document.getElementById('dmg-arrow-bot'),
+        left:  document.getElementById('dmg-arrow-left'),
+        right: document.getElementById('dmg-arrow-right'),
+      };
+      this._dmgArrowClean = { top: true, bot: true, left: true, right: true };
+    }
     for (const k of Object.keys(this._dmgArrowT)) {
+      const el = this._dmgArrowEls[k];
+      if (!el) continue;
       if (this._dmgArrowT[k] > 0) {
         this._dmgArrowT[k] = Math.max(0, this._dmgArrowT[k] - dt);
-        const el = document.getElementById(map[k]);
-        if (el) el.style.opacity = Math.min(1, this._dmgArrowT[k]);
-      } else {
-        const el = document.getElementById(map[k]);
-        if (el && el.style.opacity !== '0') el.style.opacity = 0;
+        el.style.opacity = Math.min(1, this._dmgArrowT[k]);
+        this._dmgArrowClean[k] = false;
+      } else if (!this._dmgArrowClean[k]) {
+        // Only touch the DOM once per fade-out, then leave it alone.
+        el.style.opacity = 0;
+        this._dmgArrowClean[k] = true;
       }
     }
   },
@@ -3081,13 +3107,14 @@ const GameEngine = {
     UIManager.updateSilentWalk(this.silentWalking);
 
     const baseSpeed = WEAPONS[this.currentWeapon]?.moveSpeed || CFG.PLAYER_SPEED;
-    // Tag-on-hit: when recently shot, movement slows to 50% for ~0.4s.
-    // CS-style — crossing open lanes carries a real penalty if traded.
-    const tagged = (this._taggedUntil || 0) > performance.now();
-    const tagMul = tagged ? 0.5 : 1.0;
-    const speed = (this.crouching
-      ? baseSpeed * CFG.CROUCH_SPEED_MULT
-      : (this.silentWalking ? baseSpeed * 0.55 : baseSpeed)) * tagMul;
+    // Speed = base × stance × tag. Stance is crouch (slowest) or silent
+    // walk (slower than walk) or 1 (normal walk). Tag-on-hit halves
+    // speed for ~0.4s after being shot, CS-style.
+    const stanceMul = this.crouching     ? CFG.CROUCH_SPEED_MULT
+                    : this.silentWalking ? 0.55
+                    : 1;
+    const tagMul    = ((this._taggedUntil || 0) > performance.now()) ? 0.5 : 1;
+    const speed = baseSpeed * stanceMul * tagMul;
     let mx = 0, mz = 0;
     if (this._keys['KeyW']) mz -= 1;
     if (this._keys['KeyS']) mz += 1;
@@ -5879,23 +5906,9 @@ const App = {
     // Tag-on-hit: brief movement slowdown for ~0.4s. CS-style — makes
     // running across open lanes risky.
     GameEngine._taggedUntil = performance.now() + 400;
-    // Directional damage arrow — server provides attackerPos when it
-    // knows; otherwise fall back to the last-known opponent position
-    // for 1v1 / the closest enemy in team matches.
-    let src = attackerPos;
-    if (!src && GameEngine._oppVisible) {
-      src = { x: GameEngine._oppCurPos.x, z: GameEngine._oppCurPos.z };
-    }
-    if (!src && GameEngine._otherPlayers) {
-      let best = null, bestD = Infinity;
-      for (const e of GameEngine._otherPlayers.values()) {
-        if (App.yourTeam && e.team === App.yourTeam) continue;
-        const d = (e.curPos.x - GameEngine.pos.x) ** 2 + (e.curPos.z - GameEngine.pos.z) ** 2;
-        if (d < bestD) { bestD = d; best = { x: e.curPos.x, z: e.curPos.z }; }
-      }
-      src = best;
-    }
-    GameEngine.flashDamageArrow(src);
+    // GameEngine owns the fallback to last-known opponent positions
+    // when attackerPos isn't supplied.
+    GameEngine.flashDamageArrow(attackerPos);
   },
 
   onKillcamData(data) {
