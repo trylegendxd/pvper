@@ -988,6 +988,17 @@ const AudioManager = {
   // playSpatialShot(). Falls back to _gunshotBuf when a weapon doesn't
   // have its own clip in /sfx-manifest.
   _gunshotBufs: { rifle: null, pistol: null, shotgun: null, sniper: null },
+  // How many seconds of each buffer we actually play. Most APK samples
+  // are multi-shot bursts 5-29 s long; we just need the first single
+  // round. Override per-weapon so a slow sniper boom has its full tail
+  // while the rifle's auto-fire stays tight.
+  _shotClipSec: { rifle: 0.18, pistol: 0.30, shotgun: 0.60, sniper: 1.00, _default: 0.30 },
+  // Per-weapon playback gain (0..1) for local shots — kept low so the
+  // mp3 samples (which are normalised near 0 dBFS) don't blow the mix.
+  _shotGain:    { rifle: 0.32, pistol: 0.36, shotgun: 0.45, sniper: 0.42, _default: 0.35 },
+  // Spatial (remote) shots get a touch more headroom because the
+  // PannerNode's distance attenuation cuts most volume on long shots.
+  _spatialShotGain: { rifle: 0.40, pistol: 0.45, shotgun: 0.55, sniper: 0.50, _default: 0.45 },
   _footstepBuf: null,
   _wantMusic: false,  // set true when something requested music before it loaded
   _unlocked:  false,
@@ -1117,14 +1128,34 @@ const AudioManager = {
     const buf = this._gunshotBufFor(weapon);
     if (buf) {
       try {
-        const src  = this.ctx.createBufferSource();
+        const ctx = this.ctx;
+        const src = ctx.createBufferSource();
         src.buffer = buf;
         // small detune per-shot makes repeats feel less robotic
         src.playbackRate.value = 1 + (Math.random() - 0.5) * 0.06;
-        const g = this.ctx.createGain();
-        g.gain.value = 0.9;
-        src.connect(g); g.connect(this.masterSfx);
-        src.start();
+
+        // Clip the playback to a single-round length and fade out the
+        // last few ms so the sample doesn't end with a click. The APK
+        // samples are mostly multi-shot bursts, so we only want the
+        // initial round.
+        const peak = (weapon && this._shotGain?.[weapon]) ?? this._shotGain._default;
+        const dur  = Math.min(
+          buf.duration,
+          (weapon && this._shotClipSec?.[weapon]) ?? this._shotClipSec._default
+        );
+        const fade = Math.min(0.03, dur * 0.3);
+        const t0   = ctx.currentTime;
+        const g    = ctx.createGain();
+        g.gain.setValueAtTime(peak, t0);
+        g.gain.setValueAtTime(peak, t0 + dur - fade);
+        g.gain.linearRampToValueAtTime(0, t0 + dur);
+
+        src.connect(g);
+        g.connect(this.masterSfx);
+        src.start(t0, 0, dur);
+        src.onended = () => {
+          try { src.disconnect(); g.disconnect(); } catch (_) {}
+        };
       } catch(e) {}
       return;
     }
@@ -1165,24 +1196,24 @@ const AudioManager = {
   // Play a gunshot at a world-space origin with realistic distance
   // attenuation + HRTF panning. Uses the killer's weapon-specific sound
   // when we have one, so a distant shotgun sounds different to a
-  // distant pistol.
+  // distant pistol. Same single-round clip + tail fade as playShoot().
   playSpatialShot(origin, weapon) {
     if (!this.ctx || !origin) return;
     const buf = this._gunshotBufFor(weapon);
     if (!buf) return;
     try {
-      const panner = this.ctx.createPanner();
+      const ctx = this.ctx;
+      const panner = ctx.createPanner();
       panner.panningModel  = 'HRTF';
       panner.distanceModel = 'inverse';
       panner.refDistance   = 1.5;   // full volume within 1.5 m
       panner.maxDistance   = 80;    // arena diagonal cap
       panner.rolloffFactor = 1.6;   // fairly steep falloff
-      // Slight cone widening so off-axis shots aren't dead silent.
       panner.coneInnerAngle = 360;
       panner.coneOuterAngle = 360;
       panner.coneOuterGain  = 1;
       if (panner.positionX) {
-        const t = this.ctx.currentTime;
+        const t = ctx.currentTime;
         panner.positionX.setValueAtTime(origin.x, t);
         panner.positionY.setValueAtTime(origin.y ?? 1.5, t);
         panner.positionZ.setValueAtTime(origin.z, t);
@@ -1190,15 +1221,25 @@ const AudioManager = {
         panner.setPosition(origin.x, origin.y ?? 1.5, origin.z);
       }
 
-      const src = this.ctx.createBufferSource();
+      const peak = (weapon && this._spatialShotGain?.[weapon]) ?? this._spatialShotGain._default;
+      const dur  = Math.min(
+        buf.duration,
+        (weapon && this._shotClipSec?.[weapon]) ?? this._shotClipSec._default
+      );
+      const fade = Math.min(0.03, dur * 0.3);
+      const t0   = ctx.currentTime;
+      const src = ctx.createBufferSource();
       src.buffer = buf;
       src.playbackRate.value = 0.95 + Math.random() * 0.1;
-      const g = this.ctx.createGain();
-      g.gain.value = 1.0;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(peak, t0);
+      g.gain.setValueAtTime(peak, t0 + dur - fade);
+      g.gain.linearRampToValueAtTime(0, t0 + dur);
+
       src.connect(g);
       g.connect(panner);
       panner.connect(this.masterSfx);
-      src.start();
+      src.start(t0, 0, dur);
       src.onended = () => {
         try { src.disconnect(); g.disconnect(); panner.disconnect(); } catch (_) {}
       };
