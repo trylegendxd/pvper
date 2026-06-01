@@ -749,6 +749,14 @@ function emitYouHit(ns, victimSid, attackerPos, payload) {
 const RECONNECT_GRACE_MS = 15000;
 const pendingDisconnects = new Map(); // userId → setTimeout handle
 
+// Active-match grace window. A refresh during a real match used to be an
+// instant forfeit; now the disconnected player has RECONNECT_MATCH_GRACE_MS
+// to come back before endMatch fires. State stays alive in match.gameState
+// (with respawning=true so they can't be shot at or moved), and the
+// connection handler re-keys it to the new socket id on return.
+const RECONNECT_MATCH_GRACE_MS = 10000;
+const pendingMatchReconnects = new Map(); // userId → { matchId, oldSocketId, timer, deadlineAt }
+
 function scheduleLeavePrivate(io, userId, socket) {
   // If the user already has a pending leave, reset the timer.
   if (pendingDisconnects.has(userId)) {
@@ -835,6 +843,163 @@ function cancelPublicLobbyLeave(userId) {
     clearTimeout(pendingPublicLeaves.get(userId));
     pendingPublicLeaves.delete(userId);
   }
+}
+
+// ── Active-match reconnect grace ─────────────────────────────────────────
+// Park a disconnected player for RECONNECT_MATCH_GRACE_MS; if they come
+// back, tryResumeMatch re-keys their game state to the new socket id and
+// re-emits match_start. If they don't, the timer falls through into the
+// same forfeit logic the old code ran inline.
+function scheduleMatchLeave(io, userId, oldSocketId, match) {
+  // Reset the timer if the same user has stacked up a previous grace.
+  const prior = pendingMatchReconnects.get(userId);
+  if (prior) clearTimeout(prior.timer);
+
+  // Freeze them out of the live tick — respawning=true is the existing
+  // "ignore for damage and movement" flag. `disconnected` is purely for
+  // UI / debugging.
+  const st = match.gameState[oldSocketId];
+  if (st) { st.respawning = true; st.disconnected = true; }
+
+  const ns = io.of('/shooter');
+  const deadlineAt = Date.now() + RECONNECT_MATCH_GRACE_MS;
+  // Tell the still-connected players so the HUD can show a grace banner.
+  for (const sid of match.playerIds) {
+    if (sid !== oldSocketId) {
+      ns.to(sid).emit('opponent_disconnect_grace', {
+        socketId: oldSocketId, deadlineAt, graceMs: RECONNECT_MATCH_GRACE_MS,
+      });
+    }
+  }
+  Replay.log(match.id, 'reconnect_grace_start', { s: oldSocketId, ms: RECONNECT_MATCH_GRACE_MS });
+
+  const timer = setTimeout(() => {
+    pendingMatchReconnects.delete(userId);
+    const m = matches.get(match.id);
+    if (!m || m.ended) {
+      // Match already concluded by other means — just clean up the
+      // stranded player record.
+      players.delete(oldSocketId);
+      return;
+    }
+    Replay.log(m.id, 'reconnect_grace_expired', { s: oldSocketId });
+    if (m.isTeamMatch) {
+      const myTeam = m.gameState[oldSocketId]?.team;
+      m.playerIds = m.playerIds.filter(id => id !== oldSocketId);
+      delete m.gameState[oldSocketId];
+      const remaining = Object.values(m.gameState).filter(s => s.team === myTeam).length;
+      if (remaining === 0 && myTeam) {
+        const otherTeam = myTeam === 'a' ? 'b' : 'a';
+        endMatch(io, m.id, otherTeam, 'disconnect');
+      } else {
+        // Team still alive — just broadcast that the player is gone.
+        for (const sid of m.playerIds) {
+          ns.to(sid).emit('opponent_disconnect_final', { socketId: oldSocketId });
+        }
+      }
+    } else {
+      const opp = m.playerIds.find(id => id !== oldSocketId);
+      endMatch(io, m.id, opp, 'disconnect');
+    }
+    players.delete(oldSocketId);
+  }, RECONNECT_MATCH_GRACE_MS);
+
+  pendingMatchReconnects.set(userId, { matchId: match.id, oldSocketId, timer, deadlineAt });
+}
+
+// Attempt to slot a returning socket back into its in-progress match.
+// Returns the matchId on success, null when nothing was pending.
+function tryResumeMatch(io, socket, userId) {
+  const entry = pendingMatchReconnects.get(userId);
+  if (!entry) return null;
+  clearTimeout(entry.timer);
+  pendingMatchReconnects.delete(userId);
+
+  const match = matches.get(entry.matchId);
+  if (!match || match.ended) {
+    // Match died while they were gone — release the stranded record.
+    players.delete(entry.oldSocketId);
+    return null;
+  }
+  const oldSid = entry.oldSocketId;
+  const newSid = socket.id;
+  const st = match.gameState[oldSid];
+  if (!st) {
+    players.delete(oldSid);
+    return null;
+  }
+
+  // Re-key the game state, playerIds list, and any per-socket maps.
+  match.gameState[newSid] = st;
+  delete match.gameState[oldSid];
+  match.playerIds = match.playerIds.map(id => id === oldSid ? newSid : id);
+
+  // Respawn cleanly: full health, fresh position, no leftover respawning flag.
+  st.disconnected = false;
+  st.respawning = false;
+  st.health = MAX_HEALTH;
+  const myIdx = match.playerIds.indexOf(newSid);
+  if (match.spawnPoints?.[myIdx]) {
+    st.position = { ...match.spawnPoints[myIdx] };
+    st.lastPosition = { ...match.spawnPoints[myIdx] };
+    st.positionHistory = [];
+  }
+  // Refill ammo / throwables so they aren't dropped back in empty-handed.
+  for (const k of Object.keys(WEAPONS)) {
+    if (st.weapons?.[k]) {
+      st.weapons[k].ammo = WEAPONS[k].mag;
+      st.weapons[k].reloading = false;
+    }
+  }
+  refillThrowables(st);
+  st.lastShot = 0;
+  st.lastWeaponSwitchAt = 0;
+
+  // Sweep out the old player record; the new connection has already
+  // created a fresh one keyed by newSid (with currentMatch=null), which
+  // we patch below.
+  players.delete(oldSid);
+  const playerRec = players.get(newSid);
+  if (playerRec) playerRec.currentMatch = match.id;
+
+  // Build a fresh players payload keyed by the *current* socket ids so the
+  // client can render team labels / name tags correctly.
+  const playersPayload = {};
+  for (const sid of match.playerIds) {
+    const pr = players.get(sid);
+    if (!pr) continue;
+    playersPayload[sid] = {
+      username: pr.username,
+      spawnIndex: match.playerIds.indexOf(sid),
+      // gameState carries the team in team mode; leave undefined for 1v1.
+      team: match.gameState[sid]?.team,
+    };
+  }
+
+  const ns = io.of('/shooter');
+  ns.to(newSid).emit('match_start', {
+    matchId: match.id,
+    mapType: match.mapType,
+    mapName: match.mapName,
+    arenaSize: match.arenaSize,
+    coverBoxes: match.coverBoxes,
+    spawnPoints: match.spawnPoints,
+    endTime: match.endTime,
+    weaponMode: match.weaponMode,
+    killsToWin: match.killsToWin,
+    players: playersPayload,
+    yourId: newSid,
+    resumed: true,
+  });
+  // Let the other player(s) know the disconnected player is back so any
+  // "Opponent disconnected" banner can clear.
+  for (const sid of match.playerIds) {
+    if (sid !== newSid) {
+      ns.to(sid).emit('opponent_reconnected', { socketId: newSid });
+    }
+  }
+  Replay.log(match.id, 'reconnect_grace_resumed', { oldSid, newSid });
+  return match.id;
 }
 
 // Settings change → clear ready states for everyone except the host (the
@@ -1237,6 +1402,11 @@ function attach(io) {
         // so the UI shows the current state without any extra round-trip.
         privateLobby: existing ? snapshotPrivate(existing.lobby) : null,
       });
+      // Active-match reconnect: if this user had a 10s grace pending,
+      // re-key their game state to this socket and re-emit match_start
+      // (with resumed:true) so the client can jump straight back into
+      // the live match — no forfeit, no rematch.
+      tryResumeMatch(io, socket, userId);
       if (existing) broadcastPrivateLobbyUpdate(io, existing.lobby);
     }).catch(err => {
       console.error('[shooter] connection setup failed', err);
@@ -2321,12 +2491,19 @@ function attach(io) {
     const p = players.get(socket.id);
     if (!p) return;
 
-    // If in an active match, opponent wins by forfeit (1v1) — or the
-    // other team wins only if THIS team is now empty (team mode).
+    // Active match: disconnects get a reconnect grace window before
+    // forfeit. Explicit leave (leave_match / leave_lobby etc) is still
+    // an immediate forfeit. Track whether we parked the player so the
+    // final players.delete() below doesn't strand the still-needed
+    // record (endMatch resolves userIds via players.get()).
+    let scheduledMatchGrace = false;
     if (p.currentMatch) {
       const match = matches.get(p.currentMatch);
       if (match && !match.ended) {
-        if (match.isTeamMatch) {
+        if (fromDisconnect) {
+          scheduleMatchLeave(io, p.userId, socket.id, match);
+          scheduledMatchGrace = true;
+        } else if (match.isTeamMatch) {
           // Remove the leaver from the playerIds list so move/shoot
           // broadcasts skip them, but keep the match going if their
           // team still has at least one player.
@@ -2340,11 +2517,11 @@ function attach(io) {
           const remaining = Object.values(match.gameState).filter(s => s.team === myTeam).length;
           if (remaining === 0 && myTeam) {
             const otherTeam = myTeam === 'a' ? 'b' : 'a';
-            endMatch(io, match.id, otherTeam, fromDisconnect ? 'disconnect' : 'forfeit');
+            endMatch(io, match.id, otherTeam, 'forfeit');
           }
         } else {
           const opp = match.playerIds.find(id => id !== socket.id);
-          endMatch(io, match.id, opp, fromDisconnect ? 'disconnect' : 'forfeit');
+          endMatch(io, match.id, opp, 'forfeit');
         }
       }
     }
@@ -2389,7 +2566,11 @@ function attach(io) {
     }
 
     broadcastLobbies(io);
-    players.delete(socket.id);
+    // If we parked the player for match reconnect, KEEP their players
+    // entry alive — endMatch (when grace expires) needs players.get(sid)
+    // to resolve userIds for the wallet + ranking writes. The grace
+    // timer's callback handles the final players.delete() itself.
+    if (!scheduledMatchGrace) players.delete(socket.id);
   }
 }
 
