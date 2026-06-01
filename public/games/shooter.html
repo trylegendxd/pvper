@@ -1154,6 +1154,33 @@ const AudioManager = {
   },
   playReload() { this._beep(220, 0.06, 0.13, 'square'); },
 
+  playSwish() {
+    if (!this.ctx) return;
+    try {
+      const now = this.ctx.currentTime;
+      const sr  = this.ctx.sampleRate;
+      const dur = 0.16;
+      const buf = this.ctx.createBuffer(1, Math.floor(sr * dur), sr);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < data.length; i++) {
+        const t = i / sr;
+        const env = Math.exp(-t * 18);
+        data[i] = (Math.random() * 2 - 1) * env;
+      }
+      const src = this.ctx.createBufferSource(); src.buffer = buf;
+      const bp  = this.ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(2400, now);
+      bp.frequency.exponentialRampToValueAtTime(700, now + dur);
+      bp.Q.value = 1.4;
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.35, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + dur);
+      src.connect(bp); bp.connect(g); g.connect(this.masterSfx);
+      src.start(now);
+    } catch(e) {}
+  },
+
   playDamage() {
     if (!this.ctx) return;
     try {
@@ -2838,6 +2865,9 @@ const GameEngine = {
   // ── Weapon ─────────────────────────────────────────────────────────────
   _shoot() {
     if (this.isDead) return;
+    // Throwables in hand never fire bullets — LMB throws (handled in mousedown).
+    // This is a defensive guard against any other path (auto-fire loop, etc.).
+    if (typeof Throwables !== 'undefined' && Throwables._inHand) return;
     const w  = this._wCfg();
     const wS = this._wState();
     const now = performance.now();
@@ -2848,9 +2878,11 @@ const GameEngine = {
     this._lastShotTime = now;
     wS.ammo--;
     UIManager.updateAmmo(wS.ammo, w.mag, w.name);
-    AudioManager.playShoot();
+    const isMelee = w.fireMode === 'melee';
+    if (isMelee) AudioManager.playSwish();
+    else         AudioManager.playShoot();
 
-    if (this._muzzleFlash) {
+    if (!isMelee && this._muzzleFlash) {
       const muzzlePos = {
         rifle:   { x: 0.20, y: -0.18,  z: -1.00 },
         pistol:  { x: 0.18, y: -0.165, z: -0.55 },
@@ -2867,32 +2899,37 @@ const GameEngine = {
     const baseDir = this.raycaster.ray.direction.clone();
     const origin  = this.raycaster.ray.origin;
 
-    // Generate pellets (1 for rifle/pistol, multiple for shotgun)
+    // Generate pellets (1 for rifle/pistol, multiple for shotgun, no spread for melee)
     const pelletDirs = [];
     for (let i = 0; i < w.pellets; i++) {
       const d = baseDir.clone();
-      const sp = w.pellets > 1 ? w.spread : w.spread + this._spread * 0.04;
+      const sp = isMelee ? 0
+        : (w.pellets > 1 ? w.spread : w.spread + this._spread * 0.04);
       d.x += (Math.random() - 0.5) * sp;
       d.y += (Math.random() - 0.5) * sp;
       d.normalize();
       pelletDirs.push({ x: d.x, y: d.y, z: d.z });
     }
 
-    // Recoil + spread bloom
-    this._gunRecoil = 1.0;
-    this._spread = Math.min(1, this._spread + w.spreadMove);
-    UIManager.setCrosshairSpread(this._spread);
+    // Recoil + spread bloom — guns only; the knife swings, it doesn't recoil.
+    if (!isMelee) {
+      this._gunRecoil = 1.0;
+      this._spread = Math.min(1, this._spread + w.spreadMove);
+      UIManager.setCrosshairSpread(this._spread);
+    }
 
-    // Bullet holes — trace each pellet against walls and cover for visual effect
-    for (const pd of pelletDirs) {
-      const bray = { origin: { x: origin.x, y: origin.y, z: origin.z }, direction: pd };
-      let minT = Infinity, hitInfo = null;
-      for (const b of this._staticBoxes) {
-        const b3 = { min: { x: b.min.x, y: 0, z: b.min.z }, max: { x: b.max.x, y: 3, z: b.max.z } };
-        const inf = rayHitInfo(bray, b3, 80);
-        if (inf && inf.t < minT) { minT = inf.t; hitInfo = inf; }
+    // Bullet holes — guns only. The knife doesn't pierce walls.
+    if (!isMelee) {
+      for (const pd of pelletDirs) {
+        const bray = { origin: { x: origin.x, y: origin.y, z: origin.z }, direction: pd };
+        let minT = Infinity, hitInfo = null;
+        for (const b of this._staticBoxes) {
+          const b3 = { min: { x: b.min.x, y: 0, z: b.min.z }, max: { x: b.max.x, y: 3, z: b.max.z } };
+          const inf = rayHitInfo(bray, b3, 80);
+          if (inf && inf.t < minT) { minT = inf.t; hitInfo = inf; }
+        }
+        if (hitInfo) this.addBulletHole(hitInfo.hitPoint, hitInfo.normal);
       }
-      if (hitInfo) this.addBulletHole(hitInfo.hitPoint, hitInfo.normal);
     }
 
     if (App.trainingMode) {
