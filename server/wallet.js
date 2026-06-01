@@ -1,6 +1,12 @@
 // server/wallet.js — central wallet logic.
 // THE ONLY place that mutates balances. Always uses a transaction.
-const { pool, withTx } = require('./db');
+//
+// Note: we deliberately reference `db.pool` / `db.withTx` through the
+// module namespace (not destructured at the top of the file). That way
+// tests can swap in fake implementations by mutating the db module's
+// exports, without us having to thread the db through every function
+// as a parameter. See tests/wallet.test.js.
+const db = require('./db');
 
 /**
  * Adjust a user's balance. NEVER allows negative balance.
@@ -56,12 +62,12 @@ async function adjustBalance(userId, amount, reason, opts = {}) {
   };
 
   if (opts.client) return run(opts.client);
-  return withTx(run);
+  return db.withTx(run);
 }
 
 /** Get balance (read-only). */
 async function getBalance(userId) {
-  const { rows } = await pool.query(
+  const { rows } = await db.pool.query(
     'SELECT balance FROM wallets WHERE user_id = $1', [userId]
   );
   return rows.length ? Number(rows[0].balance) : 0;
@@ -69,7 +75,7 @@ async function getBalance(userId) {
 
 /** Recent ledger entries for a user. */
 async function getHistory(userId, limit = 100) {
-  const { rows } = await pool.query(
+  const { rows } = await db.pool.query(
     `SELECT id, amount, balance_after, reason, ref_type, ref_id, metadata, created_at
        FROM wallet_transactions
       WHERE user_id = $1
