@@ -988,17 +988,22 @@ const AudioManager = {
   // playSpatialShot(). Falls back to _gunshotBuf when a weapon doesn't
   // have its own clip in /sfx-manifest.
   _gunshotBufs: { rifle: null, pistol: null, shotgun: null, sniper: null },
-  // How many seconds of each buffer we actually play. Most APK samples
-  // are multi-shot bursts 5-29 s long; we just need the first single
-  // round. Override per-weapon so a slow sniper boom has its full tail
-  // while the rifle's auto-fire stays tight.
-  _shotClipSec: { rifle: 0.18, pistol: 0.30, shotgun: 0.60, sniper: 1.00, _default: 0.30 },
+  // How many seconds of each buffer we actually play. The source files
+  // are multi-shot bursts (gun4 / gun6 / gun8), so we trim to just the
+  // first single bang. On auto-fire the engine re-triggers the clip on
+  // each shot, so the rifle's auto sounds like the same bang repeated.
+  //   rifle  — gun4.mp3 trimmed to one round (~180 ms)
+  //   pistol — gun6.mp3 trimmed to one round (~250 ms)
+  //   shotgun— gun8.mp3 trimmed to first big bang (~550 ms)
+  //   sniper — same gun4.mp3 single-shot trim as the rifle (per spec)
+  _shotClipSec: { rifle: 0.18, pistol: 0.25, shotgun: 0.55, sniper: 0.18, _default: 0.25 },
   // Per-weapon playback gain (0..1) for local shots — kept low so the
   // mp3 samples (which are normalised near 0 dBFS) don't blow the mix.
-  _shotGain:    { rifle: 0.32, pistol: 0.36, shotgun: 0.45, sniper: 0.42, _default: 0.35 },
+  // Sniper == rifle since they share the same sound.
+  _shotGain:    { rifle: 0.32, pistol: 0.36, shotgun: 0.45, sniper: 0.32, _default: 0.35 },
   // Spatial (remote) shots get a touch more headroom because the
   // PannerNode's distance attenuation cuts most volume on long shots.
-  _spatialShotGain: { rifle: 0.40, pistol: 0.45, shotgun: 0.55, sniper: 0.50, _default: 0.45 },
+  _spatialShotGain: { rifle: 0.40, pistol: 0.45, shotgun: 0.55, sniper: 0.40, _default: 0.45 },
   _footstepBuf: null,
   _wantMusic: false,  // set true when something requested music before it loaded
   _unlocked:  false,
