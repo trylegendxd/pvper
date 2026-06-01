@@ -1718,11 +1718,17 @@ const GameEngine = {
 
   // Weapon
   currentWeapon: 'rifle',
+  // One slot per key in WEAPONS. The knife slot was missing — the
+  // refill loop in start() iterates Object.keys(WEAPONS) and would
+  // throw on undefined.ammo, breaking the whole game loop before
+  // requestAnimationFrame was scheduled (visible bug: clicking
+  // "Train vs Bot" or starting a real match did nothing).
   weapons: {
-    rifle:   { ammo: 30, reloading: false },
-    pistol:  { ammo: 12, reloading: false },
-    shotgun: { ammo: 6,  reloading: false },
-    sniper:  { ammo: 5,  reloading: false },
+    rifle:   { ammo: 30,  reloading: false },
+    pistol:  { ammo: 12,  reloading: false },
+    shotgun: { ammo: 6,   reloading: false },
+    sniper:  { ammo: 5,   reloading: false },
+    knife:   { ammo: 999, reloading: false },
   },
   _firing: false,
   _lastShotTime: 0,
@@ -3295,10 +3301,15 @@ const GameEngine = {
     this.pos.set(spawnPos.x, 0, spawnPos.z);
     this.yaw         = spawnPos.z > 0 ? Math.PI : 0;
     this.pitch       = 0;
-    // Refill all weapon mags
+    // Refill all weapon mags. Auto-create missing slots so any new
+    // weapon added to WEAPONS just works without the engine state
+    // having to be in lockstep.
     for (const k of Object.keys(WEAPONS)) {
-      this.weapons[k].ammo      = WEAPONS[k].mag;
-      this.weapons[k].reloading = false;
+      if (!this.weapons[k]) this.weapons[k] = { ammo: WEAPONS[k].mag, reloading: false };
+      else {
+        this.weapons[k].ammo = WEAPONS[k].mag;
+        this.weapons[k].reloading = false;
+      }
     }
     this.currentWeapon = 'rifle';
     UIManager.updateAmmo(WEAPONS.rifle.mag, WEAPONS.rifle.mag, WEAPONS.rifle.name);
@@ -5804,8 +5815,11 @@ const App = {
       UIManager.updateCrouch(false);
       GameEngine.setSpawn({ x: 0, y: 0, z: 17 });
       for (const k of Object.keys(WEAPONS)) {
-        GameEngine.weapons[k].ammo      = WEAPONS[k].mag;
-        GameEngine.weapons[k].reloading = false;
+        if (!GameEngine.weapons[k]) GameEngine.weapons[k] = { ammo: WEAPONS[k].mag, reloading: false };
+        else {
+          GameEngine.weapons[k].ammo      = WEAPONS[k].mag;
+          GameEngine.weapons[k].reloading = false;
+        }
       }
       const w = WEAPONS[GameEngine.currentWeapon];
       UIManager.updateAmmo(w.mag, w.mag, w.name);
@@ -5964,8 +5978,11 @@ const App = {
     UIManager.updateCrouch(false);
     GameEngine.setSpawn(position);
     for (const k of Object.keys(WEAPONS)) {
-      GameEngine.weapons[k].ammo      = WEAPONS[k].mag;
-      GameEngine.weapons[k].reloading = false;
+      if (!GameEngine.weapons[k]) GameEngine.weapons[k] = { ammo: WEAPONS[k].mag, reloading: false };
+      else {
+        GameEngine.weapons[k].ammo      = WEAPONS[k].mag;
+        GameEngine.weapons[k].reloading = false;
+      }
     }
     const w = WEAPONS[GameEngine.currentWeapon];
     UIManager.updateAmmo(w.mag, w.mag, w.name);
