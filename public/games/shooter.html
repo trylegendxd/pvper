@@ -3243,10 +3243,14 @@ const GameEngine = {
     this._currentEyeH = this._currentEyeH !== undefined
       ? this._currentEyeH + (targetEyeH - this._currentEyeH) * Math.min(1, dt * 14)
       : targetEyeH;
-    this.camera.position.set(this.pos.x, this._currentEyeH, this.pos.z);
-    this.camera.rotation.order = 'YXZ';
-    this.camera.rotation.y = this.yaw;
-    this.camera.rotation.x = this.pitch;
+    // Killcam takes over the camera while it's playing the killer's POV.
+    // Skip the local-player camera update so we don't fight its RAF tick.
+    if (!(typeof Killcam !== 'undefined' && Killcam._active)) {
+      this.camera.position.set(this.pos.x, this._currentEyeH, this.pos.z);
+      this.camera.rotation.order = 'YXZ';
+      this.camera.rotation.y = this.yaw;
+      this.camera.rotation.x = this.pitch;
+    }
 
     // Spread decay
     if (this._spread > 0) {
@@ -3432,6 +3436,11 @@ const GameEngine = {
 
   // ── Network / bot callbacks ────────────────────────────────────────────
   onOpponentMove({ position, rotation, yOffset, crouching, senderSockId, senderTeam }) {
+    // Killcam is repositioning the opponent group to the victim's death
+    // spot — ignore live updates while it runs so they don't drag the
+    // body away mid-replay. Resumes automatically when Killcam.stop()
+    // clears _active.
+    if (typeof Killcam !== 'undefined' && Killcam._active) return;
     // Team match — route to multi-opponent map.
     if (App.isTeamMatch && senderSockId) {
       this._updateOtherPlayer(senderSockId, senderTeam, position, rotation, yOffset, crouching);
@@ -5117,151 +5126,29 @@ const Throwables = {
   },
 };
 
+// ══════════════════════════════════════════════════════════════
+//  KILLCAM
+//
+//  The killcam plays back the killer's last ~3 s in the LIVE game
+//  scene — same camera, FOV, map, lighting, sky, fog, cover boxes,
+//  and player models as the actual gameplay. We just hijack the
+//  camera each frame to follow the recorded killer path, snap the
+//  opponentGroup (a real player mesh) to your death position so you
+//  can see yourself being killed, and gate the live opponent_move
+//  network handler so it doesn't fight the killcam positioning.
+//
+//  Previously the killcam built its own throwaway Three.js scene
+//  with simple flat-color geometry — visually nothing like the
+//  game. Reusing the live scene is the right answer to "identical
+//  to what players see".
+// ══════════════════════════════════════════════════════════════
 const Killcam = {
-  _scene: null, _camera: null, _renderer: null, _raf: null,
-  _start: 0, _data: null, _victim: null, _muzzleFlash: null,
-  _muzzleSprite: null, _tracers: [],
-  _lastShotProcessed: -1, _cleanupMeshes: [],
-
-  // Build a richer scene each time so we can drop the victim avatar
-  // at the right position. We rebuild on every play() call.
-  _buildScene(coverBoxes, victimSpawnPos) {
-    const canvas = document.getElementById('killcam-canvas');
-    if (!canvas || !window.THREE) return false;
-    canvas.width  = window.innerWidth;
-    canvas.height = window.innerHeight;
-    if (!this._renderer) {
-      this._renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
-    }
-    this._renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
-    this._renderer.setSize(window.innerWidth, window.innerHeight, false);
-
-    // Tear down any previous scene.
-    for (const m of this._cleanupMeshes) {
-      m.geometry?.dispose?.();
-      if (Array.isArray(m.material)) m.material.forEach(x => x.dispose?.());
-      else m.material?.dispose?.();
-    }
-    this._cleanupMeshes = [];
-    this._scene = new THREE.Scene();
-
-    // Brighter, more cinematic backdrop so the replay actually reads.
-    this._scene.background = new THREE.Color(0x2a3548);
-    this._scene.fog = new THREE.Fog(0x2a3548, 32, 70);
-
-    // Lighting — bumped up so the scene isn't a black void.
-    const hemi = new THREE.HemisphereLight(0xc4d6f0, 0x3a3020, 1.4);
-    this._scene.add(hemi);
-    const dir = new THREE.DirectionalLight(0xffefcc, 1.4);
-    dir.position.set(10, 18, 6);
-    this._scene.add(dir);
-    const fill = new THREE.DirectionalLight(0x9bb4ff, 0.6);
-    fill.position.set(-8, 12, -10);
-    this._scene.add(fill);
-
-    // Floor — warm earth tone with brighter grid lines for scale.
-    const floorGeo = new THREE.PlaneGeometry(50, 50, 1, 1);
-    const floor = new THREE.Mesh(
-      floorGeo,
-      new THREE.MeshLambertMaterial({ color: 0x6a5238 })
-    );
-    floor.rotation.x = -Math.PI / 2;
-    this._scene.add(floor); this._cleanupMeshes.push(floor);
-
-    // Brighter grid lines so motion reads clearly.
-    const grid = new THREE.GridHelper(50, 25, 0xa68658, 0x4b3a26);
-    grid.position.y = 0.01;
-    this._scene.add(grid);
-
-    // Arena walls so the scene doesn't feel like an empty plane.
-    const wallMat = new THREE.MeshLambertMaterial({ color: 0x4a5566 });
-    const walls = [
-      { x:0,  z:-20, w:42, h:3, d:0.5 },
-      { x:0,  z: 20, w:42, h:3, d:0.5 },
-      { x:-20,z: 0,  w:0.5,h:3, d:42  },
-      { x: 20,z: 0,  w:0.5,h:3, d:42  },
-    ];
-    for (const w of walls) {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(w.w, w.h, w.d), wallMat);
-      m.position.set(w.x, w.h / 2, w.z);
-      this._scene.add(m); this._cleanupMeshes.push(m);
-    }
-
-    // Cover boxes — slightly brighter so they read against the floor.
-    const coverMat = new THREE.MeshLambertMaterial({ color: 0x7e8b9a });
-    for (const c of (coverBoxes || [])) {
-      const m = new THREE.Mesh(
-        new THREE.BoxGeometry(c.size.w, c.size.h, c.size.d),
-        coverMat
-      );
-      m.position.set(c.position.x, c.size.h / 2, c.position.z);
-      this._scene.add(m); this._cleanupMeshes.push(m);
-    }
-
-    // Victim avatar — placeholder humanoid at the death position so the
-    // player can SEE the moment of death from the killer's POV.
-    if (victimSpawnPos) {
-      const victim = new THREE.Group();
-      const skin = new THREE.MeshLambertMaterial({ color: 0xd8a373 });
-      const body = new THREE.MeshLambertMaterial({ color: 0xc94545 });
-      const torso = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.9, 0.35), body);
-      torso.position.y = 1.0;
-      const head  = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, 0.35), skin);
-      head.position.y = 1.65;
-      const legs = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.85, 0.35), new THREE.MeshLambertMaterial({ color: 0x2f2f2f }));
-      legs.position.y = 0.43;
-      victim.add(torso, head, legs);
-      victim.position.set(victimSpawnPos.x, 0, victimSpawnPos.z);
-      // Slight tilt so it reads as "killed".
-      victim.rotation.z = 0.05;
-      this._scene.add(victim);
-      this._victim = victim;
-      this._cleanupMeshes.push(torso, head, legs);
-    } else {
-      this._victim = null;
-    }
-
-    // Muzzle flash: a point light AND a small bright sprite-like sphere
-    // so it's visible even on the back wall.
-    const flash = new THREE.PointLight(0xffd055, 0, 10, 2);
-    this._scene.add(flash);
-    this._muzzleFlash = flash;
-    const muzzleSphere = new THREE.Mesh(
-      new THREE.SphereGeometry(0.25, 8, 6),
-      new THREE.MeshBasicMaterial({ color: 0xfff2a0, transparent: true, opacity: 0 })
-    );
-    this._scene.add(muzzleSphere);
-    this._muzzleSprite = muzzleSphere;
-    this._cleanupMeshes.push(muzzleSphere);
-
-    // Tracer pool — pre-allocate a handful of yellow lines we can
-    // recycle every shot.
-    this._tracers = [];
-    for (let i = 0; i < 8; i++) {
-      const geo = new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-1),
-      ]);
-      const mat = new THREE.LineBasicMaterial({ color: 0xfff0a0, transparent: true, opacity: 0 });
-      const line = new THREE.Line(geo, mat);
-      this._scene.add(line);
-      this._tracers.push({ line, ttl: 0 });
-      this._cleanupMeshes.push(line);
-    }
-
-    this._camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 200);
-    this._camera.rotation.order = 'YXZ';
-    return true;
-  },
-
-  _spawnTracer(origin, dir, len = 14) {
-    const slot = this._tracers.find(t => t.ttl <= 0) || this._tracers[0];
-    if (!slot) return;
-    const o = new THREE.Vector3(origin[0], origin[1], origin[2]);
-    const d = new THREE.Vector3(dir[0], dir[1], dir[2]).normalize().multiplyScalar(len);
-    slot.line.geometry.setFromPoints([o, o.clone().add(d)]);
-    slot.line.material.opacity = 0.95;
-    slot.ttl = 0.12; // seconds
-  },
+  _active: false,
+  _raf:    null,
+  _data:   null,
+  _start:  0,
+  // Snapshots of the live state we mutate so stop() can restore it.
+  _saved:  null,   // { px, py, pz, rx, ry, rz, fov, gunWeapon, oppPos, oppYaw, oppVisible, muzzleOpacity }
 
   _shortAngleLerp(a, b, k) {
     let dy = b - a;
@@ -5270,81 +5157,113 @@ const Killcam = {
     return a + dy * k;
   },
 
-  // data = { killerName, killerSocketId, events, weapon, headshot }
-  play(data, coverBoxes, victimDeathPos) {
+  // Kept the (data, _coverBoxes, victimDeathPos) signature so callers
+  // (App.onKillcamData) don't have to change. coverBoxes is unused
+  // now — we render in the live scene which already has cover.
+  play(data, _coverBoxes, victimDeathPos) {
     try {
-      this._playInner(data, coverBoxes, victimDeathPos);
+      this._playInner(data, victimDeathPos);
     } catch (e) {
-      // Killcam is decorative — failure here must never bubble up and
-      // disturb the live game/socket. Just shut it down cleanly.
+      // Killcam is decorative — never crash the live game over it.
       console.error('[killcam] failed, falling back to plain death overlay', e);
       try { this.stop(); } catch (_) {}
     }
   },
 
-  _playInner(data, coverBoxes, victimDeathPos) {
-    if (!data || !data.events?.length) return;
-    if (!window.THREE) return;
-    this._data = data;
+  _playInner(data, victimDeathPos) {
+    if (!data?.events?.length) return;
+    if (!window.THREE || !GameEngine?.camera || !GameEngine?.scene) return;
 
-    // Build movement keyframes — killer's POV. Fall back to bare position
-    // if rotation is missing (only true for replays recorded before the
-    // rotation field was added).
-    const allMoves = data.events.filter(e => e.type === 'movement' && e.p);
-    if (!allMoves.length) return;
-    // If we have no rotation, derive yaw from movement direction frame-to-frame.
-    for (let i = 0; i < allMoves.length; i++) {
-      if (allMoves[i].r) continue;
-      const next = allMoves[i + 1] || allMoves[i - 1];
-      const dx = (next?.p?.[0] || allMoves[i].p[0]) - allMoves[i].p[0];
-      const dz = (next?.p?.[2] || allMoves[i].p[2]) - allMoves[i].p[2];
-      const yaw = Math.atan2(-dx, -dz); // match the in-game yaw convention
-      allMoves[i].r = [0, yaw];
+    // Movement keyframes — killer's POV. Backfill yaw from movement
+    // direction for any frame missing rotation (older replays).
+    const moves = data.events.filter(e => e.type === 'movement' && e.p);
+    if (!moves.length) return;
+    for (let i = 0; i < moves.length; i++) {
+      if (moves[i].r) continue;
+      const next = moves[i + 1] || moves[i - 1];
+      const dx = (next?.p?.[0] || moves[i].p[0]) - moves[i].p[0];
+      const dz = (next?.p?.[2] || moves[i].p[2]) - moves[i].p[2];
+      moves[i].r = [0, Math.atan2(-dx, -dz)];
     }
 
-    if (!this._buildScene(coverBoxes, victimDeathPos)) return;
-
-    const canvas = document.getElementById('killcam-canvas');
-    canvas.style.display = '';
-    document.getElementById('killcam-vignette').style.display = '';
-    const tag = document.getElementById('killcam-tag');
-    document.getElementById('killcam-name').textContent = data.killerName || '?';
-    tag.style.display = '';
-    document.getElementById('overlay-respawn').classList.add('killcam-active');
-    document.getElementById('respawn-title').textContent = 'KILLCAM';
-
-    const tFirst = allMoves[0].t;
-    const tLast  = allMoves[allMoves.length - 1].t;
+    const tFirst = moves[0].t;
+    const tLast  = moves[moves.length - 1].t;
     const duration = Math.max(800, tLast - tFirst);
-    this._start = performance.now();
-    this._lastShotProcessed = -1;
 
-    // Pre-compute shot event times relative to tFirst, with origin/direction
-    // so the killcam can draw tracers + muzzle flashes at the right spot.
+    // Snapshot everything we're about to mutate so stop() can put it
+    // back. The camera position itself doesn't need to be restored
+    // (respawn snaps it anyway) but FOV does, since the user might
+    // have a custom value.
+    const cam = GameEngine.camera;
+    const muzz = GameEngine._muzzleFlash;
+    const opp  = GameEngine.opponentGroup;
+    this._saved = {
+      fov:           cam.fov,
+      gunWeapon:     GameEngine.currentWeapon,
+      gunVisible:    GameEngine.gunGroup?.visible ?? true,
+      muzzleOpacity: muzz?.material?.opacity ?? 0,
+      oppX:          opp ? GameEngine._oppCurPos.x : 0,
+      oppY:          opp ? GameEngine._oppCurPos.y : 0,
+      oppZ:          opp ? GameEngine._oppCurPos.z : 0,
+      oppYaw:        GameEngine._oppCurYaw,
+      oppVisible:    opp?.visible ?? false,
+    };
+
+    // Hide the local first-person gun — it represents YOUR weapon,
+    // not the killer's. The killer's weapon is encoded in the replay
+    // payload but the FBX model is keyed to the local player; just
+    // hiding looks correct from the killer's POV (camera flush against
+    // their face, no offset weapon model).
+    if (GameEngine.gunGroup) GameEngine.gunGroup.visible = false;
+
+    // The opponent mesh in the live scene IS a player mesh — repurpose
+    // it as the victim (you) so the killer's POV shows you getting
+    // killed at the right spot. Snap both target and current positions
+    // so the _update lerp in the live tick is a no-op.
+    if (opp && victimDeathPos) {
+      GameEngine._oppCurPos.set(victimDeathPos.x, 0, victimDeathPos.z);
+      GameEngine._oppTgtPos.set(victimDeathPos.x, 0, victimDeathPos.z);
+      opp.position.set(victimDeathPos.x, 0, victimDeathPos.z);
+      opp.visible = true;
+      GameEngine._oppVisible = true;
+    }
+
+    // Show overlay chrome. Hide the now-unused dedicated killcam
+    // canvas — the live game's canvas is what's actually rendering.
+    const ownCanvas = document.getElementById('killcam-canvas');
+    if (ownCanvas) ownCanvas.style.display = 'none';
+    const vig = document.getElementById('killcam-vignette');
+    if (vig) vig.style.display = '';
+    const tag = document.getElementById('killcam-tag');
+    if (tag) tag.style.display = '';
+    const nameEl = document.getElementById('killcam-name');
+    if (nameEl) nameEl.textContent = data.killerName || '?';
+    document.getElementById('overlay-respawn')?.classList.add('killcam-active');
+    const title = document.getElementById('respawn-title');
+    if (title) title.textContent = 'KILLCAM';
+
+    this._active = true;
+    this._data   = data;
+    this._start  = performance.now();
+
     const shots = data.events
       .filter(e => e.type === 'shot_fired')
-      .map(e => ({ t: e.t - tFirst, origin: e.o, dir: e.d }));
+      .map(e => ({ t: e.t - tFirst, processed: false }));
 
-    const renderFrame = () => {
-      try { return renderFrameInner(); }
-      catch (e) {
-        console.error('[killcam] render frame failed', e);
-        this.stop();
-      }
+    const tick = () => {
+      if (!this._active) return;
+      try { tickInner(); }
+      catch (e) { console.error('[killcam] tick failed', e); this.stop(); }
     };
-    let lastFrameTs = performance.now();
-    const renderFrameInner = () => {
-      const now = performance.now();
-      const dt  = Math.max(0.001, (now - lastFrameTs) / 1000);
-      lastFrameTs = now;
-      const elapsed = now - this._start;
+    const tickInner = () => {
+      const elapsed = performance.now() - this._start;
       if (elapsed > duration + 400) { this.stop(); return; }
       const target = tFirst + Math.min(elapsed, duration);
-      // Find surrounding keyframes
+
       let i = 0;
-      while (i < allMoves.length - 1 && allMoves[i + 1].t <= target) i++;
-      const a = allMoves[i];
-      const b = allMoves[Math.min(i + 1, allMoves.length - 1)];
+      while (i < moves.length - 1 && moves[i + 1].t <= target) i++;
+      const a = moves[i];
+      const b = moves[Math.min(i + 1, moves.length - 1)];
       const span = Math.max(1, b.t - a.t);
       const k = Math.max(0, Math.min(1, (target - a.t) / span));
       const px = a.p[0] + (b.p[0] - a.p[0]) * k;
@@ -5352,91 +5271,77 @@ const Killcam = {
       const yaw   = this._shortAngleLerp(a.r?.[1] || 0, b.r?.[1] || 0, k);
       const pitch = (a.r?.[0] || 0) + ((b.r?.[0] || 0) - (a.r?.[0] || 0)) * k;
 
-      // Eye height: base + jump offset, minus a bit when crouched. We
-      // interpolate so it doesn't snap between snapshots.
-      const baseEye   = 1.7;
-      const crouchEye = 0.85;
+      // Eye height matches the live engine — same CFG constants so the
+      // killcam POV is at the actual height the killer's camera was at.
+      const baseEye   = CFG.EYE_HEIGHT;      // 1.6
+      const crouchEye = CFG.CROUCH_HEIGHT;   // 0.80
       const eyeA = (a.c ? crouchEye : baseEye) + (a.j || 0);
       const eyeB = (b.c ? crouchEye : baseEye) + (b.j || 0);
       const eyeH = eyeA + (eyeB - eyeA) * k;
 
-      // Camera yaw +π: killer's in-game yaw=0 looks -Z but our model's
-      // forward was +Z, same convention fix as the live opponent model.
-      this._camera.position.set(px, eyeH, pz);
-      this._camera.rotation.set(pitch, yaw + Math.PI, 0);
+      // Hijack the LIVE camera. The live render loop reads camera state
+      // each frame and renders the full game scene — same map, lights,
+      // sky, fog, players, throwable effects, everything.
+      cam.position.set(px, eyeH, pz);
+      cam.rotation.set(pitch, yaw, 0);
 
-      // Fire any shots whose timestamp just passed.
+      // Trigger the live muzzle-flash plane on recorded shot events so
+      // the player sees the gun firing from the same screen position
+      // gunshots normally appear.
       for (const s of shots) {
-        if (s.t > this._lastShotProcessed && s.t <= elapsed) {
-          // Position the muzzle flash a bit in front of the camera.
-          const fx = Math.sin(yaw + Math.PI) * -0.35 + px;
-          const fz = Math.cos(yaw + Math.PI) * -0.35 + pz;
-          this._muzzleFlash.position.set(fx, eyeH - 0.1, fz);
-          this._muzzleFlash.intensity = 6;
-          this._muzzleSprite.position.set(fx, eyeH - 0.1, fz);
-          this._muzzleSprite.material.opacity = 1;
-          // Tracer: use the captured origin/direction if we have them,
-          // otherwise project from camera forward.
-          if (s.origin && s.dir) {
-            this._spawnTracer(s.origin, s.dir);
-          } else {
-            const dir = [
-              Math.sin(yaw + Math.PI) * -1,
-              Math.tan(-pitch) * -0.4,
-              Math.cos(yaw + Math.PI) * -1,
-            ];
-            this._spawnTracer([px, eyeH, pz], dir);
+        if (!s.processed && s.t <= elapsed) {
+          s.processed = true;
+          if (muzz?.material) {
+            muzz.position.set(0.20, -0.18, -1.00);
+            muzz.material.opacity = 1;
+            setTimeout(() => {
+              if (muzz?.material && this._active) muzz.material.opacity = 0;
+            }, 55);
           }
         }
       }
-      this._lastShotProcessed = elapsed;
 
-      // Decay muzzle flash + sprite quickly.
-      if (this._muzzleFlash.intensity > 0) {
-        this._muzzleFlash.intensity *= 0.78;
-        if (this._muzzleFlash.intensity < 0.1) this._muzzleFlash.intensity = 0;
-      }
-      if (this._muzzleSprite.material.opacity > 0) {
-        this._muzzleSprite.material.opacity = Math.max(0, this._muzzleSprite.material.opacity - dt * 8);
-      }
-      // Fade tracers.
-      for (const t of this._tracers) {
-        if (t.ttl > 0) {
-          t.ttl -= dt;
-          t.line.material.opacity = Math.max(0, t.ttl / 0.12) * 0.95;
-        } else {
-          t.line.material.opacity = 0;
-        }
-      }
-
-      this._renderer.render(this._scene, this._camera);
-      this._raf = requestAnimationFrame(renderFrame);
+      this._raf = requestAnimationFrame(tick);
     };
-    renderFrame();
+    tick();
   },
 
   stop() {
+    if (!this._active && !this._raf) return;
+    this._active = false;
     if (this._raf) cancelAnimationFrame(this._raf);
     this._raf = null;
-    const c = document.getElementById('killcam-canvas');     if (c) c.style.display = 'none';
-    const v = document.getElementById('killcam-vignette');   if (v) v.style.display = 'none';
-    const t = document.getElementById('killcam-tag');        if (t) t.style.display = 'none';
+
+    // Restore everything we touched.
+    if (this._saved) {
+      const cam = GameEngine.camera;
+      if (cam) {
+        cam.fov = this._saved.fov;
+        cam.updateProjectionMatrix();
+      }
+      if (GameEngine.gunGroup) GameEngine.gunGroup.visible = this._saved.gunVisible;
+      if (GameEngine._muzzleFlash?.material) {
+        GameEngine._muzzleFlash.material.opacity = this._saved.muzzleOpacity;
+      }
+      // Drop the opponent off-screen until the next opponent_move snaps
+      // them to their live position. Hiding is the safest bet — leaving
+      // them at the victim death spot makes them flicker across the map.
+      if (GameEngine.opponentGroup) {
+        GameEngine.opponentGroup.visible = false;
+        GameEngine._oppVisible = false;
+      }
+    }
+    this._saved = null;
+    this._data  = null;
+
+    // UI chrome.
+    const v = document.getElementById('killcam-vignette'); if (v) v.style.display = 'none';
+    const t = document.getElementById('killcam-tag');      if (t) t.style.display = 'none';
     document.getElementById('overlay-respawn')?.classList.remove('killcam-active');
     const title = document.getElementById('respawn-title');
     if (title) title.textContent = 'YOU DIED';
-    // Free per-scene GPU resources so playing many kills doesn't leak.
-    try {
-      for (const m of this._cleanupMeshes) {
-        m.geometry?.dispose?.();
-        if (Array.isArray(m.material)) m.material.forEach(x => x.dispose?.());
-        else m.material?.dispose?.();
-      }
-    } catch (_) {}
-    this._cleanupMeshes = [];
-    this._tracers = [];
-    this._scene = null;
-    this._camera = null;
   },
+
 };
 
 // ══════════════════════════════════════════════════════════════
