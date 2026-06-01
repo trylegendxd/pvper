@@ -1093,6 +1093,77 @@ const AudioManager = {
     this._synthShoot();
   },
 
+  // ── Spatial audio for remote players ─────────────────────────────────
+  // Updates the Web Audio listener to match the local camera so the
+  // PannerNodes on each remote_shot pan correctly. Called from the game
+  // tick — once per frame is plenty.
+  updateListener(camera) {
+    if (!this.ctx || !camera) return;
+    const l = this.ctx.listener;
+    const px = camera.position.x;
+    const py = camera.position.y;
+    const pz = camera.position.z;
+    // Compute camera forward in world space.
+    const fwd = this._listenerFwd || (this._listenerFwd = new THREE.Vector3());
+    camera.getWorldDirection(fwd);
+    const t = this.ctx.currentTime;
+    if (l.positionX) {
+      l.positionX.setValueAtTime(px, t);
+      l.positionY.setValueAtTime(py, t);
+      l.positionZ.setValueAtTime(pz, t);
+      l.forwardX.setValueAtTime(fwd.x, t);
+      l.forwardY.setValueAtTime(fwd.y, t);
+      l.forwardZ.setValueAtTime(fwd.z, t);
+      l.upX.setValueAtTime(0, t);
+      l.upY.setValueAtTime(1, t);
+      l.upZ.setValueAtTime(0, t);
+    } else if (l.setPosition) {
+      // Older Safari path — deprecated APIs but still works.
+      l.setPosition(px, py, pz);
+      l.setOrientation(fwd.x, fwd.y, fwd.z, 0, 1, 0);
+    }
+  },
+
+  // Play a gunshot at a world-space origin with realistic distance
+  // attenuation + HRTF panning. The gunshot buffer is the same one the
+  // local player uses; remote shots just go through a PannerNode.
+  playSpatialShot(origin, _weapon) {
+    if (!this.ctx || !this._gunshotBuf || !origin) return;
+    try {
+      const panner = this.ctx.createPanner();
+      panner.panningModel  = 'HRTF';
+      panner.distanceModel = 'inverse';
+      panner.refDistance   = 1.5;   // full volume within 1.5 m
+      panner.maxDistance   = 80;    // arena diagonal cap
+      panner.rolloffFactor = 1.6;   // fairly steep falloff
+      // Slight cone widening so off-axis shots aren't dead silent.
+      panner.coneInnerAngle = 360;
+      panner.coneOuterAngle = 360;
+      panner.coneOuterGain  = 1;
+      if (panner.positionX) {
+        const t = this.ctx.currentTime;
+        panner.positionX.setValueAtTime(origin.x, t);
+        panner.positionY.setValueAtTime(origin.y ?? 1.5, t);
+        panner.positionZ.setValueAtTime(origin.z, t);
+      } else if (panner.setPosition) {
+        panner.setPosition(origin.x, origin.y ?? 1.5, origin.z);
+      }
+
+      const src = this.ctx.createBufferSource();
+      src.buffer = this._gunshotBuf;
+      src.playbackRate.value = 0.95 + Math.random() * 0.1;
+      const g = this.ctx.createGain();
+      g.gain.value = 1.0;
+      src.connect(g);
+      g.connect(panner);
+      panner.connect(this.masterSfx);
+      src.start();
+      src.onended = () => {
+        try { src.disconnect(); g.disconnect(); panner.disconnect(); } catch (_) {}
+      };
+    } catch (_) {}
+  },
+
   _synthShoot() {
     try {
       const now = this.ctx.currentTime;
@@ -3339,6 +3410,9 @@ const GameEngine = {
     const dt = Math.min(ts - (this._lastTime ?? ts), 100) / 1000;
     this._lastTime = ts;
     this._update(dt);
+    // Keep the Web Audio listener glued to the camera so remote_shot
+    // PannerNodes can pan/attenuate against the player's actual POV.
+    try { AudioManager.updateListener?.(this.camera); } catch (_) {}
     // Drifting sky clouds.
     this._updateClouds(dt);
     this._drawRadar();
@@ -5417,6 +5491,11 @@ const NetworkManager = {
     s.on('match_countdown_cancel', () => UIManager.stopMatchCountdown());
     s.on('match_start',         d => App.onMatchStart(d));
     s.on('opponent_move',       d => GameEngine.onOpponentMove(d));
+    // Other players' gunshots — spatialised via PannerNode (distance +
+    // direction). The server only emits this for non-melee weapons.
+    s.on('remote_shot',         d => {
+      try { AudioManager.playSpatialShot?.(d.origin, d.weapon); } catch (_) {}
+    });
     s.on('hit_result',          d => {
       if (d.hit) {
         UIManager.flashHitMarker(!!d.headshot);

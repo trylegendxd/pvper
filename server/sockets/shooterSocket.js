@@ -2086,6 +2086,20 @@ function attach(io) {
         ] : null,
       });
 
+      // Broadcast the shot to every other player in the match so they
+      // can spatialise the gunshot SFX (distance attenuation + HRTF
+      // panning). Knife slashes are silent at range, so we skip melee.
+      if (!W.melee && origin) {
+        const shotPayload = {
+          origin: { x: origin.x, y: origin.y, z: origin.z },
+          weapon: wKey,
+          shooterId: socket.id,
+        };
+        for (const sid of match.playerIds) {
+          if (sid !== socket.id) ns.to(sid).emit('remote_shot', shotPayload);
+        }
+      }
+
       // Find every possible target: in team mode, only enemy team members;
       // in 1v1, the single other player. Respawning targets are skipped.
       const candidates = match.isTeamMatch
