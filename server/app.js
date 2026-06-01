@@ -68,7 +68,10 @@ app.use('/api/admin',   adminRoutes);
 app.use('/api/friends', friendsRoutes);
 
 // ── Audio endpoints (preserved from original shooter server.js) ─────────
-const SFX_RESERVED = /^(gunshot|footstep|jump|reload|hit|kill|menu)\b/i;
+// Anything that starts with one of these names is treated as a sound
+// effect — kept out of the music playlist (/audio-files). gunshot_* are
+// per-weapon overrides handled by the client AudioManager.
+const SFX_RESERVED = /^(gunshot|footstep|jump|reload|hit|kill|menu)(\b|_)/i;
 
 app.get('/audio-files', (_req, res) => {
   try {
@@ -90,11 +93,18 @@ app.get('/sfx-manifest', (_req, res) => {
       new RegExp(`^${base}\\.(mp3|ogg|wav|m4a|flac)$`, 'i').test(f)
     );
     res.json({
-      gunshot:  find('gunshot')  || null,
-      footstep: find('footstep') || null,
-      reload:   find('reload')   || null,
-      hit:      find('hit')      || null,
-      kill:     find('kill')     || null,
+      // Generic / fallback gunshot — used when a per-weapon sound isn't present.
+      gunshot:         find('gunshot')         || null,
+      // Per-weapon variants. AudioManager loads each into its own buffer
+      // and routes playShoot()/playSpatialShot() by weapon name.
+      gunshot_rifle:   find('gunshot_rifle')   || null,
+      gunshot_pistol:  find('gunshot_pistol')  || null,
+      gunshot_shotgun: find('gunshot_shotgun') || null,
+      gunshot_sniper:  find('gunshot_sniper')  || null,
+      footstep:        find('footstep')        || null,
+      reload:          find('reload')          || null,
+      hit:             find('hit')             || null,
+      kill:            find('kill')            || null,
     });
   } catch (_) { res.json({}); }
 });

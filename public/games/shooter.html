@@ -983,7 +983,11 @@ const AudioManager = {
   _music:     null,   // HTMLAudioElement — looping menu music
   _musicVol:  0.45,
   _sfxVol:    0.8,
-  _gunshotBuf: null,  // decoded AudioBuffer for real gunshot mp3
+  _gunshotBuf: null,  // decoded AudioBuffer — default/fallback gunshot
+  // Per-weapon decoded buffers — picked by name in playShoot() and
+  // playSpatialShot(). Falls back to _gunshotBuf when a weapon doesn't
+  // have its own clip in /sfx-manifest.
+  _gunshotBufs: { rifle: null, pistol: null, shotgun: null, sniper: null },
   _footstepBuf: null,
   _wantMusic: false,  // set true when something requested music before it loaded
   _unlocked:  false,
@@ -1042,16 +1046,39 @@ const AudioManager = {
     try {
       const res = await fetch('/sfx-manifest');
       const manifest = await res.json();
+      if (!this.ctx) return;
 
-      if (manifest.gunshot && this.ctx) {
-        const ab = await fetch(`/audio/${encodeURIComponent(manifest.gunshot)}`).then(r => r.arrayBuffer());
-        this._gunshotBuf = await this.ctx.decodeAudioData(ab);
-      }
-      if (manifest.footstep && this.ctx) {
-        const ab = await fetch(`/audio/${encodeURIComponent(manifest.footstep)}`).then(r => r.arrayBuffer());
-        this._footstepBuf = await this.ctx.decodeAudioData(ab);
-      }
+      const decode = async (filename) => {
+        if (!filename) return null;
+        try {
+          const ab = await fetch(`/audio/${encodeURIComponent(filename)}`).then(r => r.arrayBuffer());
+          return await this.ctx.decodeAudioData(ab);
+        } catch (_) { return null; }
+      };
+
+      // Load all of them in parallel — total payload is small and it cuts
+      // the cold-start wait noticeably on a slow link.
+      const [gun, gunR, gunP, gunSh, gunSn, footstep] = await Promise.all([
+        decode(manifest.gunshot),
+        decode(manifest.gunshot_rifle),
+        decode(manifest.gunshot_pistol),
+        decode(manifest.gunshot_shotgun),
+        decode(manifest.gunshot_sniper),
+        decode(manifest.footstep),
+      ]);
+      this._gunshotBuf            = gun;
+      this._gunshotBufs.rifle     = gunR;
+      this._gunshotBufs.pistol    = gunP;
+      this._gunshotBufs.shotgun   = gunSh;
+      this._gunshotBufs.sniper    = gunSn;
+      this._footstepBuf           = footstep;
     } catch(e) {}
+  },
+
+  // Return the right gunshot buffer for a given weapon name, falling
+  // back to the generic gunshot, then to null (caller will synthesise).
+  _gunshotBufFor(weapon) {
+    return (weapon && this._gunshotBufs?.[weapon]) || this._gunshotBuf || null;
   },
 
   resume() { if (this.ctx?.state === 'suspended') this.ctx.resume(); },
@@ -1084,10 +1111,14 @@ const AudioManager = {
   // ── Gunshot: prefer real sample, fall back to synth ────────────────────
   playShoot() {
     if (!this.ctx) return;
-    if (this._gunshotBuf) {
+    // Pick the currently-equipped weapon's sound if we have one, else
+    // fall back to the generic gunshot, else synthesise.
+    const weapon = (typeof GameEngine !== 'undefined') ? GameEngine.currentWeapon : null;
+    const buf = this._gunshotBufFor(weapon);
+    if (buf) {
       try {
         const src  = this.ctx.createBufferSource();
-        src.buffer = this._gunshotBuf;
+        src.buffer = buf;
         // small detune per-shot makes repeats feel less robotic
         src.playbackRate.value = 1 + (Math.random() - 0.5) * 0.06;
         const g = this.ctx.createGain();
@@ -1132,10 +1163,13 @@ const AudioManager = {
   },
 
   // Play a gunshot at a world-space origin with realistic distance
-  // attenuation + HRTF panning. The gunshot buffer is the same one the
-  // local player uses; remote shots just go through a PannerNode.
-  playSpatialShot(origin, _weapon) {
-    if (!this.ctx || !this._gunshotBuf || !origin) return;
+  // attenuation + HRTF panning. Uses the killer's weapon-specific sound
+  // when we have one, so a distant shotgun sounds different to a
+  // distant pistol.
+  playSpatialShot(origin, weapon) {
+    if (!this.ctx || !origin) return;
+    const buf = this._gunshotBufFor(weapon);
+    if (!buf) return;
     try {
       const panner = this.ctx.createPanner();
       panner.panningModel  = 'HRTF';
@@ -1157,7 +1191,7 @@ const AudioManager = {
       }
 
       const src = this.ctx.createBufferSource();
-      src.buffer = this._gunshotBuf;
+      src.buffer = buf;
       src.playbackRate.value = 0.95 + Math.random() * 0.1;
       const g = this.ctx.createGain();
       g.gain.value = 1.0;
