@@ -770,6 +770,13 @@ input:focus { border-color:var(--accent); }
   <div class="hud-el" id="hud-crouch" style="bottom:0;left:200px;background:rgba(0,0,0,.75);padding:6px 12px 10px;display:none;">
     <div style="font-size:9px;color:#888;letter-spacing:1px;text-transform:uppercase;">CROUCH</div>
   </div>
+  <!-- Voice chat HUD: only shown in team matches, indicates mic state.
+       Click to toggle mute; M is the keyboard shortcut. -->
+  <div class="hud-el" id="hud-voice"
+       style="bottom:18px;right:18px;background:rgba(0,0,0,.75);padding:6px 12px;border-radius:4px;font-size:11px;letter-spacing:2px;color:#7fd97a;display:none;cursor:pointer;user-select:none;">
+    🎤 VOICE <span id="hud-voice-state" style="margin-left:6px;color:#fff;">ON</span>
+    <span style="color:#666;font-size:9px;margin-left:8px;">[M]</span>
+  </div>
 
   <div id="hud-nametag"></div>
   <div class="hud-el" id="hud-damage" style="inset:0;position:absolute;pointer-events:none;"></div>
@@ -2771,6 +2778,9 @@ const GameEngine = {
       if (e.code === 'Digit5') Throwables.select('molotov');
       if (e.code === 'Digit6') Throwables.select('smoke');
       if (e.code === 'KeyG')   Throwables.throwSelected();
+      // Voice chat mute toggle (team matches only — VoiceChat ignores
+      // the toggle when it isn't enabled).
+      if (e.code === 'KeyM')   { e.preventDefault(); try { VoiceChat.toggleMute(); } catch (_) {} }
       if (e.code === 'ControlLeft' || e.code === 'ControlRight') {
         // Crouch is hold-to-crouch on Ctrl; toggle stays via the existing
         // settings/HUD if any. Ctrl is more standard than C.
@@ -5419,6 +5429,230 @@ const Killcam = {
 };
 
 // ══════════════════════════════════════════════════════════════
+//  VOICE CHAT  — WebRTC P2P between teammates
+//
+//  Mesh topology — every player in a team holds an RTCPeerConnection
+//  to each teammate. Mic capture via getUserMedia (browser prompts on
+//  match start). Signaling rides Socket.IO on the /shooter namespace,
+//  routed only between teammates by the server.
+//
+//  No TURN server is configured, so players behind symmetric NATs may
+//  fail to connect — STUN-only is fine for most home networks.
+//  Push-to-talk would be a future improvement; this version is open
+//  mic with M as a mute toggle.
+// ══════════════════════════════════════════════════════════════
+const VoiceChat = {
+  _enabled:     false,
+  _muted:       false,
+  _myTeam:      null,
+  _mySocketId:  null,
+  _localStream: null,
+  _peers:       new Map(),   // remoteSocketId -> { pc, audioEl }
+  _rtcConfig:   {
+    iceServers: [
+      { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+    ],
+  },
+
+  // Called from App.onMatchStart when the match is a team match.
+  // `teammates`: array of { socketId, username }.
+  async start(myTeam, mySocketId, teammates) {
+    if (this._enabled) await this.stop();
+    if (!teammates?.length) return;
+    if (!navigator.mediaDevices?.getUserMedia || !window.RTCPeerConnection) {
+      console.warn('[voice] browser does not support WebRTC voice');
+      this._showHud('off');
+      return;
+    }
+    this._myTeam     = myTeam;
+    this._mySocketId = mySocketId;
+
+    try {
+      this._localStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        video: false,
+      });
+    } catch (e) {
+      // User denied mic permission or there's no mic. Show a hint and
+      // bail without blocking the match.
+      console.warn('[voice] mic unavailable', e?.name || e);
+      this._showHud('denied');
+      return;
+    }
+
+    this._enabled = true;
+    this._muted   = false;
+    this._showHud('on');
+
+    // Only one side initiates per pair to avoid offer-collision.
+    // Convention: the player with the lexicographically smaller socket
+    // id sends the offer; the other side answers.
+    for (const t of teammates) {
+      if (this._mySocketId < t.socketId) this._initiateOffer(t.socketId);
+    }
+  },
+
+  _initiateOffer(remoteSocketId) {
+    try {
+      const pc = this._createPeer(remoteSocketId);
+      for (const track of this._localStream.getAudioTracks()) {
+        pc.addTrack(track, this._localStream);
+      }
+      pc.createOffer()
+        .then(offer => pc.setLocalDescription(offer))
+        .then(() => {
+          NetworkManager.socket.emit('voice_offer', {
+            to: remoteSocketId,
+            sdp: pc.localDescription,
+          });
+        })
+        .catch(e => console.warn('[voice] offer failed', e));
+    } catch (e) { console.warn('[voice] initiate failed', e); }
+  },
+
+  _createPeer(remoteSocketId) {
+    // Close any prior connection to this peer.
+    if (this._peers.has(remoteSocketId)) {
+      try { this._peers.get(remoteSocketId).pc.close(); } catch (_) {}
+    }
+    const pc = new RTCPeerConnection(this._rtcConfig);
+
+    pc.onicecandidate = (e) => {
+      if (e.candidate && NetworkManager.socket) {
+        NetworkManager.socket.emit('voice_ice_candidate', {
+          to: remoteSocketId,
+          candidate: e.candidate,
+        });
+      }
+    };
+
+    pc.ontrack = (e) => {
+      const entry = this._peers.get(remoteSocketId);
+      if (!entry) return;
+      if (!entry.audioEl) {
+        entry.audioEl = new Audio();
+        entry.audioEl.autoplay = true;
+        // attach to DOM so Safari behaves
+        document.body.appendChild(entry.audioEl);
+        entry.audioEl.style.display = 'none';
+      }
+      entry.audioEl.srcObject = e.streams[0];
+      entry.audioEl.play().catch(() => {});
+    };
+
+    pc.onconnectionstatechange = () => {
+      if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) {
+        // Leave the entry in the map so a future offer/answer can replace
+        // it; we don't aggressively re-renegotiate here.
+      }
+    };
+
+    const entry = { pc, audioEl: null };
+    this._peers.set(remoteSocketId, entry);
+    return pc;
+  },
+
+  async onOffer({ from, sdp }) {
+    if (!this._localStream) return;
+    try {
+      const pc = this._createPeer(from);
+      for (const track of this._localStream.getAudioTracks()) {
+        pc.addTrack(track, this._localStream);
+      }
+      await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      NetworkManager.socket.emit('voice_answer', {
+        to: from,
+        sdp: pc.localDescription,
+      });
+    } catch (e) { console.warn('[voice] handle offer failed', e); }
+  },
+
+  async onAnswer({ from, sdp }) {
+    const entry = this._peers.get(from);
+    if (!entry) return;
+    try {
+      await entry.pc.setRemoteDescription(new RTCSessionDescription(sdp));
+    } catch (e) { console.warn('[voice] handle answer failed', e); }
+  },
+
+  async onIceCandidate({ from, candidate }) {
+    const entry = this._peers.get(from);
+    if (!entry || !candidate) return;
+    try {
+      await entry.pc.addIceCandidate(new RTCIceCandidate(candidate));
+    } catch (e) { /* benign — remote may have closed */ }
+  },
+
+  onPeerLeft({ from }) {
+    const entry = this._peers.get(from);
+    if (!entry) return;
+    try { entry.pc.close(); } catch (_) {}
+    try {
+      entry.audioEl?.pause();
+      entry.audioEl?.remove();
+    } catch (_) {}
+    this._peers.delete(from);
+  },
+
+  toggleMute() {
+    if (!this._enabled || !this._localStream) return;
+    this._muted = !this._muted;
+    for (const track of this._localStream.getAudioTracks()) {
+      track.enabled = !this._muted;
+    }
+    this._showHud(this._muted ? 'muted' : 'on');
+  },
+
+  _showHud(state) {
+    const root = document.getElementById('hud-voice');
+    const lbl  = document.getElementById('hud-voice-state');
+    if (!root) return;
+    if (state === null || state === undefined) {
+      root.style.display = 'none';
+      return;
+    }
+    root.style.display = '';
+    if (state === 'on') {
+      root.style.color = '#7fd97a';
+      if (lbl) lbl.textContent = 'ON';
+    } else if (state === 'muted') {
+      root.style.color = '#999';
+      if (lbl) lbl.textContent = 'MUTED';
+    } else if (state === 'denied' || state === 'off') {
+      root.style.color = '#888';
+      if (lbl) lbl.textContent = state === 'denied' ? 'NO MIC' : 'OFF';
+    }
+  },
+
+  async stop() {
+    for (const [, entry] of this._peers) {
+      try { entry.pc.close(); } catch (_) {}
+      try { entry.audioEl?.pause(); entry.audioEl?.remove(); } catch (_) {}
+    }
+    this._peers.clear();
+    if (this._localStream) {
+      for (const t of this._localStream.getTracks()) {
+        try { t.stop(); } catch (_) {}
+      }
+      this._localStream = null;
+    }
+    this._enabled    = false;
+    this._muted      = false;
+    this._myTeam     = null;
+    this._mySocketId = null;
+    this._showHud(null);
+  },
+};
+
+// Wire the HUD button so clicking it toggles mute too.
+document.addEventListener('DOMContentLoaded', () => {
+  const el = document.getElementById('hud-voice');
+  if (el) el.addEventListener('click', () => VoiceChat.toggleMute());
+});
+
+// ══════════════════════════════════════════════════════════════
 //  NETWORK MANAGER
 // ══════════════════════════════════════════════════════════════
 const NetworkManager = {
@@ -5496,6 +5730,12 @@ const NetworkManager = {
     s.on('remote_shot',         d => {
       try { AudioManager.playSpatialShot?.(d.origin, d.weapon); } catch (_) {}
     });
+    // Voice chat signaling — payloads are relayed by the server to
+    // teammates only. The VoiceChat module handles all RTC state.
+    s.on('voice_offer',          d => { try { VoiceChat.onOffer(d); }        catch (_) {} });
+    s.on('voice_answer',         d => { try { VoiceChat.onAnswer(d); }       catch (_) {} });
+    s.on('voice_ice_candidate',  d => { try { VoiceChat.onIceCandidate(d); } catch (_) {} });
+    s.on('voice_peer_left',      d => { try { VoiceChat.onPeerLeft(d); }     catch (_) {} });
     s.on('hit_result',          d => {
       if (d.hit) {
         UIManager.flashHitMarker(!!d.headshot);
@@ -5955,6 +6195,19 @@ const App = {
     this._timerInterval = setInterval(() => UIManager.updateTimer(this.matchEndTime - Date.now()), 500);
 
     AudioManager.stopMusic();
+
+    // Team voice chat — capture mic + connect peer-to-peer to teammates.
+    // The browser prompts for permission on first use; once granted it's
+    // remembered for the session. 1v1 matches don't get voice chat.
+    if (this.isTeamMatch && this.yourTeam) {
+      const teammates = Object.entries(data.players || {})
+        .filter(([sid, p]) => sid !== this.myId && p.team === this.yourTeam)
+        .map(([sid, p]) => ({ socketId: sid, username: p.username }));
+      try { VoiceChat.start(this.yourTeam, this.myId, teammates); }
+      catch (e) { console.warn('[voice] start failed', e); }
+    } else {
+      try { VoiceChat.stop(); } catch (_) {}
+    }
   },
 
   onYouHit({ health, fatal, attackerPos }) {
@@ -6044,6 +6297,8 @@ const App = {
     UIManager.updateBalance(data.newBalance);
     UIManager.showPostMatch(data, false);
     AudioManager.playMusic();
+    // Tear down voice peer connections + release the mic.
+    try { VoiceChat.stop(); } catch (_) {}
   },
 
   onDisconnect() { alert('Disconnected. Please refresh.'); },

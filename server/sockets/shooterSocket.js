@@ -2494,9 +2494,57 @@ function attach(io) {
       });
     });
 
+    // ── Voice chat signaling (WebRTC P2P, teammates only) ──────────────
+    // The server is purely a relay — never touches the audio itself. We
+    // gate every message on "both players are in the same active match
+    // AND on the same team". That keeps voice fanout to teammates only;
+    // enemies and players in other matches never receive these.
+    function voiceTeammateSid(meSockId, targetSockId) {
+      if (!targetSockId || meSockId === targetSockId) return null;
+      const me = players.get(meSockId);
+      if (!me?.currentMatch) return null;
+      const match = matches.get(me.currentMatch);
+      if (!match || match.ended || !match.isTeamMatch) return null;
+      if (!match.playerIds.includes(targetSockId)) return null;
+      const myTeam  = match.gameState[meSockId]?.team;
+      const tgtTeam = match.gameState[targetSockId]?.team;
+      if (!myTeam || myTeam !== tgtTeam) return null;
+      return targetSockId;
+    }
+
+    socket.on('voice_offer', ({ to, sdp } = {}) => {
+      const tgt = voiceTeammateSid(socket.id, to);
+      if (!tgt || !sdp) return;
+      ns.to(tgt).emit('voice_offer', { from: socket.id, sdp });
+    });
+    socket.on('voice_answer', ({ to, sdp } = {}) => {
+      const tgt = voiceTeammateSid(socket.id, to);
+      if (!tgt || !sdp) return;
+      ns.to(tgt).emit('voice_answer', { from: socket.id, sdp });
+    });
+    socket.on('voice_ice_candidate', ({ to, candidate } = {}) => {
+      const tgt = voiceTeammateSid(socket.id, to);
+      if (!tgt || !candidate) return;
+      ns.to(tgt).emit('voice_ice_candidate', { from: socket.id, candidate });
+    });
+
     socket.on('disconnect', () => {
       const p = players.get(socket.id);
       if (p?.currentMatch) Replay.log(p.currentMatch, 'disconnect', { s: socket.id });
+      // Tell any current teammates the peer is gone so they can tear
+      // down the RTCPeerConnection cleanly.
+      if (p?.currentMatch) {
+        const match = matches.get(p.currentMatch);
+        if (match?.isTeamMatch) {
+          const myTeam = match.gameState[socket.id]?.team;
+          for (const sid of match.playerIds) {
+            if (sid === socket.id) continue;
+            if (match.gameState[sid]?.team === myTeam) {
+              ns.to(sid).emit('voice_peer_left', { from: socket.id });
+            }
+          }
+        }
+      }
       handleLeave(socket, true);
     });
   });
