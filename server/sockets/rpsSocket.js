@@ -2,14 +2,29 @@
 const { pool } = require('../db');
 const { getBalance } = require('../wallet');
 const rps = require('../games/rps');
+const Ranking = require('../games/shooterRanking');
 
 const ROUND_TIMEOUT_MS = 15000;
 const ROUNDS_TO_WIN    = 2;     // best of 3
 
-// In-memory live state
-const queue   = new Map();   // betAmount → [socketId,...]   (waiting players)
+// In-memory live state.
+// queue: betAmount → [{ sockId, mmr }, ...] — MMR is the player's rating
+// at queue time so we can pair the *closest* MMR partner. RPS has no
+// rating of its own, so we use the shooter MMR (default 1000) as a proxy.
+const queue   = new Map();   // betAmount → [{ sockId, mmr }, ...]
 const matches = new Map();   // matchId   → live match state
 const sockets = new Map();   // socketId  → { userId, username, currentMatch }
+
+// Look up a user's shooter MMR for matchmaking purposes. Returns
+// Ranking.DEFAULT_MMR for any user without a stats row yet.
+async function mmrFor(userId) {
+  try {
+    const s = await Ranking.getOrCreateStats(userId);
+    return s?.mmr ?? Ranking.DEFAULT_MMR;
+  } catch (_) {
+    return Ranking.DEFAULT_MMR;
+  }
+}
 
 function attach(io) {
   const ns = io.of('/rps');
@@ -39,21 +54,32 @@ function attach(io) {
       const bal = await getBalance(userId);
       if (bal < bet) return cb?.({ error: 'insufficient_balance' });
 
-      // Match with another waiting player at same bet
+      // Find the waiting player at this bet whose MMR is closest to mine.
+      // Closest-MMR (no cap) means new players still match instantly with
+      // each other (both start at DEFAULT_MMR), and an outlier rating
+      // doesn't sit forever in queue.
+      const myMmr = await mmrFor(userId);
       const waiting = queue.get(bet) || [];
-      const partnerSockId = waiting.find(sid => {
-        const s = sockets.get(sid);
-        return s && s.userId !== userId;
-      });
+      let bestEntry = null;
+      let bestDiff = Infinity;
+      for (const e of waiting) {
+        const s = sockets.get(e.sockId);
+        if (!s || s.userId === userId) continue;
+        const diff = Math.abs((e.mmr ?? Ranking.DEFAULT_MMR) - myMmr);
+        if (diff < bestDiff) { bestDiff = diff; bestEntry = e; }
+      }
 
-      if (!partnerSockId) {
-        if (!waiting.includes(socket.id)) waiting.push(socket.id);
+      if (!bestEntry) {
+        if (!waiting.some(e => e.sockId === socket.id)) {
+          waiting.push({ sockId: socket.id, mmr: myMmr });
+        }
         queue.set(bet, waiting);
         return cb?.({ ok: true, waiting: true });
       }
 
-      // Pair up
-      queue.set(bet, waiting.filter(id => id !== partnerSockId));
+      const partnerSockId = bestEntry.sockId;
+      // Pair up — drop the chosen partner from the queue.
+      queue.set(bet, waiting.filter(e => e.sockId !== partnerSockId));
       const partner = sockets.get(partnerSockId);
       if (!partner) return cb?.({ error: 'partner_gone' });
 
@@ -99,7 +125,7 @@ function attach(io) {
 
     socket.on('cancel_find', () => {
       for (const [bet, arr] of queue.entries()) {
-        const idx = arr.indexOf(socket.id);
+        const idx = arr.findIndex(e => e.sockId === socket.id);
         if (idx >= 0) { arr.splice(idx, 1); queue.set(bet, arr); }
       }
     });
@@ -227,7 +253,7 @@ function attach(io) {
 
     // Remove from queue
     for (const [bet, arr] of queue.entries()) {
-      const i = arr.indexOf(socket.id);
+      const i = arr.findIndex(e => e.sockId === socket.id);
       if (i >= 0) { arr.splice(i, 1); queue.set(bet, arr); }
     }
 
