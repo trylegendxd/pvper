@@ -45,6 +45,35 @@ input:focus { border-color:var(--accent); }
 .fmt-btn:disabled { opacity:0.4;cursor:not-allowed; }
 #fs-cancel:hover { background:#1a2230;color:#bbb; }
 
+/* Hit marker pop — quick scale-up + fade for snappier hit feedback */
+@keyframes hitMarkerPop {
+  0%   { transform: translate(-50%, -50%) scale(0.4); opacity: 0; }
+  18%  { transform: translate(-50%, -50%) scale(1.25); opacity: 1; }
+  60%  { transform: translate(-50%, -50%) scale(1.0); opacity: 1; }
+  100% { transform: translate(-50%, -50%) scale(1.0); opacity: 0; }
+}
+#hud-hit-marker.hit-pop { animation: hitMarkerPop 0.25s cubic-bezier(.2,1.4,.4,1) forwards; }
+
+/* Damage number popups near the crosshair */
+.dmg-num {
+  position: absolute;
+  left: 50%; top: 50%;
+  transform: translate(calc(-50% + var(--dx, 0px)), -50%);
+  font-size: 18px;
+  font-weight: 700;
+  color: #fff;
+  pointer-events: none;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.85);
+  animation: dmgNumFloat 0.85s ease-out forwards;
+  font-variant-numeric: tabular-nums;
+}
+.dmg-num.hs { color: #ffce4a; font-size: 22px; }
+@keyframes dmgNumFloat {
+  0%   { opacity: 0; transform: translate(calc(-50% + var(--dx, 0px)), -30%) scale(0.7); }
+  18%  { opacity: 1; transform: translate(calc(-50% + var(--dx, 0px)), -55%) scale(1.0); }
+  100% { opacity: 0; transform: translate(calc(-50% + var(--dx, 0px)), -130%) scale(1.05); }
+}
+
 /* MM waiting-room vote rows */
 .mm-vote-row { display:flex;flex-wrap:wrap;gap:6px; }
 .mm-vote-row button {
@@ -1213,8 +1242,26 @@ const AudioManager = {
       this._gunshotBufs.pistol    = gunP;
       this._gunshotBufs.shotgun   = gunSh;
       this._gunshotBufs.sniper    = gunSn;
-      this._footstepBuf           = footstep;
+      this._footstepBuf           = footstep || this._synthFootstepBuffer();
     } catch(e) {}
+  },
+
+  // Generate a short noise burst we can use as a footstep when there
+  // isn't a real file in the audio dir. Called once from _loadSfxBuffers
+  // so playSpatialFootstep has something to feed through the PannerNode.
+  _synthFootstepBuffer() {
+    if (!this.ctx) return null;
+    try {
+      const sr = this.ctx.sampleRate;
+      const dur = 0.08;
+      const buf = this.ctx.createBuffer(1, Math.floor(sr * dur), sr);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < data.length; i++) {
+        const t = i / sr;
+        data[i] = (Math.random() * 2 - 1) * Math.exp(-t * 40);
+      }
+      return buf;
+    } catch (_) { return null; }
   },
 
   // Return the right gunshot buffer for a given weapon name, falling
@@ -1322,6 +1369,51 @@ const AudioManager = {
       l.setPosition(px, py, pz);
       l.setOrientation(fwd.x, fwd.y, fwd.z, 0, 1, 0);
     }
+  },
+
+  // Per-source footstep throttle so a single opponent doesn't trigger
+  // a footstep on every 50 ms opponent_move tick — caps to ~3 per sec
+  // per opponent, matching a real walking cadence.
+  _lastSpatialFootstepAt: Object.create(null),
+
+  // Play a footstep at a world-space origin with quick distance
+  // attenuation + HRTF panning. Routes through a low-pass so footsteps
+  // sound dull / floor-like instead of crisp like a gunshot.
+  playSpatialFootstep(origin, sourceKey) {
+    if (!this.ctx || !this._footstepBuf || !origin) return;
+    const now = performance.now();
+    const last = this._lastSpatialFootstepAt[sourceKey] || 0;
+    if (now - last < 320) return;
+    this._lastSpatialFootstepAt[sourceKey] = now;
+    try {
+      const ctx = this.ctx;
+      const panner = ctx.createPanner();
+      panner.panningModel  = 'HRTF';
+      panner.distanceModel = 'inverse';
+      panner.refDistance   = 1;
+      panner.maxDistance   = 30;   // footsteps don't carry across the arena
+      panner.rolloffFactor = 2.4;
+      if (panner.positionX) {
+        const t = ctx.currentTime;
+        panner.positionX.setValueAtTime(origin.x, t);
+        panner.positionY.setValueAtTime(0.1, t);   // floor-level source
+        panner.positionZ.setValueAtTime(origin.z, t);
+      } else if (panner.setPosition) {
+        panner.setPosition(origin.x, 0.1, origin.z);
+      }
+      const src = ctx.createBufferSource();
+      src.buffer = this._footstepBuf;
+      src.playbackRate.value = 0.9 + Math.random() * 0.2;
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass'; lp.frequency.value = 700;
+      const g = ctx.createGain();
+      g.gain.value = 0.35;
+      src.connect(lp); lp.connect(g); g.connect(panner); panner.connect(this.masterSfx);
+      src.start();
+      src.onended = () => {
+        try { src.disconnect(); g.disconnect(); panner.disconnect(); lp.disconnect(); } catch (_) {}
+      };
+    } catch (_) {}
   },
 
   // Play a gunshot at a world-space origin with realistic distance
@@ -2017,6 +2109,8 @@ const GameEngine = {
   gunGroup:       null,
   _gunRecoil:     0,
   _knifeSwing:    0,         // 1 at slash start, decays to 0 (~250 ms); drives knife arc
+  _camShake:      0,         // 0..1 — camera jolt intensity, decays per frame. Set by triggerShake().
+  _oppLastPos:    Object.create(null),  // socketId → last {x,z} for spatial footstep delta
   _gunBobT:       0,
   _muzzleFlash:   null,
 
@@ -3354,7 +3448,14 @@ const GameEngine = {
     // Opponent lerp (always, so it's smooth on resume)
     if (this._oppVisible) {
       const prev = this._oppCurPos.clone();
-      this._oppCurPos.lerp(this._oppTgtPos, Math.min(1, dt * 18));
+      // Snap if the opponent jumped > 5 m since last position — usually a
+      // respawn or a packet loss spike. Lerping through that distance
+      // makes them appear to walk *through* walls.
+      if (this._oppCurPos.distanceToSquared(this._oppTgtPos) > 25) {
+        this._oppCurPos.copy(this._oppTgtPos);
+      } else {
+        this._oppCurPos.lerp(this._oppTgtPos, Math.min(1, dt * 18));
+      }
       this.opponentGroup.position.copy(this._oppCurPos);
 
       // Smoothly interpolate opponent yaw toward the target (handles wrap-around)
@@ -3397,7 +3498,13 @@ const GameEngine = {
     if (this._otherPlayers) {
       for (const e of this._otherPlayers.values()) {
         const prev = e.curPos.clone();
-        e.curPos.lerp(e.tgtPos, Math.min(1, dt * 18));
+        // Same snap-if-far rule the 1v1 path uses, so respawns don't
+        // glide through walls.
+        if (e.curPos.distanceToSquared(e.tgtPos) > 25) {
+          e.curPos.copy(e.tgtPos);
+        } else {
+          e.curPos.lerp(e.tgtPos, Math.min(1, dt * 18));
+        }
         let yawDiff = e.tgtYaw - e.curYaw;
         while (yawDiff >  Math.PI) yawDiff -= 2 * Math.PI;
         while (yawDiff < -Math.PI) yawDiff += 2 * Math.PI;
@@ -3533,10 +3640,20 @@ const GameEngine = {
     // Killcam takes over the camera while it's playing the killer's POV.
     // Skip the local-player camera update so we don't fight its RAF tick.
     if (!(typeof Killcam !== 'undefined' && Killcam._active)) {
+      // Camera shake — random ±offset on yaw/pitch, decays over ~200 ms.
+      // Applied as an additive offset so this.yaw / this.pitch (the player's
+      // actual aim) are never permanently affected.
+      let shakeX = 0, shakeY = 0;
+      if (this._camShake > 0) {
+        const s = this._camShake * 0.035;
+        shakeX = (Math.random() - 0.5) * s;
+        shakeY = (Math.random() - 0.5) * s;
+        this._camShake = Math.max(0, this._camShake - dt * 5);
+      }
       this.camera.position.set(this.pos.x, this._currentEyeH, this.pos.z);
       this.camera.rotation.order = 'YXZ';
-      this.camera.rotation.y = this.yaw;
-      this.camera.rotation.x = this.pitch;
+      this.camera.rotation.y = this.yaw + shakeY;
+      this.camera.rotation.x = this.pitch + shakeX;
     }
 
     // Spread decay
@@ -3741,6 +3858,17 @@ const GameEngine = {
     if (rotation != null) this._oppTgtYaw = rotation.y ?? 0;
     this._oppTgtY      = Number(yOffset) || 0;
     this._oppTgtCrouch = !!crouching;
+    // Spatial footstep — fire when the opponent has moved noticeably
+    // since their last update and isn't crouching (crouched movement is
+    // silent in the local player's footstep logic, so mirror that for
+    // opponents).
+    const key = senderSockId || '_opp1v1';
+    const last = this._oppLastPos[key];
+    if (last && !crouching) {
+      const moved = Math.hypot(position.x - last.x, position.z - last.z);
+      if (moved > 0.1) AudioManager.playSpatialFootstep?.(position, key);
+    }
+    this._oppLastPos[key] = { x: position.x, z: position.z };
     if (!this._oppVisible) {
       this._oppCurPos.copy(this._oppTgtPos);
       this._oppCurYaw    = this._oppTgtYaw;
@@ -3775,6 +3903,13 @@ const GameEngine = {
       };
       this._otherPlayers.set(sockId, entry);
     }
+    // Spatial footstep — same threshold/crouch rule as the 1v1 path.
+    const last = this._oppLastPos[sockId];
+    if (last && !crouching) {
+      const moved = Math.hypot(position.x - last.x, position.z - last.z);
+      if (moved > 0.1) AudioManager.playSpatialFootstep?.(position, sockId);
+    }
+    this._oppLastPos[sockId] = { x: position.x, z: position.z };
     entry.tgtPos.set(position.x, 0, position.z);
     if (rotation != null) entry.tgtYaw = rotation.y ?? 0;
     entry.tgtY      = Number(yOffset) || 0;
@@ -3855,6 +3990,13 @@ const GameEngine = {
       this.camera.fov = this._fov;
       this.camera.updateProjectionMatrix();
     }
+  },
+
+  // Briefly jolt the camera. Stacks via Math.max so a heavy hit isn't
+  // softened by a previous tiny jolt that's still decaying.
+  triggerShake(intensity) {
+    const v = Math.max(0, Math.min(1, Number(intensity) || 0));
+    if (v > this._camShake) this._camShake = v;
   },
 
   _onResize() {
@@ -4216,7 +4358,27 @@ const UIManager = {
     const el = document.getElementById('hud-hit-marker');
     el.style.display = 'block';
     el.style.filter  = headshot ? 'hue-rotate(40deg) brightness(1.6)' : '';
-    setTimeout(() => { el.style.display = 'none'; el.style.filter = ''; }, headshot ? 220 : 115);
+    // Restart the CSS pop animation so back-to-back hits each feel snappy.
+    el.classList.remove('hit-pop');
+    void el.offsetWidth;
+    el.classList.add('hit-pop');
+    const ttl = headshot ? 350 : 250;
+    clearTimeout(this._hitMarkerTimer);
+    this._hitMarkerTimer = setTimeout(() => {
+      el.style.display = 'none'; el.style.filter = ''; el.classList.remove('hit-pop');
+    }, ttl);
+  },
+
+  showDamageNumber(damage, headshot) {
+    const host = document.getElementById('hud-crosshair');
+    if (!host || !Number.isFinite(damage) || damage <= 0) return;
+    const el = document.createElement('div');
+    el.className = 'dmg-num' + (headshot ? ' hs' : '');
+    el.textContent = headshot ? `−${damage}!` : `−${damage}`;
+    // Small random horizontal offset so back-to-back hits don't overlap.
+    el.style.setProperty('--dx', `${(Math.random() - 0.5) * 30}px`);
+    host.appendChild(el);
+    setTimeout(() => el.remove(), 850);
   },
 
   flashDamageVignette() {
@@ -6074,6 +6236,7 @@ const NetworkManager = {
     s.on('mm_invite_declined',   d => { try { App.onMmInviteDeclined(d); }   catch (_) {} });
     s.on('hit_result',          d => {
       if (d.hit) {
+        try { UIManager.showDamageNumber(d.damage, !!d.headshot); } catch (_) {}
         UIManager.flashHitMarker(!!d.headshot);
         if (d.headshot) AudioManager.playKill();
         else            AudioManager.playHit();
@@ -6743,10 +6906,17 @@ const App = {
     // Death-screen invulnerability: once you're dead, drop any further
     // damage events that arrive before the server stops sending them.
     if (GameEngine.isDead && !fatal) return;
+    // Compute damage from the last known health so camera shake scales
+    // with severity — a glancing pistol shot shouldn't jolt as hard as
+    // a sniper headshot.
+    const prevHealth = (typeof this.myHealth === 'number') ? this.myHealth : CFG.MAX_HEALTH;
+    const damage = Math.max(0, prevHealth - health);
     this.myHealth = health;
     UIManager.updateHealth(health);
     UIManager.flashDamageVignette();
     AudioManager.playDamage();
+    // Camera shake — heavy if fatal, otherwise scaled by damage taken.
+    GameEngine.triggerShake(fatal ? 0.85 : Math.min(0.55, 0.2 + damage / 90));
     // Tag-on-hit: brief movement slowdown for ~0.4s. CS-style — makes
     // running across open lanes risky.
     GameEngine._taggedUntil = performance.now() + 400;
