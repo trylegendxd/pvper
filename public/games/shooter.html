@@ -39,6 +39,11 @@ input:focus { border-color:var(--accent); }
 .btn-secondary:hover { background:#222233; }
 .btn-danger    { background:#3a1010;color:var(--red);padding:10px 20px;border:1px solid #5a1515; }
 .btn-danger:hover { background:#4a1515; }
+.fmt-btn { background:#22303f;color:#fff;border:1px solid #3a4558;padding:18px 8px;font-size:18px;font-weight:700;letter-spacing:2px;cursor:pointer;transition:background .15s, transform .1s; }
+.fmt-btn:hover { background:#2f4459;transform:translateY(-1px); }
+.fmt-btn:active { transform:translateY(0); }
+.fmt-btn:disabled { opacity:0.4;cursor:not-allowed; }
+#fs-cancel:hover { background:#1a2230;color:#bbb; }
 .btn-train { background:#1a2a1a;color:#5fa85f;padding:10px 20px;border:1px solid #2a4a2a;font-size:13px;letter-spacing:2px; }
 .btn-train:hover { background:#223322;border-color:#4a8a4a; }
 
@@ -646,7 +651,45 @@ input:focus { border-color:var(--accent); }
   </div>
 </div>
 
-<!-- ═══ WAITING ROOM ════════════════════════════════════════════════════════ -->
+<!-- ═══ TEAM FORMAT MODAL — opens after clicking a tier card ════════════════ -->
+<div id="overlay-format-select"
+     style="position:fixed;inset:0;background:rgba(0,0,0,.85);backdrop-filter:blur(6px);z-index:9000;display:none;align-items:center;justify-content:center;">
+  <div style="background:#161c25;border:1px solid #2a3548;border-radius:10px;padding:36px 48px 28px;max-width:520px;width:90%;text-align:center;box-shadow:0 8px 40px rgba(0,0,0,.7);">
+    <div style="font-size:11px;letter-spacing:4px;color:#7a8aa5;margin-bottom:6px;">SELECT TEAM FORMAT</div>
+    <div id="fs-tier-name" style="font-size:24px;font-weight:700;color:#fff;letter-spacing:2px;margin-bottom:6px;">—</div>
+    <div id="fs-tier-bet" style="font-size:13px;color:#ffce4a;margin-bottom:22px;letter-spacing:1px;">— cr per player</div>
+    <div id="fs-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">
+      <button class="fmt-btn" data-size="1">1v1</button>
+      <button class="fmt-btn" data-size="2">2v2</button>
+      <button class="fmt-btn" data-size="4">4v4</button>
+      <button class="fmt-btn" data-size="5">5v5</button>
+    </div>
+    <button id="fs-cancel"
+            style="margin-top:22px;background:transparent;border:1px solid #404a5a;color:#888;padding:7px 18px;font-size:11px;letter-spacing:2px;cursor:pointer;">CANCEL</button>
+  </div>
+</div>
+
+<!-- ═══ MATCHMAKING WAITING ROOM ═══════════════════════════════════════════ -->
+<!-- Shown after clicking a team format. Server forms a team here, then
+     pairs us with another full team for the actual match. -->
+<div id="screen-mm-waiting" class="screen menu-bg">
+  <div class="waiting-box">
+    <h2 id="mm-title">FORMING TEAM</h2>
+    <div class="bet-display">
+      <span id="mm-format-label" style="color:#fff;">—</span>
+      <span style="color:#666;margin:0 6px;">·</span>
+      <span id="mm-bet" style="color:var(--gold);">— cr</span>
+    </div>
+    <div id="mm-team-list" style="margin:24px 0;display:flex;flex-direction:column;gap:6px;width:280px;"></div>
+    <div id="mm-status" style="color:var(--dim);font-size:13px;letter-spacing:1px;margin-bottom:6px;">Waiting for teammates<span class="waiting-dots"></span></div>
+    <div id="mm-countdown-row" style="display:none;font-size:14px;letter-spacing:2px;color:var(--accent);margin-bottom:8px;">
+      Match starts in <span id="mm-countdown-secs" style="font-size:22px;font-weight:700;color:#ffce4a;">5</span>s
+    </div>
+    <button class="btn-danger" onclick="App.leaveMmQueue()">CANCEL</button>
+  </div>
+</div>
+
+<!-- ═══ WAITING ROOM (legacy — kept for back-compat with private lobbies) ═══ -->
 <div id="screen-waiting" class="screen menu-bg">
   <div class="waiting-box">
     <h2 id="waiting-lobby-name">WAITING</h2>
@@ -3747,9 +3790,74 @@ const UIManager = {
   _kfTimers: [],
 
   init() {
-    ['login','lobby','waiting','game','postmatch'].forEach(id => {
+    ['login','lobby','waiting','mm-waiting','game','postmatch'].forEach(id => {
       this._screens[id] = document.getElementById(`screen-${id}`);
     });
+    // Wire format-select modal buttons once.
+    document.querySelectorAll('#overlay-format-select .fmt-btn').forEach(b => {
+      b.addEventListener('click', () => {
+        const size = Number(b.dataset.size);
+        if (Number.isFinite(size)) App.selectFormat(size);
+      });
+    });
+    const cancel = document.getElementById('fs-cancel');
+    if (cancel) cancel.addEventListener('click', () => App.closeFormatSelect());
+    // Click outside the modal panel = close.
+    const overlay = document.getElementById('overlay-format-select');
+    if (overlay) overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) App.closeFormatSelect();
+    });
+  },
+
+  openFormatSelect(lobby) {
+    document.getElementById('fs-tier-name').textContent = lobby.name?.toUpperCase() || lobby.id?.toUpperCase() || '—';
+    document.getElementById('fs-tier-bet').textContent = (lobby.bet || 0) + ' cr per player';
+    document.getElementById('overlay-format-select').style.display = 'flex';
+  },
+  closeFormatSelect() {
+    document.getElementById('overlay-format-select').style.display = 'none';
+  },
+
+  renderMmTeam(data) {
+    const list = document.getElementById('mm-team-list');
+    if (!list) return;
+    document.getElementById('mm-format-label').textContent = `${data.teamSize}v${data.teamSize}`;
+    document.getElementById('mm-bet').textContent = `${data.bet} cr`;
+    const titleEl = document.getElementById('mm-title');
+    const statusEl = document.getElementById('mm-status');
+    if (data.status === 'full') {
+      titleEl.textContent = 'TEAM FULL';
+      statusEl.innerHTML = 'Looking for an opposing team<span class="waiting-dots"></span>';
+    } else if (data.status === 'paired') {
+      titleEl.textContent = 'OPPONENT FOUND';
+      statusEl.textContent = 'Get ready…';
+    } else {
+      titleEl.textContent = data.teamSize === 1 ? 'FINDING OPPONENT' : 'FORMING TEAM';
+      statusEl.innerHTML = data.teamSize === 1
+        ? 'Looking for an opponent<span class="waiting-dots"></span>'
+        : 'Waiting for teammates<span class="waiting-dots"></span>';
+    }
+    list.innerHTML = '';
+    const filled = data.members.length;
+    for (let i = 0; i < data.teamSize; i++) {
+      const slot = document.createElement('div');
+      slot.style.cssText = 'padding:10px 14px;background:#1c2632;border:1px solid #2c3848;border-radius:4px;display:flex;align-items:center;gap:10px;font-size:14px;';
+      if (i < filled) {
+        slot.innerHTML = `<span style="color:#7fd97a;">●</span><span style="color:#fff;">${escapeHtml(data.members[i].username)}</span>`;
+      } else {
+        slot.innerHTML = `<span style="color:#444;">○</span><span style="color:#666;">empty slot</span>`;
+      }
+      list.appendChild(slot);
+    }
+  },
+
+  showMmCountdown(secs) {
+    const row = document.getElementById('mm-countdown-row');
+    const sEl = document.getElementById('mm-countdown-secs');
+    if (!row || !sEl) return;
+    if (secs == null) { row.style.display = 'none'; return; }
+    row.style.display = '';
+    sEl.textContent = Math.max(0, Math.ceil(secs));
   },
 
   show(name) {
@@ -3796,7 +3904,7 @@ const UIManager = {
         </div>
         ${lockMsg}${noFundMsg}
       `;
-      if (canJoin) card.addEventListener('click', () => App.joinLobby(l.id));
+      if (canJoin) card.addEventListener('click', () => App.openFormatSelect(l));
       grid.appendChild(card);
     });
   },
@@ -5816,6 +5924,11 @@ const NetworkManager = {
     s.on('voice_answer',         d => { try { VoiceChat.onAnswer(d); }       catch (_) {} });
     s.on('voice_ice_candidate',  d => { try { VoiceChat.onIceCandidate(d); } catch (_) {} });
     s.on('voice_peer_left',      d => { try { VoiceChat.onPeerLeft(d); }     catch (_) {} });
+
+    // Public matchmaking queue events.
+    s.on('mm_team_update',       d => { try { App.onMmTeamUpdate(d); }       catch (_) {} });
+    s.on('mm_match_countdown',   d => { try { App.onMmMatchCountdown(d); }   catch (_) {} });
+    s.on('mm_pair_cancelled',    d => { try { App.onMmPairCancelled(d); }    catch (_) {} });
     s.on('hit_result',          d => {
       if (d.hit) {
         UIManager.flashHitMarker(!!d.headshot);
@@ -6049,6 +6162,83 @@ const App = {
 
     UIManager.show('lobby');
     AudioManager.playMusic();
+  },
+
+  // ── New matchmaking flow (public lobbies, all formats) ──────────────
+  // Tier card → format modal → server-side MM queue → team forms → pair
+  // with an opposing full team → match.
+  openFormatSelect(lobby) {
+    this._selectedTier = lobby; // remember for selectFormat
+    UIManager.openFormatSelect(lobby);
+  },
+  closeFormatSelect() {
+    this._selectedTier = null;
+    UIManager.closeFormatSelect();
+  },
+  selectFormat(teamSize) {
+    const lobby = this._selectedTier;
+    if (!lobby) return;
+    this.closeFormatSelect();
+    // Seed the waiting UI immediately so the screen doesn't flash empty
+    // while we wait for the first mm_team_update.
+    UIManager.renderMmTeam({
+      teamSize, tier: lobby.id, bet: lobby.bet, status: 'forming',
+      members: [{ socketId: '?', username: '…' }],
+    });
+    UIManager.showMmCountdown(null);
+    UIManager.show('mm-waiting');
+    NetworkManager.socket.emit('mm_join', { tier: lobby.id, teamSize }, (res) => {
+      if (res?.error) {
+        alert({
+          invalid_format:      'Unsupported team size.',
+          no_tier:             'That tier no longer exists.',
+          already_in_queue:    'You are already in a matchmaking queue.',
+          already_in_match:    'You are already in a match.',
+          already_in_lobby:    'You are still in another lobby.',
+          in_private_lobby:    'Leave your private lobby first.',
+          not_ready:           'Connection still warming up — try again.',
+          insufficient_balance:'Not enough credits for that bet.',
+        }[res.error] || res.error || 'Cannot join matchmaking.');
+        UIManager.show('lobby');
+      }
+    });
+  },
+  leaveMmQueue() {
+    NetworkManager.socket.emit('mm_leave');
+    this._mmCountdownTimer && clearInterval(this._mmCountdownTimer);
+    this._mmCountdownTimer = null;
+    UIManager.showMmCountdown(null);
+    UIManager.show('lobby');
+  },
+  onMmTeamUpdate(data) {
+    UIManager.renderMmTeam(data);
+  },
+  onMmMatchCountdown(data) {
+    // Tick the countdown locally — server runs the authoritative timer
+    // and will fire match_start when it expires.
+    if (this._mmCountdownTimer) clearInterval(this._mmCountdownTimer);
+    const tick = () => {
+      const secs = (data.startsAt - Date.now()) / 1000;
+      if (secs <= 0) {
+        clearInterval(this._mmCountdownTimer);
+        this._mmCountdownTimer = null;
+        UIManager.showMmCountdown(null);
+        return;
+      }
+      UIManager.showMmCountdown(secs);
+    };
+    tick();
+    this._mmCountdownTimer = setInterval(tick, 200);
+    // Also reflect the 'paired' state in the team UI.
+    document.getElementById('mm-title').textContent = 'OPPONENT FOUND';
+    document.getElementById('mm-status').textContent = 'Get ready…';
+  },
+  onMmPairCancelled() {
+    if (this._mmCountdownTimer) clearInterval(this._mmCountdownTimer);
+    this._mmCountdownTimer = null;
+    UIManager.showMmCountdown(null);
+    // The next mm_team_update will refresh the team UI back to 'full' /
+    // 'forming' — nothing to do here beyond clearing the countdown.
   },
 
   async joinLobby(id) {
@@ -6372,6 +6562,10 @@ const App = {
 
   onMatchEnd(data) {
     clearInterval(this._timerInterval);
+    if (this._mmCountdownTimer) {
+      clearInterval(this._mmCountdownTimer);
+      this._mmCountdownTimer = null;
+    }
     GameEngine.stop();
     this.playerBalance = data.newBalance;
     UIManager.updateBalance(data.newBalance);

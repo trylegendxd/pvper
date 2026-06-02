@@ -1002,6 +1002,269 @@ function tryResumeMatch(io, socket, userId) {
   return match.id;
 }
 
+// ── Public matchmaking queues ────────────────────────────────────────────
+// Per (tier, teamSize) bucket. Each bucket holds zero or more "teams" in
+// formation; once a team fills it goes 'full', and as soon as a second
+// 'full' team exists in the same bucket the pair is countdowned into a
+// match. This replaces the old "pre-defined 2-slot tier lobby" model so
+// the same flow handles 1v1, 2v2, 4v4, and 5v5.
+const PUBLIC_FORMATS = [1, 2, 4, 5];
+const MM_COUNTDOWN_MS = 5000;
+const mmQueues       = new Map();  // "tier:size" → queue
+const mmTeamById     = new Map();  // teamId → team
+const mmTeamBySocket = new Map();  // socketId → teamId
+let _mmTeamSeq = 0;
+
+function mmQueueKey(tier, size) { return `${tier}:${size}`; }
+function getMmQueue(tier, size) {
+  const key = mmQueueKey(tier, size);
+  if (!mmQueues.has(key)) {
+    const def = LOBBY_DEFS.find(l => l.id === tier);
+    mmQueues.set(key, { tier, teamSize: size, bet: def?.bet || 0, teams: [] });
+  }
+  return mmQueues.get(key);
+}
+function mkMmTeam(tier, size, bet) {
+  _mmTeamSeq++;
+  const t = {
+    id: `mm_${Date.now()}_${_mmTeamSeq}`,
+    tier, teamSize: size, bet,
+    members: [],
+    status: 'forming',          // 'forming' | 'full' | 'paired'
+    createdAt: Date.now(),
+    countdownTimer: null,
+  };
+  mmTeamById.set(t.id, t);
+  return t;
+}
+function broadcastMmTeam(io, team) {
+  const payload = {
+    teamId:   team.id,
+    tier:     team.tier,
+    teamSize: team.teamSize,
+    bet:      team.bet,
+    status:   team.status,
+    members:  team.members.map(m => ({ socketId: m.socketId, username: m.username })),
+  };
+  const ns = io.of('/shooter');
+  for (const m of team.members) ns.to(m.socketId).emit('mm_team_update', payload);
+}
+function removeFromMm(io, socketId, opts = {}) {
+  const teamId = mmTeamBySocket.get(socketId);
+  if (!teamId) return;
+  mmTeamBySocket.delete(socketId);
+  const team = mmTeamById.get(teamId);
+  if (!team) return;
+  team.members = team.members.filter(m => m.socketId !== socketId);
+  // Empty team → remove from queue + registry.
+  if (team.members.length === 0) {
+    const q = getMmQueue(team.tier, team.teamSize);
+    q.teams = q.teams.filter(t => t.id !== team.id);
+    if (team.countdownTimer) { clearTimeout(team.countdownTimer); team.countdownTimer = null; }
+    mmTeamById.delete(team.id);
+    return;
+  }
+  // Downgrade from full/paired (rare — disconnect mid-countdown).
+  if (team.status === 'paired' && team.countdownTimer) {
+    clearTimeout(team.countdownTimer);
+    team.countdownTimer = null;
+    team.status = 'forming';
+    // Cancel the countdown on the other side too — best-effort.
+    const q = getMmQueue(team.tier, team.teamSize);
+    for (const other of q.teams) {
+      if (other.id !== team.id && other.status === 'paired' && other.countdownTimer) {
+        clearTimeout(other.countdownTimer);
+        other.countdownTimer = null;
+        other.status = 'full';
+        const ns = io.of('/shooter');
+        for (const m of other.members) {
+          ns.to(m.socketId).emit('mm_pair_cancelled', { reason: 'partner_left' });
+        }
+        broadcastMmTeam(io, other);
+        // Try to find a different partner for `other`.
+        tryPairMm(io, q);
+      }
+    }
+  } else if (team.status === 'full') {
+    team.status = 'forming';
+  }
+  if (!opts.silent) broadcastMmTeam(io, team);
+}
+
+function joinMm(io, socket, tier, teamSize) {
+  if (!PUBLIC_FORMATS.includes(teamSize)) return { error: 'invalid_format' };
+  const def = LOBBY_DEFS.find(l => l.id === tier);
+  if (!def) return { error: 'no_tier' };
+  if (mmTeamBySocket.has(socket.id)) return { error: 'already_in_queue' };
+  const p = players.get(socket.id);
+  if (!p) return { error: 'not_ready' };
+  if (p.currentMatch) return { error: 'already_in_match' };
+  if (p.currentLobby) return { error: 'already_in_lobby' };
+  if (p.privateLobby) return { error: 'in_private_lobby' };
+
+  const queue = getMmQueue(tier, teamSize);
+  // Slot into the oldest forming team that still has room.
+  let team = queue.teams.find(t => t.status === 'forming' && t.members.length < teamSize);
+  if (!team) {
+    team = mkMmTeam(tier, teamSize, def.bet);
+    queue.teams.push(team);
+  }
+  team.members.push({ socketId: socket.id, userId: p.userId, username: p.username });
+  mmTeamBySocket.set(socket.id, team.id);
+  if (team.members.length >= teamSize) team.status = 'full';
+  broadcastMmTeam(io, team);
+  if (team.status === 'full') tryPairMm(io, queue);
+  return { ok: true, teamId: team.id, status: team.status };
+}
+
+function tryPairMm(io, queue) {
+  const fulls = queue.teams.filter(t => t.status === 'full');
+  if (fulls.length < 2) return;
+  fulls.sort((a, b) => a.createdAt - b.createdAt);
+  const teamA = fulls[0], teamB = fulls[1];
+  const startsAt = Date.now() + MM_COUNTDOWN_MS;
+  for (const team of [teamA, teamB]) {
+    team.status = 'paired';
+    const ns = io.of('/shooter');
+    for (const m of team.members) {
+      ns.to(m.socketId).emit('mm_match_countdown', {
+        startsAt, ms: MM_COUNTDOWN_MS,
+        tier: team.tier, teamSize: team.teamSize, bet: team.bet,
+        enemySize: (team === teamA ? teamB : teamA).teamSize,
+      });
+    }
+  }
+  teamA.countdownTimer = setTimeout(() => startMmMatch(io, queue, teamA, teamB), MM_COUNTDOWN_MS);
+}
+
+async function startMmMatch(io, queue, teamA, teamB) {
+  // Remove both teams from the queue and clear member→team links.
+  queue.teams = queue.teams.filter(t => t.id !== teamA.id && t.id !== teamB.id);
+  for (const m of [...teamA.members, ...teamB.members]) {
+    mmTeamBySocket.delete(m.socketId);
+  }
+  mmTeamById.delete(teamA.id);
+  mmTeamById.delete(teamB.id);
+  teamA.countdownTimer = teamB.countdownTimer = null;
+
+  const ns = io.of('/shooter');
+  const teamSize = teamA.teamSize;
+  const tier     = teamA.tier;
+  const bet      = teamA.bet;
+  const allMembers = [...teamA.members.map(m => ({ ...m, team: 'a' })),
+                      ...teamB.members.map(m => ({ ...m, team: 'b' }))];
+
+  // Wallet escrow — uses the existing team path even for teamSize=1, so
+  // a 1v1 match from the queue still uses game_sessions (no shooter_sessions
+  // row). That keeps the queue path uniform across all sizes.
+  let dbResult;
+  try {
+    dbResult = await startTeamShooterMatch(
+      teamA.members.map(m => m.userId),
+      teamB.members.map(m => m.userId),
+      bet,
+    );
+  } catch (e) {
+    console.error('[mm] wallet escrow failed', e);
+    for (const m of allMembers) ns.to(m.socketId).emit('match_error', { error: e.message });
+    return;
+  }
+
+  // Defaults: symmetrical map, ALL weapons, first-to-KILLS_TO_WIN.
+  // (Voting was tied to the old lobby countdown; we removed it.)
+  const mapType    = 'symmetrical';
+  const coverBoxes = symmetricalMap();
+  const spawnFor = (team, idx) => {
+    const xs = [-4, 0, 4, -8, 8];
+    return { x: xs[idx % xs.length], y: 0, z: team === 'a' ? 17 : -17 };
+  };
+
+  const now = Date.now();
+  const mkState = (team, spawnIdx) => ({
+    position: { ...spawnFor(team, spawnIdx) },
+    rotation: { x: 0, y: team === 'a' ? Math.PI : 0 },
+    health: MAX_HEALTH, kills: 0, deaths: 0, headshots: 0,
+    shotsFired: 0, shotsHit: 0,
+    weapon: DEFAULT_WEAPON,
+    weapons: Object.fromEntries(
+      Object.keys(WEAPONS).map(k => [k, { ammo: WEAPONS[k].mag, reloading: false, reloadStartedAt: 0 }])
+    ),
+    lastShot: 0, positionHistory: [], respawning: false,
+    lastPosition: { ...spawnFor(team, spawnIdx) },
+    lastMoveAt: now, lastWeaponSwitchAt: 0, suspiciousScore: 0,
+    team,
+    throwables: mkThrowables(),
+    selectedThrowable: 'molotov',
+    lastThrowAt: 0,
+  });
+
+  const gameState = {};
+  const playerIds = [];
+  teamA.members.forEach((m, i) => { gameState[m.socketId] = mkState('a', i); playerIds.push(m.socketId); });
+  teamB.members.forEach((m, i) => { gameState[m.socketId] = mkState('b', i); playerIds.push(m.socketId); });
+
+  const match = {
+    id: dbResult.sessionId,
+    dbMatchId: null,
+    sessionId: dbResult.sessionId,
+    lobbyId: tier,                  // for replay / logs
+    playerIds,
+    mapType, mapName: 'Symmetrical', arenaSize: 40, coverBoxes,
+    spawnPoints: playerIds.map(sid => ({ ...gameState[sid].position })),
+    startTime: now, endTime: now + MATCH_DURATION_MS,
+    status: 'active',
+    gameState,
+    betAmount: bet,
+    ended: false,
+    coverAabbs: coverBoxes.map(coverAabb),
+    weaponMode: 'all',
+    killsToWin: KILLS_TO_WIN,
+    isTeamMatch: true,
+    teamSize,
+    teamScores: { a: 0, b: 0 },
+    teamsByUserId: Object.fromEntries(allMembers.map(m => [m.userId, m.team])),
+  };
+  matches.set(match.id, match);
+  ensureThrowableTick(io, match);
+  for (const sid of playerIds) {
+    const p = players.get(sid);
+    if (p) p.currentMatch = match.id;
+  }
+
+  Replay.start(match.id, dbResult.sessionId, {
+    lobbyId: tier, bet, mapType,
+    players: Object.fromEntries(playerIds.map(sid => {
+      const p = players.get(sid);
+      return [sid, { userId: p?.userId, username: p?.username, spawnIndex: playerIds.indexOf(sid) }];
+    })),
+  });
+  for (const sid of playerIds) {
+    Replay.log(match.id, 'player_spawn', { s: sid, p: gameState[sid].position });
+  }
+
+  const basePayload = {
+    matchId: match.id, mapType,
+    mapName: 'Symmetrical', arenaSize: 40,
+    coverBoxes, spawnPoints: match.spawnPoints,
+    endTime: match.endTime,
+    weaponMode: 'all', killsToWin: KILLS_TO_WIN,
+    isTeamMatch: true, teamSize,
+    players: Object.fromEntries(playerIds.map((sid, i) => {
+      const p = players.get(sid);
+      return [sid, { username: p?.username || '?', team: gameState[sid].team, spawnIndex: i }];
+    })),
+  };
+  for (const sid of playerIds) {
+    ns.to(sid).emit('match_start', {
+      ...basePayload, yourId: sid, yourTeam: gameState[sid].team,
+    });
+  }
+
+  match.timeoutTimer = setTimeout(() => {
+    if (matches.has(match.id) && !match.ended) endMatch(io, match.id, null, 'timeout');
+  }, MATCH_DURATION_MS);
+}
+
 // Settings change → clear ready states for everyone except the host (the
 // host implicitly accepts whatever they just chose). Used whenever the
 // host changes bet / mode / size / kills / etc.
@@ -2494,6 +2757,20 @@ function attach(io) {
       });
     });
 
+    // ── Public matchmaking queue ────────────────────────────────────────
+    // Replaces the old per-tier auto-pair lobby flow. mm_join puts the
+    // socket in the (tier, teamSize) queue, forming or joining a team;
+    // mm_leave pulls them out (and downgrades the team's status if it
+    // was full or paired).
+    socket.on('mm_join', ({ tier, teamSize } = {}, cb) => {
+      const res = joinMm(io, socket, tier, teamSize);
+      cb?.(res);
+    });
+    socket.on('mm_leave', (_, cb) => {
+      removeFromMm(io, socket.id);
+      cb?.({ ok: true });
+    });
+
     // ── Voice chat signaling (WebRTC P2P, teammates only) ──────────────
     // The server is purely a relay — never touches the audio itself. We
     // gate every message on "both players are in the same active match
@@ -2552,6 +2829,11 @@ function attach(io) {
   function handleLeave(socket, fromDisconnect = false) {
     const p = players.get(socket.id);
     if (!p) return;
+
+    // If they were sitting in a public matchmaking team, drop them out.
+    // (No reconnect grace for queue position — they can rejoin with one
+    // click.)
+    removeFromMm(io, socket.id);
 
     // Active match: disconnects get a reconnect grace window before
     // forfeit. Explicit leave (leave_match / leave_lobby etc) is still
