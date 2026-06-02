@@ -1033,6 +1033,12 @@ function mkMmTeam(tier, size, bet) {
     status: 'forming',          // 'forming' | 'full' | 'paired'
     createdAt: Date.now(),
     countdownTimer: null,
+    // Per-socket votes — tallied across both teams at startMmMatch.
+    mapVotes:    Object.create(null),    // socketId → 'symmetrical'|'random'|'cs_depot'
+    modeVotes:   Object.create(null),    // socketId → 'all'|'rifle'|...
+    roundsVotes: Object.create(null),    // socketId → 3|5|7
+    // Outstanding friend invites we sent. Map<userId, { timer, fromSocketId }>.
+    pendingInvites: new Map(),
   };
   mmTeamById.set(t.id, t);
   return t;
@@ -1045,9 +1051,45 @@ function broadcastMmTeam(io, team) {
     bet:      team.bet,
     status:   team.status,
     members:  team.members.map(m => ({ socketId: m.socketId, username: m.username })),
+    // Include all votes so each client can render the live tally AND
+    // highlight its own selection.
+    votes: {
+      map:    { ...team.mapVotes },
+      mode:   { ...team.modeVotes },
+      rounds: { ...team.roundsVotes },
+    },
   };
   const ns = io.of('/shooter');
   for (const m of team.members) ns.to(m.socketId).emit('mm_team_update', payload);
+}
+
+// Find a connected /shooter socket by userId. Used for friend invites
+// so we only invite friends actually present on the shooter page.
+function findShooterSocketByUserId(io, userId) {
+  const ns = io.of('/shooter');
+  for (const [sid, sock] of ns.sockets) {
+    if (sock?.data?.userId === userId) return sid;
+  }
+  return null;
+}
+
+function teamOfSocket(socketId) {
+  const teamId = mmTeamBySocket.get(socketId);
+  return teamId ? mmTeamById.get(teamId) : null;
+}
+
+// Look up whether two users are accepted friends — used to gate the
+// invite endpoint so a random user can't spam invites.
+async function areFriends(userA, userB) {
+  if (!userA || !userB || userA === userB) return false;
+  const [a, b] = userA < userB ? [userA, userB] : [userB, userA];
+  try {
+    const { rows } = await pool.query(
+      `SELECT 1 FROM friendships WHERE user_a=$1 AND user_b=$2 AND status='accepted'`,
+      [a, b]
+    );
+    return rows.length > 0;
+  } catch (_) { return false; }
 }
 function removeFromMm(io, socketId, opts = {}) {
   const teamId = mmTeamBySocket.get(socketId);
@@ -1056,11 +1098,21 @@ function removeFromMm(io, socketId, opts = {}) {
   const team = mmTeamById.get(teamId);
   if (!team) return;
   team.members = team.members.filter(m => m.socketId !== socketId);
+  // Strip the leaver's votes so the tally reflects the current team.
+  delete team.mapVotes[socketId];
+  delete team.modeVotes[socketId];
+  delete team.roundsVotes[socketId];
   // Empty team → remove from queue + registry.
   if (team.members.length === 0) {
     const q = getMmQueue(team.tier, team.teamSize);
     q.teams = q.teams.filter(t => t.id !== team.id);
     if (team.countdownTimer) { clearTimeout(team.countdownTimer); team.countdownTimer = null; }
+    // Cancel any outstanding friend invites — the team they were
+    // invited to no longer exists.
+    for (const inv of team.pendingInvites.values()) {
+      try { clearTimeout(inv.timer); } catch (_) {}
+    }
+    team.pendingInvites.clear();
     mmTeamById.delete(team.id);
     return;
   }
@@ -1143,6 +1195,14 @@ async function startMmMatch(io, queue, teamA, teamB) {
   for (const m of [...teamA.members, ...teamB.members]) {
     mmTeamBySocket.delete(m.socketId);
   }
+  // Cancel any pending friend-invite timers — invitees can no longer
+  // join this team since the match is starting.
+  for (const team of [teamA, teamB]) {
+    for (const inv of team.pendingInvites.values()) {
+      try { clearTimeout(inv.timer); } catch (_) {}
+    }
+    team.pendingInvites.clear();
+  }
   mmTeamById.delete(teamA.id);
   mmTeamById.delete(teamB.id);
   teamA.countdownTimer = teamB.countdownTimer = null;
@@ -1153,6 +1213,21 @@ async function startMmMatch(io, queue, teamA, teamB) {
   const bet      = teamA.bet;
   const allMembers = [...teamA.members.map(m => ({ ...m, team: 'a' })),
                       ...teamB.members.map(m => ({ ...m, team: 'b' }))];
+
+  // Combine votes from BOTH teams — every player gets one vote each.
+  // Falls back to defaults inside the resolve* helpers if nobody voted.
+  const combinedMap = {
+    ...teamA.mapVotes, ...teamB.mapVotes,
+  };
+  const combinedMode = {
+    ...teamA.modeVotes, ...teamB.modeVotes,
+  };
+  const combinedRounds = {
+    ...teamA.roundsVotes, ...teamB.roundsVotes,
+  };
+  const resolvedMap    = resolveMapType(combinedMap);
+  const resolvedMode   = resolveWeaponMode(combinedMode);
+  const resolvedRounds = resolveRounds(combinedRounds);
 
   // Wallet escrow — uses the existing team path even for teamSize=1, so
   // a 1v1 match from the queue still uses game_sessions (no shooter_sessions
@@ -1170,14 +1245,21 @@ async function startMmMatch(io, queue, teamA, teamB) {
     return;
   }
 
-  // Defaults: symmetrical map, ALL weapons, first-to-KILLS_TO_WIN.
-  // (Voting was tied to the old lobby countdown; we removed it.)
-  const mapType    = 'symmetrical';
-  const coverBoxes = symmetricalMap();
+  // Map / weapon mode / kills-to-win come from the combined vote tally.
+  // The resolve* helpers default to symmetrical / all / 5 if nobody voted.
+  const map         = buildMapByType(resolvedMap);
+  const mapType     = map.mapType;
+  const mapName     = map.mapName;
+  const arenaSize   = map.arenaSize;
+  const coverBoxes  = map.coverBoxes;
+  const baseSpawns  = map.spawnPoints;
+  // Spread teammates along the team's spawn line so they aren't stacked.
   const spawnFor = (team, idx) => {
     const xs = [-4, 0, 4, -8, 8];
-    return { x: xs[idx % xs.length], y: 0, z: team === 'a' ? 17 : -17 };
+    const base = team === 'a' ? baseSpawns[0] : baseSpawns[1];
+    return { x: xs[idx % xs.length], y: 0, z: base?.z ?? (team === 'a' ? 17 : -17) };
   };
+  const defaultWeapon = (resolvedMode === 'all') ? DEFAULT_WEAPON : resolvedMode;
 
   const now = Date.now();
   const mkState = (team, spawnIdx) => ({
@@ -1185,7 +1267,7 @@ async function startMmMatch(io, queue, teamA, teamB) {
     rotation: { x: 0, y: team === 'a' ? Math.PI : 0 },
     health: MAX_HEALTH, kills: 0, deaths: 0, headshots: 0,
     shotsFired: 0, shotsHit: 0,
-    weapon: DEFAULT_WEAPON,
+    weapon: defaultWeapon,
     weapons: Object.fromEntries(
       Object.keys(WEAPONS).map(k => [k, { ammo: WEAPONS[k].mag, reloading: false, reloadStartedAt: 0 }])
     ),
@@ -1209,7 +1291,7 @@ async function startMmMatch(io, queue, teamA, teamB) {
     sessionId: dbResult.sessionId,
     lobbyId: tier,                  // for replay / logs
     playerIds,
-    mapType, mapName: 'Symmetrical', arenaSize: 40, coverBoxes,
+    mapType, mapName, arenaSize, coverBoxes,
     spawnPoints: playerIds.map(sid => ({ ...gameState[sid].position })),
     startTime: now, endTime: now + MATCH_DURATION_MS,
     status: 'active',
@@ -1217,8 +1299,8 @@ async function startMmMatch(io, queue, teamA, teamB) {
     betAmount: bet,
     ended: false,
     coverAabbs: coverBoxes.map(coverAabb),
-    weaponMode: 'all',
-    killsToWin: KILLS_TO_WIN,
+    weaponMode: resolvedMode,
+    killsToWin: resolvedRounds,
     isTeamMatch: true,
     teamSize,
     teamScores: { a: 0, b: 0 },
@@ -1244,10 +1326,10 @@ async function startMmMatch(io, queue, teamA, teamB) {
 
   const basePayload = {
     matchId: match.id, mapType,
-    mapName: 'Symmetrical', arenaSize: 40,
+    mapName, arenaSize,
     coverBoxes, spawnPoints: match.spawnPoints,
     endTime: match.endTime,
-    weaponMode: 'all', killsToWin: KILLS_TO_WIN,
+    weaponMode: resolvedMode, killsToWin: resolvedRounds,
     isTeamMatch: true, teamSize,
     players: Object.fromEntries(playerIds.map((sid, i) => {
       const p = players.get(sid);
@@ -2769,6 +2851,117 @@ function attach(io) {
     socket.on('mm_leave', (_, cb) => {
       removeFromMm(io, socket.id);
       cb?.({ ok: true });
+    });
+
+    // ── Voting in the MM waiting room ───────────────────────────────────
+    // Each member casts one vote per category. Votes live on the team
+    // until the match starts; on pairing, both teams' votes are merged
+    // and the existing resolve* helpers pick the winner (random tiebreak).
+    socket.on('mm_vote_map', ({ map } = {}) => {
+      const team = teamOfSocket(socket.id);
+      if (!team || !MAP_TYPES.includes(map)) return;
+      team.mapVotes[socket.id] = map;
+      broadcastMmTeam(io, team);
+    });
+    socket.on('mm_vote_mode', ({ mode } = {}) => {
+      const team = teamOfSocket(socket.id);
+      if (!team || !WEAPON_MODES.includes(mode)) return;
+      team.modeVotes[socket.id] = mode;
+      broadcastMmTeam(io, team);
+    });
+    socket.on('mm_vote_rounds', ({ rounds } = {}) => {
+      const team = teamOfSocket(socket.id);
+      if (!team) return;
+      const n = Number(rounds);
+      if (!ROUND_OPTIONS.includes(n)) return;
+      team.roundsVotes[socket.id] = n;
+      broadcastMmTeam(io, team);
+    });
+
+    // ── Friend invites (team modes only, sizes >= 2) ────────────────────
+    socket.on('mm_invite_friend', async ({ friendUserId } = {}, cb) => {
+      try {
+        const team = teamOfSocket(socket.id);
+        if (!team)               return cb?.({ error: 'not_in_team' });
+        if (team.teamSize < 2)   return cb?.({ error: 'no_invites_in_1v1' });
+        if (team.status !== 'forming') return cb?.({ error: 'team_full' });
+        if (team.members.length >= team.teamSize) return cb?.({ error: 'team_full' });
+
+        const me = players.get(socket.id);
+        if (!me) return cb?.({ error: 'not_ready' });
+        if (!(await areFriends(me.userId, friendUserId))) {
+          return cb?.({ error: 'not_friends' });
+        }
+        const targetSid = findShooterSocketByUserId(io, friendUserId);
+        if (!targetSid) return cb?.({ error: 'friend_not_online' });
+
+        const tp = players.get(targetSid);
+        if (tp?.currentMatch)  return cb?.({ error: 'friend_in_match' });
+        if (mmTeamBySocket.has(targetSid)) return cb?.({ error: 'friend_in_queue' });
+        if (team.pendingInvites.has(friendUserId)) return cb?.({ error: 'already_invited' });
+
+        // Stash the invite + expire it after 60 s so a stale invitation
+        // can't slot someone in mid-match later.
+        const timer = setTimeout(() => {
+          team.pendingInvites.delete(friendUserId);
+          ns.to(targetSid).emit('mm_invite_expired', { teamId: team.id });
+        }, 60_000);
+        team.pendingInvites.set(friendUserId, { timer, fromSocketId: socket.id });
+
+        ns.to(targetSid).emit('mm_invite_received', {
+          teamId: team.id,
+          fromUserId:    me.userId,
+          fromUsername:  me.username,
+          tier: team.tier,
+          teamSize: team.teamSize,
+          bet: team.bet,
+          filled: team.members.length,
+        });
+        cb?.({ ok: true });
+      } catch (e) { cb?.({ error: e.message || 'invite_failed' }); }
+    });
+
+    socket.on('mm_invite_accept', ({ teamId } = {}, cb) => {
+      const team = mmTeamById.get(teamId);
+      if (!team) return cb?.({ error: 'team_gone' });
+      const me = players.get(socket.id);
+      if (!me) return cb?.({ error: 'not_ready' });
+      const inv = team.pendingInvites.get(me.userId);
+      if (!inv) return cb?.({ error: 'invite_not_found' });
+      if (team.status !== 'forming' || team.members.length >= team.teamSize) {
+        team.pendingInvites.delete(me.userId);
+        clearTimeout(inv.timer);
+        return cb?.({ error: 'team_full' });
+      }
+      if (mmTeamBySocket.has(socket.id) || me.currentMatch || me.currentLobby || me.privateLobby) {
+        return cb?.({ error: 'already_in_something' });
+      }
+      // Slot directly into the team (skip queue lookup).
+      clearTimeout(inv.timer);
+      team.pendingInvites.delete(me.userId);
+      team.members.push({ socketId: socket.id, userId: me.userId, username: me.username });
+      mmTeamBySocket.set(socket.id, team.id);
+      if (team.members.length >= team.teamSize) team.status = 'full';
+      broadcastMmTeam(io, team);
+      if (team.status === 'full') {
+        const queue = getMmQueue(team.tier, team.teamSize);
+        tryPairMm(io, queue);
+      }
+      cb?.({ ok: true, teamId: team.id, status: team.status,
+             tier: team.tier, teamSize: team.teamSize, bet: team.bet });
+    });
+
+    socket.on('mm_invite_decline', ({ teamId } = {}) => {
+      const team = mmTeamById.get(teamId);
+      const me = players.get(socket.id);
+      if (!team || !me) return;
+      const inv = team.pendingInvites.get(me.userId);
+      if (!inv) return;
+      clearTimeout(inv.timer);
+      team.pendingInvites.delete(me.userId);
+      ns.to(inv.fromSocketId).emit('mm_invite_declined', {
+        userId: me.userId, username: me.username,
+      });
     });
 
     // ── Voice chat signaling (WebRTC P2P, teammates only) ──────────────

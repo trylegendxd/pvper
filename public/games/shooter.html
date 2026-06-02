@@ -44,6 +44,26 @@ input:focus { border-color:var(--accent); }
 .fmt-btn:active { transform:translateY(0); }
 .fmt-btn:disabled { opacity:0.4;cursor:not-allowed; }
 #fs-cancel:hover { background:#1a2230;color:#bbb; }
+
+/* MM waiting-room vote rows */
+.mm-vote-row { display:flex;flex-wrap:wrap;gap:6px; }
+.mm-vote-row button {
+  background:#1c2632;color:#cdd4dc;border:1px solid #2c3848;padding:7px 12px;
+  font-size:11px;letter-spacing:1px;cursor:pointer;transition:background .15s, border-color .15s, color .15s;
+}
+.mm-vote-row button:hover { background:#243140;border-color:#3a4558; }
+.mm-vote-row button.mm-vote-mine { background:#1f3b25;border-color:#2e5e36;color:#7fd97a; }
+.mm-vote-tally { font-size:10px;color:#666;letter-spacing:1px;margin-top:4px;min-height:14px; }
+.invite-friend-row {
+  display:flex;align-items:center;justify-content:space-between;
+  background:#1c2632;border:1px solid #2c3848;border-radius:4px;padding:8px 12px;font-size:13px;color:#fff;
+}
+.invite-friend-row button {
+  background:#22303f;border:1px solid #3a4558;color:#7fd97a;padding:5px 12px;
+  font-size:10px;letter-spacing:2px;cursor:pointer;
+}
+.invite-friend-row button:disabled { opacity:.4;cursor:default; }
+.invite-friend-row button:hover:not(:disabled) { background:#2f4459; }
 .btn-train { background:#1a2a1a;color:#5fa85f;padding:10px 20px;border:1px solid #2a4a2a;font-size:13px;letter-spacing:2px; }
 .btn-train:hover { background:#223322;border-color:#4a8a4a; }
 
@@ -673,19 +693,82 @@ input:focus { border-color:var(--accent); }
 <!-- Shown after clicking a team format. Server forms a team here, then
      pairs us with another full team for the actual match. -->
 <div id="screen-mm-waiting" class="screen menu-bg">
-  <div class="waiting-box">
+  <div class="waiting-box" style="max-width:680px;">
     <h2 id="mm-title">FORMING TEAM</h2>
     <div class="bet-display">
       <span id="mm-format-label" style="color:#fff;">—</span>
       <span style="color:#666;margin:0 6px;">·</span>
       <span id="mm-bet" style="color:var(--gold);">— cr</span>
     </div>
-    <div id="mm-team-list" style="margin:24px 0;display:flex;flex-direction:column;gap:6px;width:280px;"></div>
+    <div id="mm-team-list" style="margin:18px 0 10px;display:flex;flex-direction:column;gap:6px;width:340px;max-width:90%;"></div>
+    <button id="mm-invite-btn" onclick="App.openInviteFriends()"
+            style="display:none;background:#22303f;border:1px solid #3a4558;color:#7fd97a;padding:7px 16px;font-size:11px;letter-spacing:2px;cursor:pointer;margin-bottom:14px;">
+      + INVITE FRIENDS
+    </button>
+
+    <!-- Vote panels — collected during the wait, tallied across both
+         teams when the match is paired. -->
+    <div id="mm-vote-section" style="display:flex;flex-direction:column;gap:14px;margin:6px 0 14px;width:100%;max-width:520px;">
+      <div>
+        <div class="label" style="font-size:11px;letter-spacing:2px;color:var(--dim);margin-bottom:6px;">VOTE MAP</div>
+        <div id="mm-map-btns" class="mm-vote-row">
+          <button data-map="symmetrical" onclick="App.mmVoteMap('symmetrical')">⬛ Symmetrical</button>
+          <button data-map="random"      onclick="App.mmVoteMap('random')">🔀 Random</button>
+          <button data-map="cs_depot"    onclick="App.mmVoteMap('cs_depot')">🏭 Depot</button>
+        </div>
+        <div id="mm-map-tally" class="mm-vote-tally"></div>
+      </div>
+      <div>
+        <div class="label" style="font-size:11px;letter-spacing:2px;color:var(--dim);margin-bottom:6px;">VOTE WEAPONS</div>
+        <div id="mm-mode-btns" class="mm-vote-row">
+          <button data-mode="all"     onclick="App.mmVoteMode('all')">All</button>
+          <button data-mode="rifle"   onclick="App.mmVoteMode('rifle')">Rifle</button>
+          <button data-mode="pistol"  onclick="App.mmVoteMode('pistol')">Pistol</button>
+          <button data-mode="shotgun" onclick="App.mmVoteMode('shotgun')">Shotgun</button>
+          <button data-mode="sniper"  onclick="App.mmVoteMode('sniper')">Sniper</button>
+        </div>
+        <div id="mm-mode-tally" class="mm-vote-tally"></div>
+      </div>
+      <div>
+        <div class="label" style="font-size:11px;letter-spacing:2px;color:var(--dim);margin-bottom:6px;">VOTE ROUNDS</div>
+        <div id="mm-rounds-btns" class="mm-vote-row">
+          <button data-rounds="3" onclick="App.mmVoteRounds(3)">First to 3</button>
+          <button data-rounds="5" onclick="App.mmVoteRounds(5)">First to 5</button>
+          <button data-rounds="7" onclick="App.mmVoteRounds(7)">First to 7</button>
+        </div>
+        <div id="mm-rounds-tally" class="mm-vote-tally"></div>
+      </div>
+    </div>
+
     <div id="mm-status" style="color:var(--dim);font-size:13px;letter-spacing:1px;margin-bottom:6px;">Waiting for teammates<span class="waiting-dots"></span></div>
     <div id="mm-countdown-row" style="display:none;font-size:14px;letter-spacing:2px;color:var(--accent);margin-bottom:8px;">
       Match starts in <span id="mm-countdown-secs" style="font-size:22px;font-weight:700;color:#ffce4a;">5</span>s
     </div>
     <button class="btn-danger" onclick="App.leaveMmQueue()">CANCEL</button>
+  </div>
+</div>
+
+<!-- Invite friends modal — opens from the mm-invite-btn. -->
+<div id="overlay-invite-friends"
+     style="position:fixed;inset:0;background:rgba(0,0,0,.85);backdrop-filter:blur(6px);z-index:9100;display:none;align-items:center;justify-content:center;">
+  <div style="background:#161c25;border:1px solid #2a3548;border-radius:10px;padding:28px 32px;max-width:480px;width:90%;max-height:80vh;overflow-y:auto;">
+    <div style="font-size:11px;letter-spacing:4px;color:#7a8aa5;margin-bottom:6px;">INVITE A FRIEND</div>
+    <div style="font-size:18px;color:#fff;margin-bottom:18px;">Pick a friend to join your team</div>
+    <div id="invite-friends-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:18px;"></div>
+    <button onclick="App.closeInviteFriends()"
+            style="background:transparent;border:1px solid #404a5a;color:#888;padding:7px 18px;font-size:11px;letter-spacing:2px;cursor:pointer;">CLOSE</button>
+  </div>
+</div>
+
+<!-- Incoming-invite banner — appears at the top when a friend invites
+     you to their team. Auto-hides after 60 s (server-side TTL). -->
+<div id="overlay-invite-recv"
+     style="position:fixed;top:18px;left:50%;transform:translateX(-50%);background:#1a2230;border:1px solid #3a4558;border-radius:8px;padding:14px 20px;z-index:9200;display:none;box-shadow:0 6px 30px rgba(0,0,0,.6);min-width:380px;">
+  <div style="font-size:11px;letter-spacing:3px;color:#7fd97a;margin-bottom:4px;">TEAM INVITE</div>
+  <div id="invite-recv-text" style="color:#fff;font-size:14px;margin-bottom:10px;">— invited you</div>
+  <div style="display:flex;gap:8px;">
+    <button id="invite-accept" style="flex:1;background:#1f3b25;border:1px solid #2e5e36;color:#7fd97a;padding:8px;font-size:11px;letter-spacing:2px;cursor:pointer;">ACCEPT</button>
+    <button id="invite-decline" style="flex:1;background:#3a1010;border:1px solid #5a1515;color:#ff8080;padding:8px;font-size:11px;letter-spacing:2px;cursor:pointer;">DECLINE</button>
   </div>
 </div>
 
@@ -3807,6 +3890,16 @@ const UIManager = {
     if (overlay) overlay.addEventListener('click', (e) => {
       if (e.target === overlay) App.closeFormatSelect();
     });
+    // Friend-invite modal: click outside closes too.
+    const inviteOverlay = document.getElementById('overlay-invite-friends');
+    if (inviteOverlay) inviteOverlay.addEventListener('click', (e) => {
+      if (e.target === inviteOverlay) App.closeInviteFriends();
+    });
+    // Incoming-invite banner Accept / Decline.
+    const acceptBtn = document.getElementById('invite-accept');
+    if (acceptBtn) acceptBtn.addEventListener('click', () => App.acceptInvite());
+    const declineBtn = document.getElementById('invite-decline');
+    if (declineBtn) declineBtn.addEventListener('click', () => App.declineInvite());
   },
 
   openFormatSelect(lobby) {
@@ -3849,6 +3942,53 @@ const UIManager = {
       }
       list.appendChild(slot);
     }
+
+    // Friend invite button — only for team modes with open slots and
+    // while we're still forming (no point inviting if team is full).
+    const inviteBtn = document.getElementById('mm-invite-btn');
+    if (inviteBtn) {
+      const canInvite = data.teamSize >= 2 && data.status === 'forming' && filled < data.teamSize;
+      inviteBtn.style.display = canInvite ? '' : 'none';
+    }
+
+    // Vote tallies + highlight current player's pick. App.myId is set
+    // on match_start; in the waiting room we just use NetworkManager's
+    // socket id.
+    const mySid = NetworkManager.socket?.id;
+    this._renderMmVoteRow('map',    data.votes?.map    || {}, mySid, ['symmetrical','random','cs_depot']);
+    this._renderMmVoteRow('mode',   data.votes?.mode   || {}, mySid, ['all','rifle','pistol','shotgun','sniper']);
+    this._renderMmVoteRow('rounds', data.votes?.rounds || {}, mySid, [3,5,7]);
+  },
+
+  _renderMmVoteRow(kind, votes, mySid, options) {
+    const btnRow = document.getElementById(`mm-${kind}-btns`);
+    const tally  = document.getElementById(`mm-${kind}-tally`);
+    if (!btnRow || !tally) return;
+    const mineKey = kind === 'map' ? 'map' : kind === 'mode' ? 'mode' : 'rounds';
+    const myVote = votes[mySid];
+    // Highlight my selection.
+    const dataKey = kind === 'rounds' ? 'rounds' : kind;
+    for (const b of btnRow.querySelectorAll('button')) {
+      const val = b.dataset[dataKey];
+      const isMine = String(val) === String(myVote);
+      b.classList.toggle('mm-vote-mine', isMine);
+    }
+    // Build tally string like "Symmetrical 2 · Random 1".
+    const counts = {};
+    for (const v of Object.values(votes)) counts[v] = (counts[v] || 0) + 1;
+    const parts = [];
+    for (const opt of options) {
+      const c = counts[opt] || 0;
+      if (c > 0) parts.push(`${this._mmVoteLabel(kind, opt)} ${c}`);
+    }
+    tally.textContent = parts.length ? parts.join(' · ') : 'No votes yet';
+  },
+
+  _mmVoteLabel(kind, val) {
+    if (kind === 'map')    return { symmetrical:'Symmetrical', random:'Random', cs_depot:'Depot' }[val] || val;
+    if (kind === 'mode')   return val[0].toUpperCase() + val.slice(1);
+    if (kind === 'rounds') return `First to ${val}`;
+    return String(val);
   },
 
   showMmCountdown(secs) {
@@ -5929,6 +6069,9 @@ const NetworkManager = {
     s.on('mm_team_update',       d => { try { App.onMmTeamUpdate(d); }       catch (_) {} });
     s.on('mm_match_countdown',   d => { try { App.onMmMatchCountdown(d); }   catch (_) {} });
     s.on('mm_pair_cancelled',    d => { try { App.onMmPairCancelled(d); }    catch (_) {} });
+    s.on('mm_invite_received',   d => { try { App.onMmInviteReceived(d); }   catch (_) {} });
+    s.on('mm_invite_expired',    d => { try { App.onMmInviteExpired(d); }    catch (_) {} });
+    s.on('mm_invite_declined',   d => { try { App.onMmInviteDeclined(d); }   catch (_) {} });
     s.on('hit_result',          d => {
       if (d.hit) {
         UIManager.flashHitMarker(!!d.headshot);
@@ -6239,6 +6382,122 @@ const App = {
     UIManager.showMmCountdown(null);
     // The next mm_team_update will refresh the team UI back to 'full' /
     // 'forming' — nothing to do here beyond clearing the countdown.
+  },
+
+  // ── MM votes ────────────────────────────────────────────────────────
+  mmVoteMap(map)       { NetworkManager.socket.emit('mm_vote_map',    { map }); },
+  mmVoteMode(mode)     { NetworkManager.socket.emit('mm_vote_mode',   { mode }); },
+  mmVoteRounds(rounds) { NetworkManager.socket.emit('mm_vote_rounds', { rounds }); },
+
+  // ── Friend invites ───────────────────────────────────────────────────
+  async openInviteFriends() {
+    const modal = document.getElementById('overlay-invite-friends');
+    const list  = document.getElementById('invite-friends-list');
+    if (!modal || !list) return;
+    list.innerHTML = '<div style="color:#666;font-size:12px;letter-spacing:1px;">Loading…</div>';
+    modal.style.display = 'flex';
+    try {
+      const res = await fetch('/api/friends', { credentials: 'same-origin' });
+      const data = await res.json();
+      const friends = data.friends || [];
+      list.innerHTML = '';
+      if (!friends.length) {
+        list.innerHTML = '<div style="color:#666;font-size:12px;padding:10px;">No accepted friends yet. Add some from the dashboard.</div>';
+        return;
+      }
+      for (const f of friends) {
+        const row = document.createElement('div');
+        row.className = 'invite-friend-row';
+        row.innerHTML = `<span>${escapeHtml(f.username)}</span><button>INVITE</button>`;
+        const btn = row.querySelector('button');
+        btn.addEventListener('click', () => {
+          btn.disabled = true; btn.textContent = 'SENT…';
+          NetworkManager.socket.emit('mm_invite_friend', { friendUserId: f.userId }, (res) => {
+            if (res?.error) {
+              btn.disabled = false; btn.textContent = 'INVITE';
+              const friendly = {
+                not_in_team:        'You are not in a team.',
+                no_invites_in_1v1:  'Invites are only for team modes.',
+                team_full:          'Team is already full.',
+                not_friends:        'No longer friends.',
+                friend_not_online:  'That friend is not in the Shooter right now.',
+                friend_in_match:    'That friend is already in a match.',
+                friend_in_queue:    'That friend is already in another queue.',
+                already_invited:    'Already invited.',
+                not_ready:          'Connection still warming up.',
+              }[res.error] || res.error || 'Could not invite.';
+              alert(friendly);
+              return;
+            }
+            btn.textContent = '✓ SENT';
+          });
+        });
+        list.appendChild(row);
+      }
+    } catch (e) {
+      list.innerHTML = `<div style="color:#ff8080;font-size:12px;">Failed to load friends: ${escapeHtml(String(e?.message || e))}</div>`;
+    }
+  },
+  closeInviteFriends() {
+    const m = document.getElementById('overlay-invite-friends');
+    if (m) m.style.display = 'none';
+  },
+
+  // Incoming invite — show the banner. Buttons are wired once in
+  // App.init via the network setup.
+  onMmInviteReceived(data) {
+    this._pendingInvite = data;
+    const banner = document.getElementById('overlay-invite-recv');
+    if (!banner) return;
+    document.getElementById('invite-recv-text').innerHTML =
+      `<strong>${escapeHtml(data.fromUsername)}</strong> invited you to a ` +
+      `<span style="color:#ffce4a;">${data.tier?.toUpperCase()}</span> ` +
+      `<strong>${data.teamSize}v${data.teamSize}</strong> ` +
+      `(${data.filled}/${data.teamSize} · ${data.bet} cr)`;
+    banner.style.display = '';
+  },
+  onMmInviteExpired(data) {
+    if (this._pendingInvite?.teamId === data?.teamId) {
+      this._pendingInvite = null;
+      const banner = document.getElementById('overlay-invite-recv');
+      if (banner) banner.style.display = 'none';
+    }
+  },
+  onMmInviteDeclined(data) {
+    // Toast for the inviter (best-effort — no fancy library, just an
+    // ephemeral element).
+    const toast = document.createElement('div');
+    toast.textContent = `${data.username || 'Friend'} declined the invite`;
+    toast.style.cssText = 'position:fixed;bottom:30px;left:50%;transform:translateX(-50%);background:#3a1010;color:#ff8080;padding:10px 18px;border:1px solid #5a1515;font-size:12px;letter-spacing:1px;z-index:9300;';
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 3500);
+  },
+  acceptInvite() {
+    const inv = this._pendingInvite;
+    if (!inv) return;
+    document.getElementById('overlay-invite-recv').style.display = 'none';
+    this._pendingInvite = null;
+    NetworkManager.socket.emit('mm_invite_accept', { teamId: inv.teamId }, (res) => {
+      if (res?.error) {
+        alert({
+          team_gone:           'That team no longer exists.',
+          team_full:           'Team is already full.',
+          invite_not_found:    'Invite expired.',
+          already_in_something:'You are already in another lobby or match.',
+        }[res.error] || res.error || 'Could not accept invite.');
+        return;
+      }
+      // Drop into the MM waiting room — the mm_team_update broadcast
+      // will fill in the live team state.
+      UIManager.show('mm-waiting');
+    });
+  },
+  declineInvite() {
+    const inv = this._pendingInvite;
+    if (!inv) return;
+    document.getElementById('overlay-invite-recv').style.display = 'none';
+    this._pendingInvite = null;
+    NetworkManager.socket.emit('mm_invite_decline', { teamId: inv.teamId });
   },
 
   async joinLobby(id) {
