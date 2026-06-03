@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Friends · FPS Arena</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/styles.css">
+<style>
+.fr-wrap { max-width: 1100px; margin: 24px auto 60px; padding: 0 16px; }
+.fr-title { font-size: 26px; letter-spacing: 3px; color: #fff; margin-bottom: 4px; }
+.fr-sub   { color: var(--dim); font-size: 13px; letter-spacing: 1px; margin-bottom: 22px; }
+
+/* friends.js renders a 2-column layout into #friends-root by default;
+   override on this page to give it more breathing room. */
+.fr-stage {
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 8px;
+  padding: 0;
+  min-height: 70vh;
+  overflow: hidden;
+}
+.fr-stage > .friends-root {
+  min-height: 70vh;
+}
+@media (max-width: 700px) {
+  .fr-wrap { padding: 0 8px; }
+}
+
+.fr-help {
+  margin-top: 18px; padding: 14px 18px;
+  background: rgba(75, 158, 255, 0.04);
+  border: 1px solid rgba(75, 158, 255, 0.18); border-radius: 6px;
+  font-size: 12px; color: var(--dim); line-height: 1.6; letter-spacing: 1px;
+}
+.fr-help kbd {
+  background: #1a2230; border: 1px solid #2a3548; padding: 1px 6px;
+  border-radius: 3px; color: #fff; font-family: monospace; font-size: 11px;
+}
+</style>
+</head>
+<body>
+<div class="topbar" id="topbar"></div>
+<div class="fr-wrap">
+  <div class="fr-title">FRIENDS</div>
+  <div class="fr-sub">Manage your friend list, see who's online, and chat in DMs.</div>
+
+  <div class="fr-stage">
+    <div id="friends-root" class="friends-root">
+      <div class="friends-empty">Loading friends…</div>
+    </div>
+  </div>
+
+  <div class="fr-help">
+    Add a friend by their <strong>@username</strong> (not display name). Online status is live —
+    you'll see a green dot when they're connected to any FPS Arena page. Use the
+    <strong>+ INVITE FRIENDS</strong> button in the shooter waiting room to pull
+    them into your team; they get an Accept / Decline banner regardless of which
+    page they're on.
+  </div>
+</div>
+<div class="legal-footer">Credits are fictional play-money credits only and have no real-world monetary value.</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/auth.js"></script>
+<script src="/js/dollar-rain.js"></script>
+<script src="/js/music-player.js"></script>
+<script src="/js/notifications.js"></script>
+<script src="/js/friends.js"></script>
+<script>
+(async () => {
+  const user = await renderTopbar();
+  if (!user) return;
+  if (window.FriendsPanel) FriendsPanel.init();
+})();
+</script>
+</body>
+</html>

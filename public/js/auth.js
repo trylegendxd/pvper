@@ -26,6 +26,7 @@ async function renderTopbar({ requireUser = true } = {}) {
       <a href="/games/blackjack.html">Blackjack</a>
       <a href="/games/mines.html">Mines</a>
       <a href="/leaderboard.html">Leaderboard</a>
+      <a href="/friends.html">Friends</a>
       <a href="/achievements.html">Achievements</a>
       <a href="/my-matches.html">My Matches</a>
       <a href="/profile-edit.html">Profile</a>

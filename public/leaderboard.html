@@ -74,6 +74,7 @@
 <script src="/js/api.js"></script>
 <script src="/js/auth.js"></script>
 <script src="/js/dollar-rain.js"></script>
+<script src="/js/music-player.js"></script>
 <script src="/js/notifications.js"></script>
 <script>
 (async () => {
@@ -108,10 +109,24 @@
       </tr>
     </thead>
     <tbody>
-      ${rows.map((r, i) => `
+      ${rows.map((r, i) => {
+        const shown = r.display_name || r.username;
+        const init  = (shown[0] || '?').toUpperCase();
+        const avatar = r.avatar
+          ? `<img src="${escapeHtml(r.avatar)}" style="width:30px;height:30px;border-radius:50%;object-fit:cover;border:1px solid rgba(255,255,255,0.18);" alt="">`
+          : `<span style="display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:50%;background:#2a3548;color:#cdd4dc;font-size:13px;font-weight:700;border:1px solid rgba(255,255,255,0.12);">${escapeHtml(init)}</span>`;
+        const sub = r.display_name
+          ? `<div style="font-size:11px;color:var(--dim);font-weight:400;line-height:1.2;margin-top:2px;">@${escapeHtml(r.username)}</div>`
+          : '';
+        return `
         <tr class="${i === meIdx ? 'me' : ''}">
           <td class="rank">${i + 1}</td>
-          <td class="name"><a href="/profile.html?u=${encodeURIComponent(r.username)}" style="color:inherit;text-decoration:none;">${escapeHtml(r.username)}</a></td>
+          <td class="name">
+            <a href="/profile.html?u=${encodeURIComponent(r.username)}" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:10px;">
+              ${avatar}
+              <span>${escapeHtml(shown)}${sub}</span>
+            </a>
+          </td>
           <td class="mmr">${r.mmr ?? 1000}</td>
           <td class="num">${r.level ?? 1}</td>
           <td class="num" style="color:#7fd97a;">${r.wins ?? 0}</td>
@@ -119,8 +134,8 @@
           <td class="num">${r.kills ?? 0}</td>
           <td class="num">${r.deaths ?? 0}</td>
           <td class="num">${r.total_matches ?? 0}</td>
-        </tr>
-      `).join('')}
+        </tr>`;
+      }).join('')}
     </tbody>`;
   host.appendChild(table);
 

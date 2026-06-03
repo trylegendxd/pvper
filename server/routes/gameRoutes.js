@@ -134,10 +134,13 @@ router.get('/shooter/achievements', requireAuth, async (req, res) => {
 });
 
 // Top-N leaderboard by MMR — capped, public to logged-in players.
+// Includes both username (login id) and display_name so the client can
+// render the display name when set and fall back to the username.
 router.get('/shooter/leaderboard', requireAuth, async (_req, res) => {
   try {
     const { rows } = await pool.query(`
-      SELECT u.username, s.mmr, s.level, s.wins, s.losses, s.kills, s.deaths, s.total_matches
+      SELECT u.username, u.display_name, u.avatar,
+             s.mmr, s.level, s.wins, s.losses, s.kills, s.deaths, s.total_matches
         FROM shooter_player_stats s
         JOIN users u ON u.id = s.user_id
     ORDER BY s.mmr DESC
