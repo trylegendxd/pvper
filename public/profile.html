@@ -65,6 +65,7 @@
 
 <script src="/js/api.js"></script>
 <script src="/js/auth.js"></script>
+<script src="/js/notifications.js"></script>
 <script>
 function tierForMmr(mmr) {
   const m = Number(mmr) || 1000;
@@ -104,14 +105,20 @@ function tierForMmr(mmr) {
     ? new Date(p.member_since).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
     : '—';
 
+  const displayName = p.display_name || p.username;
+  const avatar = p.avatar
+    ? `<img src="${p.avatar}" style="width:84px;height:84px;border-radius:12px;object-fit:cover;border:2px solid ${t.color};">`
+    : `<div class="pr-tier" style="border-color:${t.color};color:${t.color};">${t.icon}</div>`;
   root.innerHTML = `
     <div class="pr-card">
       <div class="pr-head">
-        <div class="pr-tier" style="border-color:${t.color};color:${t.color};">${t.icon}</div>
-        <div>
-          <div class="pr-name">${escapeHtml(p.username)}${p.is_admin ? ' <span style="color:var(--gold);font-size:14px;">ADMIN</span>' : ''}</div>
+        ${avatar}
+        <div style="flex:1;min-width:0;">
+          <div class="pr-name">${escapeHtml(displayName)}${p.is_admin ? ' <span style="color:var(--gold);font-size:14px;">ADMIN</span>' : ''}</div>
+          ${p.display_name ? `<div style="font-size:12px;color:var(--dim);margin-top:2px;">@${escapeHtml(p.username)}</div>` : ''}
           <div class="pr-tier-name" style="color:${t.color};">${t.name} · Level ${s.level ?? 1}</div>
           <div class="pr-since">Joined ${escapeHtml(since)}</div>
+          ${p.bio ? `<div style="font-size:13px;color:#cdd4dc;margin-top:8px;max-width:480px;line-height:1.45;">${escapeHtml(p.bio)}</div>` : ''}
         </div>
       </div>
 

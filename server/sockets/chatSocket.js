@@ -86,6 +86,33 @@ function attach(io) {
       ns.to(`u:${toUserId}`).emit('typing', { fromUserId: userId });
     });
 
+    // ── Team invite decline (cross-page) ──────────────────────────────
+    // Friend declined via the notification banner from a non-shooter
+    // page. Relay through BOTH /chat and /shooter so the inviter sees
+    // a "X declined" toast wherever they happen to be sitting.
+    socket.on('team_invite_decline', ({ teamId, fromUserId } = {}) => {
+      if (!fromUserId || !teamId) return;
+      pool.query('SELECT username FROM users WHERE id=$1', [userId])
+        .then(({ rows }) => {
+          const byName = rows[0]?.username || 'Friend';
+          // /chat relay — anywhere notifications.js is loaded.
+          ns.to(`u:${fromUserId}`).emit('team_invite_declined', {
+            teamId, byUserId: userId, byUsername: byName,
+          });
+          // /shooter relay — the inviter is probably here. /shooter
+          // doesn't use u:<userId> rooms so we walk the connected
+          // sockets and emit directly.
+          const shooterNs = io.of('/shooter');
+          for (const [sid, sock] of shooterNs.sockets) {
+            if (sock?.data?.userId === fromUserId) {
+              shooterNs.to(sid).emit('mm_invite_declined', {
+                userId: userId, username: byName,
+              });
+            }
+          }
+        }).catch(() => {});
+    });
+
     socket.on('disconnect', async () => {
       const s = online.get(userId);
       if (s) {

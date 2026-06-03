@@ -6909,6 +6909,33 @@ const App = {
 
     UIManager.show('lobby');
     AudioManager.playMusic();
+
+    // Auto-accept a team invite via URL: /games/shooter.html?inv=<teamId>
+    // Notifications.js navigates to that URL when the user clicks
+    // Accept on a cross-page invite banner.
+    try {
+      const invTeamId = new URLSearchParams(location.search).get('inv');
+      if (invTeamId) {
+        // Strip the param from the URL so a refresh doesn't loop.
+        history.replaceState(null, '', location.pathname);
+        const tryAcceptOnce = () => {
+          NetworkManager.socket.emit('mm_invite_accept', { teamId: invTeamId }, (res) => {
+            if (res?.ok) {
+              UIManager.show('mm-waiting');
+            } else {
+              alert({
+                team_gone:            'That invite is no longer valid.',
+                team_full:            'Team is already full.',
+                invite_not_found:     'Invite expired.',
+                already_in_something: 'You are already in another lobby or match.',
+              }[res?.error] || 'Could not join the team.');
+            }
+          });
+        };
+        if (NetworkManager.socket?.connected) tryAcceptOnce();
+        else NetworkManager.socket?.once('shooter_ready', tryAcceptOnce);
+      }
+    } catch (_) {}
   },
 
   // ── New matchmaking flow (public lobbies, all formats) ──────────────

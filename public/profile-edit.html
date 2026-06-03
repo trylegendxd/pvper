@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Edit Profile · FPS Arena</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/styles.css">
+<style>
+.pe-wrap { max-width: 640px; margin: 24px auto 60px; padding: 0 16px; }
+.pe-title { font-size: 26px; letter-spacing: 3px; color: #fff; margin-bottom: 4px; }
+.pe-sub   { color: var(--dim); font-size: 13px; letter-spacing: 1px; margin-bottom: 22px; }
+.pe-card {
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 8px; padding: 26px 30px; margin-bottom: 18px;
+}
+.pe-section-title {
+  font-size: 11px; letter-spacing: 3px; color: var(--dim);
+  margin-bottom: 14px; text-transform: uppercase;
+}
+.pe-field { margin-bottom: 18px; }
+.pe-label { display: block; font-size: 11px; letter-spacing: 2px; color: var(--dim); margin-bottom: 6px; text-transform: uppercase; }
+.pe-hint  { font-size: 11px; color: var(--dim); margin-top: 4px; }
+.pe-input, .pe-textarea {
+  width: 100%; background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.1); color: #fff;
+  padding: 10px 14px; font-size: 14px; border-radius: 4px;
+  font-family: inherit; box-sizing: border-box;
+}
+.pe-input:focus, .pe-textarea:focus { outline: none; border-color: var(--gold); }
+.pe-textarea { resize: vertical; min-height: 70px; max-height: 200px; }
+.pe-username-display {
+  background: rgba(255,255,255,0.02); border: 1px dashed rgba(255,255,255,0.1);
+  padding: 10px 14px; color: var(--dim); border-radius: 4px;
+  display: flex; align-items: center; gap: 10px;
+}
+
+.pe-avatar-row { display: flex; gap: 22px; align-items: flex-start; }
+.pe-avatar-preview {
+  width: 110px; height: 110px; flex-shrink: 0; border-radius: 50%;
+  background: rgba(255,255,255,0.04); border: 2px solid rgba(255,255,255,0.12);
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden; font-size: 44px; color: var(--dim);
+}
+.pe-avatar-preview img { width: 100%; height: 100%; object-fit: cover; }
+.pe-avatar-actions { display: flex; flex-direction: column; gap: 8px; }
+.pe-btn-file {
+  background: #22303f; border: 1px solid #3a4558; color: #fff;
+  padding: 9px 18px; font-size: 12px; letter-spacing: 2px; cursor: pointer;
+  display: inline-block; text-align: center;
+}
+.pe-btn-file:hover { background: #2f4459; }
+.pe-btn-clear {
+  background: transparent; border: 1px solid #404a5a; color: #888;
+  padding: 7px 16px; font-size: 11px; letter-spacing: 2px; cursor: pointer;
+}
+.pe-btn-clear:hover { color: #ccc; }
+
+.pe-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 6px; }
+.pe-save {
+  background: linear-gradient(135deg, #ffce4a 0%, #ffb030 100%);
+  border: 0; color: #000; padding: 12px 28px;
+  font-size: 13px; letter-spacing: 2px; font-weight: 700; cursor: pointer;
+  border-radius: 4px;
+}
+.pe-save:hover { filter: brightness(1.08); }
+.pe-save:disabled { opacity: 0.55; cursor: not-allowed; }
+.pe-msg { padding: 12px 16px; border-radius: 4px; font-size: 12px; margin-bottom: 14px; display: none; }
+.pe-msg.ok    { background: rgba(127, 217, 122, 0.08); border: 1px solid rgba(127, 217, 122, 0.4); color: #7fd97a; display: block; }
+.pe-msg.error { background: rgba(255, 100, 100, 0.08); border: 1px solid rgba(255, 100, 100, 0.4); color: #ff8080; display: block; }
+.pe-counter { font-size: 11px; color: var(--dim); float: right; }
+.pe-counter.warn { color: #ffb030; }
+.pe-counter.over { color: #ff8080; }
+</style>
+</head>
+<body>
+<div class="topbar" id="topbar"></div>
+<div class="pe-wrap">
+  <div class="pe-title">EDIT PROFILE</div>
+  <div class="pe-sub">Your display name, avatar and bio show up on the leaderboard, profile page, and killfeed.</div>
+
+  <div id="pe-msg" class="pe-msg"></div>
+
+  <form id="pe-form">
+    <!-- Avatar -->
+    <div class="pe-card">
+      <div class="pe-section-title">Avatar</div>
+      <div class="pe-avatar-row">
+        <div class="pe-avatar-preview" id="pe-avatar-preview">
+          <span id="pe-avatar-placeholder">?</span>
+        </div>
+        <div class="pe-avatar-actions">
+          <label class="pe-btn-file">
+            UPLOAD IMAGE
+            <input type="file" id="pe-avatar-input" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none;">
+          </label>
+          <button type="button" class="pe-btn-clear" id="pe-avatar-clear">REMOVE</button>
+          <div class="pe-hint">PNG / JPG / WebP / GIF up to ~200 KB. Resized to 256×256.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Identity -->
+    <div class="pe-card">
+      <div class="pe-section-title">Identity</div>
+      <div class="pe-field">
+        <label class="pe-label">Username (login — can't change)</label>
+        <div class="pe-username-display"><span style="font-size:16px;">@</span><span id="pe-username" style="color:#fff;">—</span></div>
+      </div>
+      <div class="pe-field">
+        <label class="pe-label">
+          Display Name
+          <span class="pe-counter" id="pe-name-counter">0 / 32</span>
+        </label>
+        <input type="text" id="pe-display-name" class="pe-input"
+               maxlength="32" placeholder="Same as your username if blank">
+        <div class="pe-hint">Shows up in the killfeed, scoreboard, and on your profile.</div>
+      </div>
+      <div class="pe-field">
+        <label class="pe-label">
+          Bio
+          <span class="pe-counter" id="pe-bio-counter">0 / 280</span>
+        </label>
+        <textarea id="pe-bio" class="pe-textarea" maxlength="280" placeholder="Tell people who you are…"></textarea>
+      </div>
+    </div>
+
+    <div class="pe-actions">
+      <button type="button" class="pe-btn-clear" onclick="location.href='/profile.html'">VIEW MY PROFILE</button>
+      <button type="submit" class="pe-save" id="pe-save">SAVE CHANGES</button>
+    </div>
+  </form>
+</div>
+<div class="legal-footer">Credits are fictional play-money credits only and have no real-world monetary value.</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/auth.js"></script>
+<script src="/js/notifications.js"></script>
+<script>
+(async () => {
+  const user = await renderTopbar();
+  if (!user) return;
+
+  const elName   = document.getElementById('pe-display-name');
+  const elBio    = document.getElementById('pe-bio');
+  const elUname  = document.getElementById('pe-username');
+  const elPrev   = document.getElementById('pe-avatar-preview');
+  const elPlace  = document.getElementById('pe-avatar-placeholder');
+  const elInput  = document.getElementById('pe-avatar-input');
+  const elClear  = document.getElementById('pe-avatar-clear');
+  const elSave   = document.getElementById('pe-save');
+  const elMsg    = document.getElementById('pe-msg');
+  const elNameCount = document.getElementById('pe-name-counter');
+  const elBioCount  = document.getElementById('pe-bio-counter');
+
+  let avatarData = user.avatar || null;
+  let avatarChanged = false;
+
+  elUname.textContent = user.username;
+  elName.value = user.display_name || '';
+  elBio.value  = user.bio || '';
+  renderAvatar();
+  updateCounters();
+
+  function showMsg(text, kind) {
+    elMsg.className = 'pe-msg ' + (kind || '');
+    elMsg.textContent = text;
+    if (kind === 'ok') setTimeout(() => { elMsg.className = 'pe-msg'; }, 3500);
+  }
+  function renderAvatar() {
+    elPrev.innerHTML = '';
+    if (avatarData) {
+      const img = document.createElement('img');
+      img.src = avatarData;
+      elPrev.appendChild(img);
+    } else {
+      const ph = document.createElement('span');
+      ph.id = 'pe-avatar-placeholder';
+      ph.textContent = (user.username[0] || '?').toUpperCase();
+      ph.style.fontSize = '44px';
+      ph.style.color = 'var(--dim)';
+      elPrev.appendChild(ph);
+    }
+  }
+  function updateCounters() {
+    const n1 = elName.value.length;
+    elNameCount.textContent = n1 + ' / 32';
+    elNameCount.className = 'pe-counter' + (n1 > 28 ? ' warn' : '') + (n1 > 32 ? ' over' : '');
+    const n2 = elBio.value.length;
+    elBioCount.textContent = n2 + ' / 280';
+    elBioCount.className = 'pe-counter' + (n2 > 240 ? ' warn' : '') + (n2 > 280 ? ' over' : '');
+  }
+  elName.addEventListener('input', updateCounters);
+  elBio.addEventListener('input', updateCounters);
+
+  // Resize the picked image client-side to a 256×256 JPEG before
+  // uploading so the avatar fits the server's 200 KB cap.
+  elInput.addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!/^image\//.test(file.type)) { showMsg('Only image files are accepted.', 'error'); return; }
+    if (file.size > 6 * 1024 * 1024) { showMsg('Image must be smaller than 6 MB.', 'error'); return; }
+    try {
+      avatarData = await resizeAvatar(file);
+      avatarChanged = true;
+      renderAvatar();
+      showMsg('Avatar ready — click SAVE CHANGES to apply.', 'ok');
+    } catch (err) {
+      showMsg('Failed to load image: ' + (err.message || err), 'error');
+    }
+  });
+  elClear.addEventListener('click', () => {
+    avatarData = null;
+    avatarChanged = true;
+    renderAvatar();
+  });
+
+  function resizeAvatar(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = 256; canvas.height = 256;
+          const ctx = canvas.getContext('2d');
+          // Cover-style centered crop.
+          const s = Math.min(img.width, img.height);
+          const sx = (img.width - s) / 2;
+          const sy = (img.height - s) / 2;
+          ctx.fillStyle = '#1a1f28';
+          ctx.fillRect(0, 0, 256, 256);
+          ctx.drawImage(img, sx, sy, s, s, 0, 0, 256, 256);
+          resolve(canvas.toDataURL('image/jpeg', 0.82));
+        };
+        img.onerror = () => reject(new Error('decode_failed'));
+        img.src = reader.result;
+      };
+      reader.onerror = () => reject(new Error('read_failed'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  document.getElementById('pe-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    elSave.disabled = true; elSave.textContent = 'SAVING…';
+    const body = {
+      display_name: elName.value.trim() || null,
+      bio:          elBio.value.trim() || null,
+    };
+    if (avatarChanged) body.avatar = avatarData;
+    try {
+      const res = await api('/api/auth/me', { method: 'PATCH', body });
+      Object.assign(user, res.user);  // refresh local copy
+      avatarChanged = false;
+      showMsg('Profile saved.', 'ok');
+      // Refresh the topbar so the new avatar / display name show up.
+      await renderTopbar();
+    } catch (err) {
+      const friendly = {
+        invalid_display_name: 'Display name must be 1 to 32 characters.',
+        invalid_bio:          'Bio must be 280 characters or less.',
+        invalid_avatar_format:'Avatar must be a PNG, JPG, GIF, or WebP.',
+        avatar_too_large:     'Avatar is too large after resize. Try a smaller image.',
+        not_authenticated:    'Session expired — please log in again.',
+      }[err.data?.error || err.message] || err.message || 'Save failed.';
+      showMsg(friendly, 'error');
+    } finally {
+      elSave.disabled = false; elSave.textContent = 'SAVE CHANGES';
+    }
+  });
+})();
+</script>
+</body>
+</html>

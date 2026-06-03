@@ -33,7 +33,10 @@ async function renderTopbar({ requireUser = true } = {}) {
     </div>
     <div class="user">
       ${user ? `
-        <span class="username">${escapeHtml(user.username)}</span>
+        <a href="/profile-edit.html" class="user-chip" title="Edit profile" style="display:inline-flex;align-items:center;gap:8px;text-decoration:none;color:inherit;">
+          ${avatarChip(user)}
+          <span class="username">${escapeHtml(user.display_name || user.username)}</span>
+        </a>
         <span class="balance">${fmtCredits(user.balance)}</span>
         <button id="logout-btn">Logout</button>
       ` : `<a href="/login.html">Login</a>`}
@@ -53,6 +56,23 @@ function escapeHtml(s) {
   }[c]));
 }
 
+// Small avatar bubble for the topbar. Falls back to the first
+// initial of the username when no avatar is uploaded.
+function avatarChip(user) {
+  if (!user) return '';
+  const initial = (user.display_name || user.username || '?')[0].toUpperCase();
+  if (user.avatar) {
+    return `<img class="avatar-chip" src="${user.avatar}" alt="" referrerpolicy="no-referrer"
+              style="width:28px;height:28px;border-radius:50%;object-fit:cover;border:1px solid rgba(255,255,255,0.18);">`;
+  }
+  return `<span class="avatar-chip"
+            style="width:28px;height:28px;border-radius:50%;background:#2a3548;color:#cdd4dc;
+                   display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;border:1px solid rgba(255,255,255,0.12);">
+            ${escapeHtml(initial)}
+          </span>`;
+}
+
 window.loadMe = loadMe;
 window.renderTopbar = renderTopbar;
 window.escapeHtml = escapeHtml;
+window.avatarChip = avatarChip;

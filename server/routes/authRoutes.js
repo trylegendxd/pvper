@@ -49,4 +49,17 @@ router.get('/me', async (req, res) => {
   res.json({ user: me });
 });
 
+// Edit the player's own profile — display name, avatar (data URL),
+// bio. Express body limit is 100 KB by default in app.js; raise it
+// locally for this route so an avatar fits.
+router.patch('/me', express.json({ limit: '300kb' }), async (req, res) => {
+  try {
+    if (!req.session?.userId) return res.status(401).json({ error: 'not_authenticated' });
+    const updated = await auth.updateProfile(req.session.userId, req.body || {});
+    res.json({ ok: true, user: updated });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message || 'update_failed' });
+  }
+});
+
 module.exports = router;

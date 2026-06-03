@@ -96,7 +96,7 @@ async function login(username, password) {
 async function currentUser(userId) {
   if (!userId) return null;
   const { rows } = await pool.query(
-    `SELECT u.id, u.username, u.is_admin, w.balance
+    `SELECT u.id, u.username, u.is_admin, u.display_name, u.avatar, u.bio, w.balance
        FROM users u
   LEFT JOIN wallets w ON w.user_id = u.id
       WHERE u.id = $1`,
@@ -107,8 +107,77 @@ async function currentUser(userId) {
     id: rows[0].id,
     username: rows[0].username,
     is_admin: !!rows[0].is_admin,
+    display_name: rows[0].display_name || null,
+    avatar: rows[0].avatar || null,
+    bio: rows[0].bio || null,
     balance: Number(rows[0].balance || 0),
   };
 }
 
-module.exports = { register, login, currentUser, STARTING_CREDITS };
+// Patch the editable profile fields. Returns the updated currentUser
+// snapshot. Strict validation: display_name length, bio length, avatar
+// size (~200 KB after base64). Each field is optional — only the keys
+// supplied in `updates` are touched.
+async function updateProfile(userId, updates = {}) {
+  if (!userId) {
+    const err = new Error('not_authenticated'); err.status = 401; throw err;
+  }
+  const setClauses = [];
+  const values = [];
+  const push = (col, val) => {
+    values.push(val);
+    setClauses.push(`${col} = $${values.length}`);
+  };
+
+  if (updates.display_name !== undefined) {
+    if (updates.display_name === null || updates.display_name === '') {
+      push('display_name', null);
+    } else {
+      const dn = String(updates.display_name).trim();
+      if (dn.length < 1 || dn.length > 32) {
+        const e = new Error('invalid_display_name'); e.status = 400; throw e;
+      }
+      push('display_name', dn);
+    }
+  }
+  if (updates.bio !== undefined) {
+    if (updates.bio === null || updates.bio === '') {
+      push('bio', null);
+    } else {
+      const b = String(updates.bio);
+      if (b.length > 280) {
+        const e = new Error('invalid_bio'); e.status = 400; throw e;
+      }
+      push('bio', b);
+    }
+  }
+  if (updates.avatar !== undefined) {
+    if (updates.avatar === null || updates.avatar === '') {
+      push('avatar', null);
+    } else {
+      const a = String(updates.avatar);
+      // Must be a data URL — anything else (remote URL etc) is rejected
+      // so the rendering side stays free of CORS / SSRF concerns.
+      if (!/^data:image\/(png|jpe?g|gif|webp);base64,/.test(a)) {
+        const e = new Error('invalid_avatar_format'); e.status = 400; throw e;
+      }
+      // Cap at ~270 KB of base64 (≈ 200 KB binary). Anything larger is
+      // almost certainly an unscaled phone photo.
+      if (a.length > 270 * 1024) {
+        const e = new Error('avatar_too_large'); e.status = 413; throw e;
+      }
+      push('avatar', a);
+    }
+  }
+
+  if (!setClauses.length) return currentUser(userId);
+
+  values.push(userId);
+  await pool.query(
+    `UPDATE users SET ${setClauses.join(', ')} WHERE id = $${values.length}`,
+    values
+  );
+  return currentUser(userId);
+}
+
+module.exports = { register, login, currentUser, updateProfile, STARTING_CREDITS };

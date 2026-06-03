@@ -82,7 +82,7 @@ router.get('/shooter/profile/:username', requireAuth, async (req, res) => {
     const uname = String(req.params.username || '').trim();
     if (!uname) return res.status(400).json({ error: 'missing_username' });
     const { rows: u } = await pool.query(
-      `SELECT id, username, is_admin, created_at FROM users
+      `SELECT id, username, is_admin, display_name, avatar, bio, created_at FROM users
         WHERE lower(username) = lower($1)`,
       [uname]
     );
@@ -107,6 +107,9 @@ router.get('/shooter/profile/:username', requireAuth, async (req, res) => {
       ok: true,
       profile: {
         username: user.username,
+        display_name: user.display_name || null,
+        avatar: user.avatar || null,
+        bio: user.bio || null,
         is_admin: user.is_admin,
         member_since: user.created_at,
         stats,

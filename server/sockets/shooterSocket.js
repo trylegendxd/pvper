@@ -3152,23 +3152,36 @@ function attach(io) {
         if (!(await areFriends(me.userId, friendUserId))) {
           return cb?.({ error: 'not_friends' });
         }
-        const targetSid = findShooterSocketByUserId(io, friendUserId);
-        if (!targetSid) return cb?.({ error: 'friend_not_online' });
-
-        const tp = players.get(targetSid);
-        if (tp?.currentMatch)  return cb?.({ error: 'friend_in_match' });
-        if (mmTeamBySocket.has(targetSid)) return cb?.({ error: 'friend_in_queue' });
         if (team.pendingInvites.has(friendUserId)) return cb?.({ error: 'already_invited' });
 
-        // Stash the invite + expire it after 60 s so a stale invitation
-        // can't slot someone in mid-match later.
+        const targetSid = findShooterSocketByUserId(io, friendUserId);
+        // If the friend IS on the shooter page, the existing path also
+        // validates that they're not already in a match / queue. If
+        // they're on another page (dashboard, leaderboard, …) we still
+        // send the invite via the /chat namespace and let the shooter
+        // page do the "already in something" check when they actually
+        // try to accept.
+        let chatOnly = false;
+        if (targetSid) {
+          const tp = players.get(targetSid);
+          if (tp?.currentMatch)               return cb?.({ error: 'friend_in_match' });
+          if (mmTeamBySocket.has(targetSid))  return cb?.({ error: 'friend_in_queue' });
+        } else {
+          chatOnly = true;
+        }
+
+        // Stash the invite + expire after 90 s. Slightly longer than
+        // the original 60 s because cross-page accepts need time for
+        // the friend to navigate to /shooter.
+        const TTL_MS = 90_000;
         const timer = setTimeout(() => {
           team.pendingInvites.delete(friendUserId);
-          ns.to(targetSid).emit('mm_invite_expired', { teamId: team.id });
-        }, 60_000);
+          if (targetSid) ns.to(targetSid).emit('mm_invite_expired', { teamId: team.id });
+          io.of('/chat').to('u:' + friendUserId).emit('team_invite_expired', { teamId: team.id });
+        }, TTL_MS);
         team.pendingInvites.set(friendUserId, { timer, fromSocketId: socket.id });
 
-        ns.to(targetSid).emit('mm_invite_received', {
+        const payload = {
           teamId: team.id,
           fromUserId:    me.userId,
           fromUsername:  me.username,
@@ -3176,8 +3189,16 @@ function attach(io) {
           teamSize: team.teamSize,
           bet: team.bet,
           filled: team.members.length,
-        });
-        cb?.({ ok: true });
+          // The shooter URL the invitee should hit on Accept when they
+          // aren't already on the shooter page.
+          joinUrl: '/games/shooter.html?inv=' + encodeURIComponent(team.id),
+        };
+        // Deliver via /shooter when present, AND always via /chat so the
+        // friend sees the toast no matter what page they're on. The
+        // chat handler is what guarantees cross-page reach.
+        if (targetSid) ns.to(targetSid).emit('mm_invite_received', payload);
+        io.of('/chat').to('u:' + friendUserId).emit('team_invite_received', payload);
+        cb?.({ ok: true, deliveredVia: chatOnly ? 'chat' : 'shooter+chat' });
       } catch (e) { cb?.({ error: e.message || 'invite_failed' }); }
     });
 
