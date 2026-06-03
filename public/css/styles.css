@@ -23,11 +23,19 @@ html, body {
 }
 
 body {
-  background-image:
-    linear-gradient(rgba(75,158,255,.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(75,158,255,.04) 1px, transparent 1px);
-  background-size: 40px 40px;
+  /* The faint grid lines used to live here; the falling-dollars canvas
+     (public/js/dollar-rain.js) replaces them on menu pages, so the body
+     stays a flat dark base behind everything. */
   min-height: 100vh;
+  position: relative;
+}
+/* The dollar-rain canvas appends to body with z-index 0; everything
+   else on the page sits above it via a positioned stacking context. */
+.topbar, .container, .lobby-header, .lobby-grid, .screen,
+.lb-wrap, .pe-wrap, .ach-wrap, .mm-wrap, .pr-wrap, .friends-root,
+.legal-footer {
+  position: relative;
+  z-index: 1;
 }
 
 a { color: var(--accent); text-decoration: none; }

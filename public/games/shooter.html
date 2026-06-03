@@ -1136,8 +1136,19 @@ input:focus { border-color:var(--accent); }
       <input type="range" id="set-sfx" min="0" max="100" step="1" value="80">
     </div>
 
+    <!-- Track picker — populated from /audio-files at boot. The empty
+         value means "auto rotate": when one song ends the next plays
+         until the user pins a specific track. -->
+    <div class="setting-row">
+      <div class="sr-head"><label>Music track</label><span class="sr-val" id="sv-track">Auto rotate</span></div>
+      <select id="set-track"
+              style="width:100%;background:rgba(0,0,0,.4);border:1px solid #444;color:#fff;padding:8px 10px;font-family:inherit;font-size:13px;border-radius:3px;">
+        <option value="">— Auto (next song after this one) —</option>
+      </select>
+    </div>
+
     <div class="controls-hint">
-      <b>WASD</b> move · <b>Shift</b> sprint · <b>C</b> crouch · <b>Space</b> jump · <b>Left Click</b> shoot · <b>1/2/3/4</b> weapons · <b>R</b> reload · <b>Esc</b> pause
+      <b>WASD</b> move · <b>Shift</b> sprint · <b>C</b> crouch · <b>Space</b> jump · <b>Left Click</b> shoot · <b>1/2/3/4</b> weapons · <b>R</b> reload · <b>Y</b> all-chat · <b>U</b> team-chat · <b>Tab</b> scoreboard · <b>Esc</b> pause
     </div>
 
     <div class="settings-btns">
@@ -1288,8 +1299,15 @@ function rayHitInfo(ray, box, maxDist = 80) {
 const AudioManager = {
   ctx:        null,
   masterSfx:  null,   // GainNode — SFX bus
-  _music:     null,   // HTMLAudioElement — looping menu music
+  _music:     null,   // HTMLAudioElement — the currently-playing menu track
   _musicVol:  0.45,
+  // Playlist + selection state. _playlist is the filename list returned
+  // by /audio-files. _trackIndex is the index currently playing.
+  // _selectedTrack is null when the user wants auto-rotate (when one
+  // song ends the next plays), or a filename when they pinned a song.
+  _playlist:       [],
+  _trackIndex:     0,
+  _selectedTrack:  null,
   _sfxVol:    0.8,
   _gunshotBuf: null,  // decoded AudioBuffer — default/fallback gunshot
   // Per-weapon decoded buffers — picked by name in playShoot() and
@@ -1347,8 +1365,17 @@ const AudioManager = {
       const s = JSON.parse(localStorage.getItem('fps_settings') || '{}');
       if (typeof s.musicVol === 'number') this._musicVol = s.musicVol;
       if (typeof s.sfxVol   === 'number') this._sfxVol   = s.sfxVol;
+      if (typeof s.selectedTrack === 'string') this._selectedTrack = s.selectedTrack;
       if (this.masterSfx) this.masterSfx.gain.value = this._sfxVol;
     } catch(e) {}
+  },
+
+  _saveTrackPreference() {
+    try {
+      const s = JSON.parse(localStorage.getItem('fps_settings') || '{}');
+      s.selectedTrack = this._selectedTrack;
+      localStorage.setItem('fps_settings', JSON.stringify(s));
+    } catch(_) {}
   },
 
   async _fetchAndLoadMusic() {
@@ -1356,14 +1383,73 @@ const AudioManager = {
       const res = await fetch('/audio-files');
       const files = await res.json();
       if (!files.length) return;
-      this._music = new Audio(`/audio/${encodeURIComponent(files[0])}`);
-      this._music.loop = true;
-      this._music.volume = this._musicVol;
-      // If something asked to play before we loaded, do it now
-      if (this._wantMusic && this._unlocked) {
-        this._music.play().catch(() => {});
+      this._playlist = files;
+      // Decide the starting index: honour the user's pinned choice when
+      // it's still in the playlist, otherwise start at 0.
+      let idx = 0;
+      if (this._selectedTrack) {
+        const i = files.indexOf(this._selectedTrack);
+        if (i >= 0) idx = i;
+        else this._selectedTrack = null; // pinned track gone — drop it
       }
+      this._loadTrack(idx, /*autoplay*/ this._wantMusic && this._unlocked);
     } catch(e) {}
+  },
+
+  // Switch to a track by index and optionally start playing. Wires the
+  // 'ended' event so we auto-advance when the user hasn't pinned a
+  // specific song.
+  _loadTrack(idx, autoplay) {
+    if (!this._playlist?.length) return;
+    if (idx < 0 || idx >= this._playlist.length) idx = 0;
+    this._trackIndex = idx;
+    const file = this._playlist[idx];
+
+    // Tear down the old Audio element so it doesn't keep firing events.
+    if (this._music) {
+      try { this._music.pause(); } catch (_) {}
+      this._music.onended = null;
+      this._music.src = '';
+    }
+    this._music = new Audio(`/audio/${encodeURIComponent(file)}`);
+    this._music.loop = false;
+    this._music.volume = this._musicVol;
+    this._music.onended = () => {
+      // Always advance to the next track on end. The user's pinned
+      // pick (_selectedTrack) only controls WHERE to start; once that
+      // song ends, the rotation kicks in just like before.
+      this._loadTrack((this._trackIndex + 1) % this._playlist.length, true);
+    };
+    if (autoplay) this._music.play().catch(() => {});
+  },
+
+  // Switch to a specific track by filename (called from the settings
+  // UI). passes null/empty to clear pin → auto-rotate continues.
+  setSelectedTrack(filename) {
+    if (filename && this._playlist?.includes(filename)) {
+      this._selectedTrack = filename;
+      const idx = this._playlist.indexOf(filename);
+      this._loadTrack(idx, this._wantMusic && this._unlocked);
+    } else {
+      // Empty / null means "auto-rotate from current position".
+      this._selectedTrack = null;
+    }
+    this._saveTrackPreference();
+  },
+
+  // Used by the settings UI to render the dropdown.
+  getPlaylist() { return [...(this._playlist || [])]; },
+  getCurrentTrack() {
+    return this._playlist?.[this._trackIndex] || null;
+  },
+  getSelectedTrack() { return this._selectedTrack; },
+
+  // Pretty label for a filename — strips the extension and replaces
+  // underscores with spaces, then title-cases.
+  prettyTrackName(filename) {
+    if (!filename) return '';
+    const stem = filename.replace(/\.[^.]+$/, '').replace(/_/g, ' ');
+    return stem.replace(/\b\w/g, c => c.toUpperCase());
   },
 
   async _loadSfxBuffers() {
@@ -6889,6 +6975,42 @@ const App = {
       Settings.set('sfxVol', v);
       AudioManager.setSfxVolume(v);
       document.getElementById('sv-sfx').textContent = e.target.value + '%';
+    });
+
+    // ── Music track picker ─────────────────────────────────────────────
+    // /audio-files takes a moment to come back, so we poll briefly.
+    // Filenames stay raw in the value (round-trip through setSelectedTrack),
+    // pretty names go in the option text.
+    const trackSel = document.getElementById('set-track');
+    const trackSv  = document.getElementById('sv-track');
+    const populateTrackList = () => {
+      const list = AudioManager.getPlaylist?.() || [];
+      if (!list.length) { setTimeout(populateTrackList, 600); return; }
+      // Drop any non-default options so a repaint doesn't duplicate them.
+      while (trackSel.options.length > 1) trackSel.remove(1);
+      for (const f of list) {
+        const opt = document.createElement('option');
+        opt.value = f;
+        opt.textContent = AudioManager.prettyTrackName?.(f) || f;
+        trackSel.appendChild(opt);
+      }
+      const pinned  = AudioManager.getSelectedTrack?.() || '';
+      const current = AudioManager.getCurrentTrack?.()  || '';
+      trackSel.value = pinned;
+      trackSv.textContent = pinned
+        ? AudioManager.prettyTrackName(pinned)
+        : (current ? 'Auto · now: ' + AudioManager.prettyTrackName(current) : 'Auto rotate');
+    };
+    populateTrackList();
+    trackSel.addEventListener('change', e => {
+      const v = e.target.value;
+      AudioManager.setSelectedTrack(v);
+      // Re-render the side label.
+      if (v) trackSv.textContent = AudioManager.prettyTrackName(v);
+      else {
+        const cur = AudioManager.getCurrentTrack();
+        trackSv.textContent = cur ? 'Auto · now: ' + AudioManager.prettyTrackName(cur) : 'Auto rotate';
+      }
     });
   },
 
