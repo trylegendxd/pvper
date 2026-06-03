@@ -25,6 +25,100 @@ router.get('/shooter/stats', requireAuth, async (req, res) => {
   }
 });
 
+// Personal shooter match history. Pulls every game_sessions row of
+// game_type='shooter' the requesting user participated in (via the
+// wallet ledger join on ref_type='shooter') and rolls up their net
+// credit change per match. Returns the most recent N matches.
+router.get('/shooter/my-matches', requireAuth, async (req, res) => {
+  try {
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 30));
+    const { rows } = await pool.query(`
+      WITH my_tx AS (
+        SELECT
+          -- ref_id is sometimes "<session_id>" and sometimes
+          -- "<session_id>:a", "<session_id>:b", etc. Split on ':' to
+          -- get the bare session id either way.
+          split_part(ref_id, ':', 1) AS session_id,
+          SUM(amount)::bigint AS net,
+          MAX(created_at) AS last_tx
+        FROM wallet_transactions
+        WHERE user_id = $1
+          AND ref_type = 'shooter'
+          AND ref_id IS NOT NULL
+        GROUP BY split_part(ref_id, ':', 1)
+      )
+      SELECT
+        gs.id AS session_id,
+        gs.bet_amount,
+        gs.status,
+        gs.finished_at,
+        gs.created_at,
+        mt.net,
+        ss.lobby_id,
+        ss.result_reason,
+        ss.player_a_kills,
+        ss.player_b_kills,
+        ss.winner_id,
+        ss.player_a_id,
+        ss.player_b_id
+      FROM my_tx mt
+      JOIN game_sessions gs ON gs.id::text = mt.session_id
+      LEFT JOIN shooter_sessions ss ON ss.session_id = gs.id
+      WHERE gs.game_type = 'shooter'
+      ORDER BY COALESCE(gs.finished_at, gs.created_at) DESC NULLS LAST,
+               mt.last_tx DESC
+      LIMIT $2
+    `, [req.session.userId, limit]);
+    res.json({ ok: true, matches: rows });
+  } catch (e) {
+    res.status(400).json({ error: e.message || 'my_matches_failed' });
+  }
+});
+
+// Public profile for a player (by username). Returns their shooter
+// stats + a count of their earned achievements. Used by /profile.html.
+router.get('/shooter/profile/:username', requireAuth, async (req, res) => {
+  try {
+    const uname = String(req.params.username || '').trim();
+    if (!uname) return res.status(400).json({ error: 'missing_username' });
+    const { rows: u } = await pool.query(
+      `SELECT id, username, is_admin, created_at FROM users
+        WHERE lower(username) = lower($1)`,
+      [uname]
+    );
+    if (!u.length) return res.status(404).json({ error: 'not_found' });
+    const user = u[0];
+
+    const stats = await ranking.publicStatsFor(user.id);
+    const { rows: achRows } = await pool.query(
+      `SELECT a.key, a.name, a.icon, ua.earned_at
+         FROM user_achievements ua
+         JOIN achievements a ON a.id = ua.achievement_id
+        WHERE ua.user_id = $1
+     ORDER BY ua.earned_at DESC
+        LIMIT 12`, [user.id]
+    );
+    const { rows: achCount } = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM user_achievements WHERE user_id = $1`,
+      [user.id]
+    );
+
+    res.json({
+      ok: true,
+      profile: {
+        username: user.username,
+        is_admin: user.is_admin,
+        member_since: user.created_at,
+        stats,
+        achievements: achRows,
+        achievementsTotal: achCount[0]?.n || 0,
+      },
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message || 'profile_failed' });
+  }
+});
+
 // All achievements + whether the player has earned each. Locked rows
 // have earned_at = null. Used by /achievements.html to render the grid.
 router.get('/shooter/achievements', requireAuth, async (req, res) => {

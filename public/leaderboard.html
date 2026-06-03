@@ -109,7 +109,7 @@
       ${rows.map((r, i) => `
         <tr class="${i === meIdx ? 'me' : ''}">
           <td class="rank">${i + 1}</td>
-          <td class="name">${escapeHtml(r.username)}</td>
+          <td class="name"><a href="/profile.html?u=${encodeURIComponent(r.username)}" style="color:inherit;text-decoration:none;">${escapeHtml(r.username)}</a></td>
           <td class="mmr">${r.mmr ?? 1000}</td>
           <td class="num">${r.level ?? 1}</td>
           <td class="num" style="color:#7fd97a;">${r.wins ?? 0}</td>

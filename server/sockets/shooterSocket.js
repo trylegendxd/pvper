@@ -42,6 +42,38 @@ function tryGrant(io, socketId, userId, key) {
   }).catch(() => {});
 }
 
+// Build the scoreboard snapshot for an active match. Used both at
+// match_start (initial state) and after every kill so the in-match
+// TAB scoreboard always reflects current K/D/HS.
+function buildScoreboard(match) {
+  return {
+    isTeamMatch: !!match.isTeamMatch,
+    teamScores: match.teamScores || null,
+    killsToWin: match.killsToWin || null,
+    players: match.playerIds.map((sid) => {
+      const st = match.gameState[sid] || {};
+      const p  = players.get(sid);
+      return {
+        socketId: sid,
+        username: p?.username || '?',
+        team: st.team || null,
+        kills:     st.kills     || 0,
+        deaths:    st.deaths    || 0,
+        headshots: st.headshots || 0,
+        connected: !st.disconnected,
+        respawning: !!st.respawning,
+      };
+    }),
+  };
+}
+
+function emitScoreboard(io, match) {
+  if (!io || !match || match.ended) return;
+  const ns = io.of('/shooter');
+  const payload = buildScoreboard(match);
+  for (const sid of match.playerIds) ns.to(sid).emit('scoreboard_update', payload);
+}
+
 const {
   LOBBY_DEFS, MAX_HEALTH, KILLS_TO_WIN, MATCH_DURATION_MS, RESPAWN_DELAY_MS,
   PLAYER_HW, MAX_MOVE_DELTA, WEAPONS, DEFAULT_WEAPON,
@@ -784,6 +816,9 @@ function tickThrowables(io, match) {
           ns.to(eff.ownerSocketId).emit('kill_event', killPayload);
           ns.to(sid).emit('kill_event', killPayload);
         }
+        // Push a full scoreboard refresh so the TAB scoreboard stays in
+        // sync without each client having to track every kill_event.
+        emitScoreboard(io, match);
         if (winnerSock || teamWin) {
           endMatch(io, match.id, winnerSock || teamWin, 'kills');
           return;
@@ -2835,6 +2870,9 @@ function attach(io) {
           ns.to(socket.id).emit('kill_event', killPayload);
           ns.to(oppSock).emit('kill_event', killPayload);
         }
+        // Full scoreboard refresh — keeps the TAB scoreboard in sync
+        // without each client having to track every kill_event field.
+        emitScoreboard(io, match);
 
         // ── Killcam packet ─────────────────────────────────────────────
         // Send the victim the last 3 seconds of the killer's recorded

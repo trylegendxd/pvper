@@ -92,6 +92,53 @@ input:focus { border-color:var(--accent); }
   letter-spacing: 1px; margin-bottom: 3px;
 }
 .ach-toast-desc { font-size: 11px; color: #aaa; line-height: 1.35; }
+
+/* In-match scoreboard (TAB) */
+#hud-scoreboard {
+  position: fixed;
+  top: 50%; left: 50%; transform: translate(-50%, -50%);
+  z-index: 600;
+  background: rgba(8, 12, 18, 0.88);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  padding: 22px 28px;
+  min-width: 460px;
+  box-shadow: 0 12px 60px rgba(0,0,0,0.7);
+  pointer-events: none;
+}
+#hud-scoreboard .sb-title {
+  font-size: 13px; letter-spacing: 5px; color: var(--dim);
+  text-align: center; margin-bottom: 14px;
+}
+.sb-team {
+  margin-bottom: 10px;
+}
+.sb-team-header {
+  font-size: 11px; letter-spacing: 3px; padding: 6px 10px;
+  border-radius: 4px 4px 0 0;
+  font-weight: 700; color: #fff;
+}
+.sb-team.a .sb-team-header { background: rgba(100, 180, 255, 0.2); color: #9bcaff; }
+.sb-team.b .sb-team-header { background: rgba(255, 130, 130, 0.2); color: #ffb8b8; }
+.sb-team.neutral .sb-team-header { background: rgba(255,255,255,0.06); color: #ddd; }
+.sb-row-header, .sb-row {
+  display: grid;
+  grid-template-columns: 1fr 60px 60px 60px;
+  padding: 6px 12px;
+  font-size: 13px; align-items: center;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+.sb-row-header {
+  font-size: 9px; letter-spacing: 2px; color: var(--dim); text-transform: uppercase;
+  background: rgba(255,255,255,0.02);
+}
+.sb-row.me { background: rgba(127, 217, 122, 0.06); }
+.sb-row .name { color: #fff; font-weight: 600; }
+.sb-row .name.dim { color: var(--dim); font-style: italic; }
+.sb-row .stat { text-align: right; font-variant-numeric: tabular-nums; }
+.sb-row .stat.k { color: #7fd97a; }
+.sb-row .stat.d { color: #ff8080; }
+.sb-row .stat.hs { color: var(--gold); }
 @keyframes dmgNumFloat {
   0%   { opacity: 0; transform: translate(calc(-50% + var(--dx, 0px)), -30%) scale(0.7); }
   18%  { opacity: 1; transform: translate(calc(-50% + var(--dx, 0px)), -55%) scale(1.0); }
@@ -930,6 +977,15 @@ input:focus { border-color:var(--accent); }
 
   <div class="hud-el" id="hud-hit-marker"></div>
 
+  <!-- In-match scoreboard — hidden by default, shown while TAB is held.
+       Fully populated from match_start (initial state) and refreshed on
+       every server-side scoreboard_update event. -->
+  <div id="hud-scoreboard" style="display:none;">
+    <div class="sb-title">SCOREBOARD</div>
+    <div id="sb-team-a-host"></div>
+    <div id="sb-team-b-host"></div>
+  </div>
+
   <!-- Mini-radar (top-right). Shows top-down positions of all players
        with you at the centre. Drawn by GameEngine._drawRadar() each
        frame. -->
@@ -1586,6 +1642,27 @@ const AudioManager = {
     setTimeout(() => this._chirp(880, 0.10, 0.22, 'square'), 70);
   },
   playReload() { this._beep(220, 0.06, 0.13, 'square'); },
+
+  // Two-note golden chime for achievement_unlocked.
+  playAchievement() {
+    if (!this.ctx) return;
+    try {
+      const now = this.ctx.currentTime;
+      const beep = (freq, delay, dur) => {
+        const o = this.ctx.createOscillator();
+        const g = this.ctx.createGain();
+        o.type = 'triangle';
+        o.frequency.setValueAtTime(freq, now + delay);
+        g.gain.setValueAtTime(0, now + delay);
+        g.gain.linearRampToValueAtTime(0.25, now + delay + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.001, now + delay + dur);
+        o.connect(g); g.connect(this.masterSfx);
+        o.start(now + delay); o.stop(now + delay + dur + 0.05);
+      };
+      beep(880, 0.00, 0.22);  // A5
+      beep(1320, 0.10, 0.32); // E6 — a fifth above
+    } catch (_) {}
+  },
 
   playSwish() {
     if (!this.ctx) return;
@@ -3120,6 +3197,7 @@ const GameEngine = {
       'KeyG',                       // throw
       'KeyQ',                       // knife
       'ControlLeft','ControlRight', // crouch
+      'Tab',                        // hold for in-match scoreboard
     ]);
 
     window.addEventListener('keydown', e => {
@@ -3143,6 +3221,9 @@ const GameEngine = {
       // Voice chat mute toggle (team matches only — VoiceChat ignores
       // the toggle when it isn't enabled).
       if (e.code === 'KeyM')   { e.preventDefault(); try { VoiceChat.toggleMute(); } catch (_) {} }
+      // TAB: hold to show the in-match scoreboard. Tab is special — the
+      // browser uses it for focus traversal, so we always preventDefault.
+      if (e.code === 'Tab')    { e.preventDefault(); try { App.showScoreboard(true); } catch (_) {} }
       if (e.code === 'ControlLeft' || e.code === 'ControlRight') {
         // Crouch is hold-to-crouch on Ctrl; toggle stays via the existing
         // settings/HUD if any. Ctrl is more standard than C.
@@ -3157,6 +3238,11 @@ const GameEngine = {
       this._keys[e.code] = false;
       if (e.code === 'ControlLeft' || e.code === 'ControlRight') {
         this.crouching = false;
+      }
+      // Release TAB → hide the scoreboard.
+      if (e.code === 'Tab') {
+        e.preventDefault();
+        try { App.showScoreboard(false); } catch (_) {}
       }
     });
 
@@ -6462,6 +6548,9 @@ const NetworkManager = {
     // Achievement toast — server emits this in real time for at-kill
     // achievements and bundled in match_end for post-match milestones.
     s.on('achievement_unlocked', d => { try { App.showAchievement(d); } catch (_) {} });
+    // Live scoreboard snapshot — fired on every kill so the TAB
+    // scoreboard stays in sync without each client tallying kill_event.
+    s.on('scoreboard_update',    d => { try { App.onScoreboardUpdate(d); } catch (_) {} });
     s.on('mm_team_update',       d => { try { App.onMmTeamUpdate(d); }       catch (_) {} });
     s.on('mm_match_countdown',   d => { try { App.onMmMatchCountdown(d); }   catch (_) {} });
     s.on('mm_pair_cancelled',    d => { try { App.onMmPairCancelled(d); }    catch (_) {} });
@@ -7104,6 +7193,10 @@ const App = {
     UIManager.hideRespawn();
     UIManager.showReloadIndicator(false);
 
+    // Seed the in-match TAB scoreboard from the initial player list so it
+    // works before the first kill fires a scoreboard_update.
+    try { this._seedScoreboardFromMatchStart(data); } catch (_) {}
+
     GameEngine.buildArena(data.coverBoxes, data.arenaSize || 40, data.spawnPoints);
     GameEngine._coverBoxes = data.coverBoxes; // cached for killcam scene
     GameEngine._arenaSize  = data.arenaSize || 40;
@@ -7229,6 +7322,8 @@ const App = {
       clearInterval(this._mmCountdownTimer);
       this._mmCountdownTimer = null;
     }
+    // Hide the scoreboard if it was up when the match ended.
+    try { this.showScoreboard(false); } catch (_) {}
     GameEngine.stop();
     this.playerBalance = data.newBalance;
     UIManager.updateBalance(data.newBalance);
@@ -7249,8 +7344,93 @@ const App = {
 
   // Show a golden achievement toast in the bottom-right. Stacks vertically
   // when several achievements fire in quick succession (e.g. at match end).
+  // ── In-match scoreboard (TAB) ─────────────────────────────────────────
+  // App._scoreboard is the last snapshot from the server. Built initially
+  // from match_start's players list (with zero stats), refreshed on each
+  // scoreboard_update event.
+  onScoreboardUpdate(data) {
+    this._scoreboard = data;
+    // If the scoreboard is currently visible, repaint it live.
+    const sb = document.getElementById('hud-scoreboard');
+    if (sb && sb.style.display !== 'none') this._renderScoreboard();
+  },
+  _seedScoreboardFromMatchStart(data) {
+    const players = data?.players || {};
+    const myId = this.myId;
+    const rows = Object.entries(players).map(([sid, p]) => ({
+      socketId: sid, username: p.username, team: p.team || null,
+      kills: 0, deaths: 0, headshots: 0, connected: true, respawning: false,
+    }));
+    this._scoreboard = {
+      isTeamMatch: !!data.isTeamMatch,
+      teamScores: data.isTeamMatch ? { a: 0, b: 0 } : null,
+      killsToWin: data.killsToWin || null,
+      players: rows,
+      myId,
+    };
+  },
+  _renderScoreboard() {
+    const sb = this._scoreboard;
+    const hostA = document.getElementById('sb-team-a-host');
+    const hostB = document.getElementById('sb-team-b-host');
+    if (!hostA || !hostB) return;
+    hostA.innerHTML = ''; hostB.innerHTML = '';
+    if (!sb || !Array.isArray(sb.players)) return;
+    const myId = this.myId;
+    // Sort by kills desc, then deaths asc.
+    const sorted = sb.players.slice().sort((a, b) =>
+      (b.kills - a.kills) || (a.deaths - b.deaths)
+    );
+    const rowHtml = (p) => `
+      <div class="sb-row ${p.socketId === myId ? 'me' : ''}">
+        <span class="name ${p.connected ? '' : 'dim'}">
+          ${p.connected ? '' : '⌛ '}${escapeHtml(p.username || '?')}${p.socketId === myId ? ' <span style="color:#7fd97a;font-size:11px;letter-spacing:1px;">(YOU)</span>' : ''}
+        </span>
+        <span class="stat k">${p.kills || 0}</span>
+        <span class="stat d">${p.deaths || 0}</span>
+        <span class="stat hs">${p.headshots || 0}</span>
+      </div>`;
+    const headerRow = `
+      <div class="sb-row-header">
+        <span>PLAYER</span><span style="text-align:right;">K</span><span style="text-align:right;">D</span><span style="text-align:right;">HS</span>
+      </div>`;
+    if (sb.isTeamMatch) {
+      const teamA = sorted.filter(p => p.team === 'a');
+      const teamB = sorted.filter(p => p.team === 'b');
+      const scoreA = sb.teamScores?.a ?? 0;
+      const scoreB = sb.teamScores?.b ?? 0;
+      hostA.innerHTML = `
+        <div class="sb-team a">
+          <div class="sb-team-header">TEAM A · ${scoreA}${sb.killsToWin ? ' / ' + sb.killsToWin : ''}</div>
+          ${headerRow}${teamA.map(rowHtml).join('')}
+        </div>`;
+      hostB.innerHTML = `
+        <div class="sb-team b">
+          <div class="sb-team-header">TEAM B · ${scoreB}${sb.killsToWin ? ' / ' + sb.killsToWin : ''}</div>
+          ${headerRow}${teamB.map(rowHtml).join('')}
+        </div>`;
+    } else {
+      hostA.innerHTML = `
+        <div class="sb-team neutral">
+          <div class="sb-team-header">DUEL${sb.killsToWin ? ' · FIRST TO ' + sb.killsToWin : ''}</div>
+          ${headerRow}${sorted.map(rowHtml).join('')}
+        </div>`;
+    }
+  },
+  showScoreboard(show) {
+    const sb = document.getElementById('hud-scoreboard');
+    if (!sb) return;
+    if (show) {
+      this._renderScoreboard();
+      sb.style.display = '';
+    } else {
+      sb.style.display = 'none';
+    }
+  },
+
   showAchievement(def) {
     if (!def || !def.name) return;
+    try { AudioManager.playAchievement?.(); } catch (_) {}
     let host = document.getElementById('ach-toast-host');
     if (!host) {
       host = document.createElement('div');

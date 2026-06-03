@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Profile · FPS Arena</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/styles.css">
+<style>
+.pr-wrap { max-width: 880px; margin: 24px auto 60px; padding: 0 16px; }
+.pr-card {
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 8px; padding: 24px 28px; margin-bottom: 22px;
+}
+.pr-head { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
+.pr-tier {
+  width: 84px; height: 84px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 44px; border-radius: 12px;
+  background: rgba(255,255,255,0.04); border: 2px solid #444;
+}
+.pr-name { font-size: 28px; font-weight: 700; color: #fff; letter-spacing: 2px; }
+.pr-tier-name { font-size: 12px; letter-spacing: 3px; margin-top: 4px; }
+.pr-since { font-size: 11px; color: var(--dim); margin-top: 4px; letter-spacing: 1px; }
+.pr-stats {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px; margin-top: 22px;
+}
+.pr-stat {
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.05); border-radius: 6px;
+  padding: 12px 14px;
+}
+.pr-stat .lbl { font-size: 10px; letter-spacing: 2px; color: var(--dim); text-transform: uppercase; }
+.pr-stat .val { font-size: 20px; font-weight: 700; color: #fff; font-variant-numeric: tabular-nums; margin-top: 4px; }
+.pr-stat .val.gold { color: var(--gold); }
+.pr-stat .val.win  { color: #7fd97a; }
+.pr-stat .val.loss { color: #ff8080; }
+
+.pr-section-title { font-size: 12px; letter-spacing: 3px; color: var(--dim); margin: 6px 0 12px; text-transform: uppercase; }
+.pr-ach-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px;
+}
+.pr-ach-card {
+  background: rgba(255, 206, 74, 0.05);
+  border: 1px solid rgba(255, 206, 74, 0.35);
+  border-radius: 6px; padding: 10px 12px;
+  display: flex; gap: 10px; align-items: center;
+}
+.pr-ach-icon { font-size: 26px; line-height: 1; }
+.pr-ach-name { font-size: 12px; color: var(--gold); font-weight: 700; }
+.pr-ach-when { font-size: 10px; color: var(--dim); margin-top: 2px; }
+.pr-loading, .pr-error {
+  text-align: center; padding: 60px 20px; color: var(--dim);
+}
+.pr-error { color: #ff8080; }
+</style>
+</head>
+<body>
+<div class="topbar" id="topbar"></div>
+<div class="pr-wrap" id="pr-root">
+  <div class="pr-loading">Loading profile…</div>
+</div>
+<div class="legal-footer">Credits are fictional play-money credits only and have no real-world monetary value.</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/auth.js"></script>
+<script>
+function tierForMmr(mmr) {
+  const m = Number(mmr) || 1000;
+  if (m >= 1800) return { name: 'MASTER',  color: '#b06bff', icon: '★' };
+  if (m >= 1500) return { name: 'DIAMOND', color: '#79e0ff', icon: '◆' };
+  if (m >= 1200) return { name: 'GOLD',    color: '#ffce4a', icon: '◈' };
+  if (m >= 1000) return { name: 'SILVER',  color: '#cdd4dc', icon: '◇' };
+  return                  { name: 'BRONZE',  color: '#c97f43', icon: '▲' };
+}
+
+(async () => {
+  const user = await renderTopbar();
+  if (!user) return;
+  const params = new URLSearchParams(location.search);
+  const uname = params.get('u') || user.username;
+  const root = document.getElementById('pr-root');
+
+  let data;
+  try {
+    data = await api('/api/games/shooter/profile/' + encodeURIComponent(uname));
+  } catch (e) {
+    root.innerHTML = `<div class="pr-error">Profile not found: ${escapeHtml(e.message || String(e))}</div>`;
+    return;
+  }
+  const p  = data.profile;
+  const s  = p.stats || {};
+  const t  = tierForMmr(s.mmr);
+  const acc = s.kills && s.deaths
+    ? (s.kills / Math.max(1, s.deaths)).toFixed(2)
+    : (s.kills || 0).toFixed(2);
+  const hsRate = (s.kills > 0)
+    ? Math.round(((s.headshots || 0) / s.kills) * 100) + '%' : '—';
+  const accRate = (s.totalMatches > 0 || s.wins != null)
+    ? Math.round(((s.wins || 0) / Math.max(1, (s.wins || 0) + (s.losses || 0))) * 100) + '%'
+    : '—';
+  const since = p.member_since
+    ? new Date(p.member_since).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
+    : '—';
+
+  root.innerHTML = `
+    <div class="pr-card">
+      <div class="pr-head">
+        <div class="pr-tier" style="border-color:${t.color};color:${t.color};">${t.icon}</div>
+        <div>
+          <div class="pr-name">${escapeHtml(p.username)}${p.is_admin ? ' <span style="color:var(--gold);font-size:14px;">ADMIN</span>' : ''}</div>
+          <div class="pr-tier-name" style="color:${t.color};">${t.name} · Level ${s.level ?? 1}</div>
+          <div class="pr-since">Joined ${escapeHtml(since)}</div>
+        </div>
+      </div>
+
+      <div class="pr-stats">
+        <div class="pr-stat"><div class="lbl">MMR</div><div class="val gold">${s.mmr ?? 1000}</div></div>
+        <div class="pr-stat"><div class="lbl">Matches</div><div class="val">${s.totalMatches ?? 0}</div></div>
+        <div class="pr-stat"><div class="lbl">Wins</div><div class="val win">${s.wins ?? 0}</div></div>
+        <div class="pr-stat"><div class="lbl">Losses</div><div class="val loss">${s.losses ?? 0}</div></div>
+        <div class="pr-stat"><div class="lbl">Win Rate</div><div class="val">${accRate}</div></div>
+        <div class="pr-stat"><div class="lbl">Kills</div><div class="val">${s.kills ?? 0}</div></div>
+        <div class="pr-stat"><div class="lbl">Deaths</div><div class="val">${s.deaths ?? 0}</div></div>
+        <div class="pr-stat"><div class="lbl">K/D</div><div class="val">${acc}</div></div>
+        <div class="pr-stat"><div class="lbl">Headshots</div><div class="val">${s.headshots ?? 0}</div></div>
+        <div class="pr-stat"><div class="lbl">HS Rate</div><div class="val">${hsRate}</div></div>
+        <div class="pr-stat"><div class="lbl">Streak</div><div class="val">${s.currentWinStreak ?? 0} <span style="color:var(--dim);font-size:11px;">(best ${s.bestWinStreak ?? 0})</span></div></div>
+        <div class="pr-stat"><div class="lbl">Achievements</div><div class="val gold">${p.achievementsTotal ?? 0}</div></div>
+      </div>
+    </div>
+
+    ${(p.achievements && p.achievements.length) ? `
+      <div class="pr-card">
+        <div class="pr-section-title">Recent Achievements</div>
+        <div class="pr-ach-grid">
+          ${p.achievements.map(a => `
+            <div class="pr-ach-card">
+              <div class="pr-ach-icon">${a.icon || '🏆'}</div>
+              <div>
+                <div class="pr-ach-name">${escapeHtml(a.name)}</div>
+                <div class="pr-ach-when">${escapeHtml(new Date(a.earned_at).toLocaleDateString())}</div>
+              </div>
+            </div>`).join('')}
+        </div>
+      </div>` : ''}
+  `;
+})();
+</script>
+</body>
+</html>

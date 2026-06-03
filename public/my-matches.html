@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>My Matches · FPS Arena</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/styles.css">
+<style>
+.mm-wrap { max-width: 920px; margin: 24px auto 60px; padding: 0 16px; }
+.mm-title { font-size: 26px; letter-spacing: 3px; color: #fff; margin-bottom: 4px; }
+.mm-sub   { color: var(--dim); font-size: 13px; letter-spacing: 1px; margin-bottom: 18px; }
+.mm-totals {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 22px;
+}
+.mm-stat {
+  background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 6px; padding: 14px 16px;
+}
+.mm-stat .lbl { font-size: 10px; letter-spacing: 3px; color: var(--dim); text-transform: uppercase; }
+.mm-stat .val { font-size: 22px; font-weight: 700; color: #fff; font-variant-numeric: tabular-nums; margin-top: 4px; }
+.mm-stat .val.win { color: #7fd97a; }
+.mm-stat .val.loss { color: #ff8080; }
+.mm-stat .val.net.pos { color: #7fd97a; }
+.mm-stat .val.net.neg { color: #ff8080; }
+
+.mm-table {
+  width: 100%; border-collapse: collapse;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.06); border-radius: 6px; overflow: hidden;
+}
+.mm-table th, .mm-table td {
+  padding: 11px 14px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.05);
+  font-size: 13px;
+}
+.mm-table th {
+  background: rgba(255,255,255,0.03); color: var(--dim);
+  letter-spacing: 1px; font-weight: 600; text-transform: uppercase; font-size: 10px;
+}
+.mm-table td.result { font-weight: 700; letter-spacing: 1px; }
+.mm-table td.result.win  { color: #7fd97a; }
+.mm-table td.result.loss { color: #ff8080; }
+.mm-table td.result.draw { color: var(--dim); }
+.mm-table td.net { font-variant-numeric: tabular-nums; font-weight: 700; }
+.mm-table td.net.pos { color: #7fd97a; }
+.mm-table td.net.neg { color: #ff8080; }
+.mm-table td.tier { color: var(--gold); text-transform: capitalize; }
+.mm-empty {
+  text-align: center; padding: 40px 20px; color: var(--dim);
+  background: rgba(255,255,255,0.02); border: 1px dashed rgba(255,255,255,0.08); border-radius: 6px;
+}
+@media (max-width: 600px) {
+  .mm-totals { grid-template-columns: repeat(2, 1fr); }
+}
+</style>
+</head>
+<body>
+<div class="topbar" id="topbar"></div>
+<div class="mm-wrap">
+  <div class="mm-title">MY MATCHES</div>
+  <div class="mm-sub">Your last 30 shooter matches, newest first.</div>
+
+  <div class="mm-totals">
+    <div class="mm-stat"><div class="lbl">PLAYED</div><div class="val" id="mm-total">—</div></div>
+    <div class="mm-stat"><div class="lbl">WINS</div><div class="val win" id="mm-wins">—</div></div>
+    <div class="mm-stat"><div class="lbl">LOSSES</div><div class="val loss" id="mm-losses">—</div></div>
+    <div class="mm-stat"><div class="lbl">NET CREDITS</div><div class="val net" id="mm-net">—</div></div>
+  </div>
+
+  <div id="mm-host"></div>
+</div>
+<div class="legal-footer">Credits are fictional play-money credits only and have no real-world monetary value.</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/auth.js"></script>
+<script>
+(async () => {
+  const user = await renderTopbar();
+  if (!user) return;
+
+  const host = document.getElementById('mm-host');
+  let data;
+  try {
+    data = await api('/api/games/shooter/my-matches?limit=30');
+  } catch (e) {
+    host.innerHTML = `<div class="mm-empty" style="color:#ff8080;">Failed to load: ${escapeHtml(e.message || String(e))}</div>`;
+    return;
+  }
+  const rows = data?.matches || [];
+  if (!rows.length) {
+    host.innerHTML = '<div class="mm-empty">No matches yet — play a shooter game and they will show up here.</div>';
+    document.getElementById('mm-total').textContent = '0';
+    document.getElementById('mm-wins').textContent = '0';
+    document.getElementById('mm-losses').textContent = '0';
+    document.getElementById('mm-net').textContent = '0 cr';
+    return;
+  }
+
+  // Classify each match by the player's net credit delta.
+  //   net > 0 → win
+  //   net < 0 → loss
+  //   net == 0 (rare — e.g. draw/refund)
+  let wins = 0, losses = 0, totalNet = 0;
+  for (const r of rows) {
+    const net = Number(r.net) || 0;
+    totalNet += net;
+    if (net > 0) wins++;
+    else if (net < 0) losses++;
+  }
+  document.getElementById('mm-total').textContent = rows.length;
+  document.getElementById('mm-wins').textContent = wins;
+  document.getElementById('mm-losses').textContent = losses;
+  const netEl = document.getElementById('mm-net');
+  netEl.textContent = (totalNet >= 0 ? '+' : '') + totalNet.toLocaleString() + ' cr';
+  netEl.classList.add(totalNet >= 0 ? 'pos' : 'neg');
+
+  const fmtDate = (s) => s ? new Date(s).toLocaleString(undefined, {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  }) : '—';
+
+  const table = document.createElement('table');
+  table.className = 'mm-table';
+  table.innerHTML = `
+    <thead>
+      <tr><th>Date</th><th>Tier</th><th>Bet</th><th>Result</th><th>Net</th><th>Score</th></tr>
+    </thead>
+    <tbody>
+      ${rows.map(r => {
+        const net = Number(r.net) || 0;
+        const result = net > 0 ? 'WIN' : net < 0 ? 'LOSS' : 'DRAW';
+        const resCls = net > 0 ? 'win' : net < 0 ? 'loss' : 'draw';
+        const netCls = net > 0 ? 'pos' : net < 0 ? 'neg' : '';
+        const score = (r.player_a_kills != null && r.player_b_kills != null)
+          ? `${r.player_a_kills}–${r.player_b_kills}` : '—';
+        return `
+          <tr>
+            <td>${escapeHtml(fmtDate(r.finished_at || r.created_at))}</td>
+            <td class="tier">${escapeHtml(r.lobby_id || '—')}</td>
+            <td>${r.bet_amount} cr</td>
+            <td class="result ${resCls}">${result}</td>
+            <td class="net ${netCls}">${(net >= 0 ? '+' : '') + Number(net).toLocaleString()} cr</td>
+            <td>${score}</td>
+          </tr>`;
+      }).join('')}
+    </tbody>`;
+  host.appendChild(table);
+})();
+</script>
+</body>
+</html>
