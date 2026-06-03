@@ -28,6 +28,7 @@ async function renderTopbar({ requireUser = true } = {}) {
       <a href="/leaderboard.html">Leaderboard</a>
       <a href="/achievements.html">Achievements</a>
       <a href="/my-matches.html">My Matches</a>
+      <a href="/profile-edit.html">Profile</a>
       <a href="/wallet.html">Wallet</a>
       ${user?.is_admin ? '<a href="/admin.html" style="color:var(--gold)">Admin</a>' : ''}
     </div>

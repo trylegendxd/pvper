@@ -3082,20 +3082,56 @@ function attach(io) {
     });
 
     // ── In-game chat (between the two players in a live match) ──────
-    socket.on('match_chat', ({ body } = {}) => {
+    // ── In-match chat (CS:GO style — all + team scope) ──────────────────
+    // scope='all' broadcasts to every player in the match (default).
+    // scope='team' restricts to teammates in a team match. In 1v1 the
+    // team-scope falls back to all-chat (you have no teammate).
+    socket.on('match_chat', ({ body, scope } = {}) => {
       const p = players.get(socket.id);
       if (!p?.currentMatch) return;
       const match = matches.get(p.currentMatch);
       if (!match || match.ended) return;
       const text = String(body || '').trim().slice(0, 200);
       if (!text) return;
-      const oppSock = match.playerIds.find(id => id !== socket.id);
-      if (!oppSock) return;
-      // Only deliver to the opponent — sender echoes locally.
-      ns.to(oppSock).emit('match_chat', {
-        from: p.username || 'Opponent',
-        body: text,
-        isYou: false,
+      const wantTeam = scope === 'team' && match.isTeamMatch;
+      const myTeam = match.gameState[socket.id]?.team || null;
+      // Look up the sender's display name so the chat line matches the
+      // killfeed style (display name first, fall back to username).
+      const senderRow = { username: p.username };
+      pool.query(
+        'SELECT username, display_name FROM users WHERE id = $1',
+        [p.userId]
+      ).then(({ rows }) => {
+        if (rows[0]) Object.assign(senderRow, rows[0]);
+        const fromName = senderRow.display_name || senderRow.username || 'Player';
+        const payload = {
+          from: fromName,
+          fromUsername: senderRow.username || null,
+          body: text,
+          scope: wantTeam ? 'team' : 'all',
+          fromTeam: myTeam,
+          isYou: false,
+        };
+        for (const sid of match.playerIds) {
+          if (sid === socket.id) continue;
+          if (wantTeam) {
+            const otherTeam = match.gameState[sid]?.team || null;
+            if (otherTeam !== myTeam) continue;
+          }
+          ns.to(sid).emit('match_chat', payload);
+        }
+      }).catch(() => {
+        // Fallback: send with the username we already have.
+        const payload = {
+          from: p.username || 'Player', body: text,
+          scope: wantTeam ? 'team' : 'all',
+          fromTeam: myTeam, isYou: false,
+        };
+        for (const sid of match.playerIds) {
+          if (sid === socket.id) continue;
+          if (wantTeam && match.gameState[sid]?.team !== myTeam) continue;
+          ns.to(sid).emit('match_chat', payload);
+        }
       });
     });
 

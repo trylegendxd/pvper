@@ -714,10 +714,20 @@ input:focus { border-color:var(--accent); }
   text-shadow:0 0 4px #000;
 }
 
-/* ── In-game chat box ─────────────────────────────────────────────── */
+/* ── In-game chat box (CS:GO style — Y all / U team) ───────────────── */
 #game-chat-input:focus { outline:1px solid var(--accent);background:rgba(0,0,0,.75); }
-.gc-from { color:#7fd; font-weight:600; }
-.gc-from.you { color:#fc7; }
+.gc-line {
+  background: rgba(0,0,0,.5); padding: 3px 8px; border-radius: 2px;
+  transition: opacity 1.6s ease, transform 0.3s ease;
+}
+.gc-line.faded { opacity: 0; transform: translateX(-6px); }
+.gc-tag { font-size:10px; letter-spacing:1.5px; font-weight:700; margin-right:6px; }
+.gc-tag.team { color:#7fd97a; }
+.gc-tag.all  { color:#79e0ff; }
+.gc-from { color:#fff; font-weight:600; }
+.gc-from.you { color:#ffce4a; }
+.gc-from.teammate { color:#7fd97a; }
+.gc-from.other { color:#79e0ff; }
 .gc-msg { color:#fff; }
 .gc-sys { color:#888; font-style:italic; }
 
@@ -1087,12 +1097,17 @@ input:focus { border-color:var(--accent); }
     <div class="scope-cross-h"></div>
   </div>
 
-  <!-- In-game chat (toggle with T) -->
-  <div id="game-chat" style="display:none;position:absolute;left:14px;bottom:120px;width:340px;z-index:8;">
-    <div id="game-chat-log" style="max-height:160px;overflow-y:auto;font-size:12px;color:#cfd;line-height:1.45;text-shadow:0 0 3px #000;background:rgba(0,0,0,.35);padding:6px 8px;border-radius:3px;"></div>
-    <input id="game-chat-input" type="text" maxlength="200"
-           placeholder="Press T to chat, Enter to send, Esc to close"
-           style="margin-top:6px;width:100%;background:rgba(0,0,0,.55);border:1px solid #444;color:#fff;padding:6px 8px;font-family:inherit;font-size:12px;display:none;">
+  <!-- In-game chat (CS:GO style) — Y all-chat, U team-chat, T = Y alias.
+       Chat lines auto-fade after ~6s via CSS. Inputbar shows the scope
+       prefix while typing. -->
+  <div id="game-chat" style="display:none;position:absolute;left:14px;bottom:120px;width:400px;z-index:8;pointer-events:none;">
+    <div id="game-chat-log" style="display:flex;flex-direction:column;gap:2px;max-height:200px;overflow:hidden;font-size:13px;color:#cfd;line-height:1.5;text-shadow:0 0 4px #000;"></div>
+    <div id="game-chat-inputbar" style="display:none;margin-top:6px;align-items:center;gap:8px;background:rgba(0,0,0,.7);border:1px solid #555;padding:6px 10px;pointer-events:auto;">
+      <span id="game-chat-prefix" style="font-size:11px;letter-spacing:2px;color:#cfd;font-weight:700;">[ALL]</span>
+      <input id="game-chat-input" type="text" maxlength="200"
+             placeholder="Enter to send · Esc to cancel"
+             style="flex:1;background:transparent;border:0;color:#fff;font-family:inherit;font-size:13px;outline:none;">
+    </div>
   </div>
 </div>
 
@@ -3228,6 +3243,7 @@ const GameEngine = {
       'KeyQ',                       // knife
       'ControlLeft','ControlRight', // crouch
       'Tab',                        // hold for in-match scoreboard
+      'KeyY','KeyU','KeyT',         // chat (Y all, U team; T alias for Y)
     ]);
 
     window.addEventListener('keydown', e => {
@@ -3276,38 +3292,60 @@ const GameEngine = {
       }
     });
 
-    // ── In-game chat hotkey (T) ──────────────────────────────────────
-    // While the chat input is focused, all game keys are ignored.
-    const chatInput = document.getElementById('game-chat-input');
+    // ── In-game chat hotkeys (CS:GO style — Y all, U team) ────────────
+    // T is also accepted for backward-compat with the original binding.
+    // While the chat input is focused, every game key (W/A/S/D/Shift/
+    // R/Space/Q/etc.) is ignored — handled by the document.activeElement
+    // check + e.stopPropagation. Open input shows a scope prefix
+    // ([ALL] or [TEAM]) so the player knows which channel they're in.
+    const chatInput   = document.getElementById('game-chat-input');
+    const chatPrefix  = document.getElementById('game-chat-prefix');
+    const chatBar     = document.getElementById('game-chat-inputbar');
     if (chatInput) {
       const closeChat = (send) => {
         const text = send ? chatInput.value.trim() : '';
+        const scope = this._chatScope || 'all';
         chatInput.value = '';
-        chatInput.style.display = 'none';
+        if (chatBar) chatBar.style.display = 'none';
         chatInput.blur();
         this._chatOpen = false;
+        this._chatScope = null;
         // Re-request pointer lock so movement resumes immediately.
         this.requestPointerLock();
-        if (text) App.sendMatchChat(text);
+        if (text) App.sendMatchChat(text, scope);
+      };
+      const openChat = (scope) => {
+        if (!this.pointerLocked) return;
+        // Team chat falls back to all-chat in 1v1.
+        if (scope === 'team' && !App.isTeamMatch) scope = 'all';
+        this._chatScope = scope;
+        this._chatOpen  = true;
+        document.exitPointerLock?.();
+        if (chatBar) chatBar.style.display = 'flex';
+        if (chatPrefix) {
+          chatPrefix.textContent = scope === 'team' ? '[TEAM]' : '[ALL]';
+          chatPrefix.style.color = scope === 'team' ? '#7fd97a' : '#cfd';
+        }
+        // Reveal the chat overlay container itself if it isn't already.
+        const gc = document.getElementById('game-chat');
+        if (gc) gc.style.display = '';
+        chatInput.placeholder = scope === 'team' ? 'Type a team message…' : 'Type a message to everyone…';
+        setTimeout(() => chatInput.focus(), 0);
       };
       window.addEventListener('keydown', e => {
         if (!this.running) return;
         if (document.activeElement === chatInput) {
-          if (e.code === 'Enter')   { e.preventDefault(); closeChat(true); }
+          if (e.code === 'Enter')       { e.preventDefault(); closeChat(true); }
           else if (e.code === 'Escape') { e.preventDefault(); closeChat(false); }
           e.stopPropagation();
           return;
         }
-        if (e.code === 'KeyT' && this.pointerLocked) {
+        if ((e.code === 'KeyY' || e.code === 'KeyT') && this.pointerLocked) {
           e.preventDefault();
-          // IMPORTANT: set _chatOpen BEFORE releasing pointer lock so the
-          // pointerlockchange handler doesn't show the pause overlay.
-          this._chatOpen = true;
-          document.exitPointerLock?.();
-          chatInput.style.display = '';
-          // Focus on the next tick — browsers ignore .focus() during the
-          // exact frame pointer lock releases.
-          setTimeout(() => chatInput.focus(), 0);
+          openChat('all');
+        } else if (e.code === 'KeyU' && this.pointerLocked) {
+          e.preventDefault();
+          openChat('team');
         }
       }, true);
     }
@@ -4845,20 +4883,31 @@ const UIManager = {
   },
 
   // Append a chat line to the in-game chat log.
-  pushGameChat({ from, body, isYou, system }) {
+  pushGameChat({ from, body, isYou, system, scope, fromTeam }) {
     const log = document.getElementById('game-chat-log');
     if (!log) return;
     const row = document.createElement('div');
+    row.className = 'gc-line';
     if (system) {
       row.innerHTML = `<span class="gc-sys">${escapeHtml(body)}</span>`;
     } else {
-      row.innerHTML = `<span class="gc-from ${isYou ? 'you' : ''}">${escapeHtml(from)}:</span> <span class="gc-msg">${escapeHtml(body)}</span>`;
+      // Team chat is green / All chat is the default cyan.
+      const tag = scope === 'team'
+        ? '<span class="gc-tag team">[TEAM]</span>'
+        : '<span class="gc-tag all">[ALL]</span>';
+      const nameCls = isYou ? 'you' : (scope === 'team' ? 'teammate' : 'other');
+      row.innerHTML = `${tag}<span class="gc-from ${nameCls}">${escapeHtml(from)}:</span> <span class="gc-msg">${escapeHtml(body)}</span>`;
     }
     log.appendChild(row);
     while (log.childElementCount > 30) log.firstChild.remove();
     log.scrollTop = log.scrollHeight;
     const box = document.getElementById('game-chat');
     if (box) box.style.display = '';
+    // Auto-fade this message after a few seconds CS:GO-style. The
+    // chat log itself stays mounted; only the row opacity is dropped
+    // so the line stops drawing attention without being removed.
+    setTimeout(() => row.classList.add('faded'), 6000);
+    setTimeout(() => { if (row.parentNode === log) row.remove(); }, 9000);
   },
 
   showPostMatch(data, trainingMode) {
@@ -7408,17 +7457,21 @@ const App = {
     Killcam.play(data, GameEngine._coverBoxes, victimPos);
   },
 
-  onMatchChat({ from, body, isYou }) {
-    UIManager.pushGameChat({ from, body, isYou });
+  onMatchChat({ from, body, isYou, scope, fromTeam }) {
+    UIManager.pushGameChat({ from, body, isYou, scope, fromTeam });
   },
 
-  sendMatchChat(text) {
+  sendMatchChat(text, scope) {
     const s = NetworkManager.socket;
     if (!s) return;
     const trimmed = String(text || '').slice(0, 200);
     if (!trimmed) return;
-    s.emit('match_chat', { body: trimmed });
-    UIManager.pushGameChat({ from: this.myUsername || 'You', body: trimmed, isYou: true });
+    const wantScope = (scope === 'team' && this.isTeamMatch) ? 'team' : 'all';
+    s.emit('match_chat', { body: trimmed, scope: wantScope });
+    UIManager.pushGameChat({
+      from: this.myUsername || 'You', body: trimmed, isYou: true,
+      scope: wantScope, fromTeam: this.yourTeam || null,
+    });
   },
 
   onKillEvent(data) {
