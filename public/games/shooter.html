@@ -1358,6 +1358,16 @@ const AudioManager = {
     };
     window.addEventListener('pointerdown', unlock);
     window.addEventListener('keydown',     unlock);
+
+    // Cross-page music resume: snapshot state every 2 s while playing,
+    // and on pagehide / beforeunload so the menu pages can pick up
+    // where the shooter left off (and vice versa). Shares the same
+    // fps_music_state key with public/js/music-player.js.
+    setInterval(() => {
+      if (this._music && !this._music.paused) this._saveMusicResume();
+    }, 2000);
+    window.addEventListener('pagehide',     () => this._saveMusicResume());
+    window.addEventListener('beforeunload', () => this._saveMusicResume());
   },
 
   _loadSettings() {
@@ -1378,16 +1388,58 @@ const AudioManager = {
     } catch(_) {}
   },
 
+  // ── Cross-page music resume ───────────────────────────────────────────
+  // Shares the same fps_music_state key with public/js/music-player.js
+  // so navigating between menu pages and the shooter (or back) picks
+  // the song up where it was instead of restarting.
+  _MUSIC_RESUME_KEY: 'fps_music_state',
+  _MUSIC_RESUME_TTL: 5 * 60 * 1000,
+
+  _saveMusicResume() {
+    if (!this._music || !this._playlist?.length) return;
+    try {
+      const payload = {
+        track: this._playlist[this._trackIndex] || null,
+        time:  this._music.currentTime || 0,
+        savedAt: Date.now(),
+      };
+      sessionStorage.setItem(this._MUSIC_RESUME_KEY, JSON.stringify(payload));
+      localStorage.setItem(this._MUSIC_RESUME_KEY,   JSON.stringify(payload));
+    } catch (_) {}
+  },
+
+  _readMusicResume() {
+    try {
+      const ss = sessionStorage.getItem(this._MUSIC_RESUME_KEY);
+      if (ss) {
+        const p = JSON.parse(ss);
+        if (p) return p;
+      }
+      const ls = localStorage.getItem(this._MUSIC_RESUME_KEY);
+      if (ls) {
+        const p = JSON.parse(ls);
+        if (p && Date.now() - (p.savedAt || 0) < this._MUSIC_RESUME_TTL) return p;
+      }
+    } catch (_) {}
+    return null;
+  },
+
   async _fetchAndLoadMusic() {
     try {
       const res = await fetch('/audio-files');
       const files = await res.json();
       if (!files.length) return;
       this._playlist = files;
-      // Decide the starting index: honour the user's pinned choice when
-      // it's still in the playlist, otherwise start at 0.
+      // Resume from the menu-page snapshot if it's fresh and still
+      // points at a track we have. Otherwise honour the pinned pick or
+      // fall through to track 0.
       let idx = 0;
-      if (this._selectedTrack) {
+      const resume = this._readMusicResume();
+      if (resume?.track && files.includes(resume.track)
+          && Date.now() - (resume.savedAt || 0) < this._MUSIC_RESUME_TTL) {
+        idx = files.indexOf(resume.track);
+        this._pendingResumeTime = resume.time || 0;
+      } else if (this._selectedTrack) {
         const i = files.indexOf(this._selectedTrack);
         if (i >= 0) idx = i;
         else this._selectedTrack = null; // pinned track gone — drop it
@@ -1420,6 +1472,15 @@ const AudioManager = {
       // song ends, the rotation kicks in just like before.
       this._loadTrack((this._trackIndex + 1) % this._playlist.length, true);
     };
+    // Cross-page resume seek (set by _fetchAndLoadMusic when there's a
+    // recent snapshot from a menu page).
+    if (this._pendingResumeTime != null) {
+      const seekTo = this._pendingResumeTime;
+      this._pendingResumeTime = null;
+      const trySeek = () => { try { this._music.currentTime = seekTo; } catch (_) {} };
+      this._music.addEventListener('loadedmetadata', trySeek, { once: true });
+      this._music.addEventListener('canplay',        trySeek, { once: true });
+    }
     if (autoplay) this._music.play().catch(() => {});
   },
 

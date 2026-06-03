@@ -32,6 +32,17 @@
   let unlocked       = false;
   let started        = false;
 
+  // Cross-page playback continuity. Browsers tear down the JS context on
+  // navigation, so the only way to keep music from restarting is to
+  // periodically save where we were and resume from there on the next
+  // page. Resume is skipped if the snapshot is stale (older than
+  // RESUME_TTL_MS) so closing the tab for hours doesn't drop the user
+  // mid-song much later.
+  const RESUME_KEY     = 'fps_music_state';
+  const RESUME_TTL_MS  = 5 * 60 * 1000;  // 5 minutes
+  let   saveTimer      = null;
+  let   pendingResumeTime = null;        // currentTime to seek to once Audio is ready
+
   // ── localStorage glue ──────────────────────────────────────────────────
   try {
     const s = JSON.parse(localStorage.getItem('fps_settings') || '{}');
@@ -48,6 +59,37 @@
     } catch (_) {}
   }
 
+  function saveResumeState() {
+    if (!audio || !playlist.length) return;
+    try {
+      const payload = {
+        track: playlist[trackIndex] || null,
+        time:  audio.currentTime || 0,
+        savedAt: Date.now(),
+      };
+      sessionStorage.setItem(RESUME_KEY, JSON.stringify(payload));
+      // Also mirror to localStorage as a fallback — sessionStorage is
+      // tab-scoped, but localStorage carries between same-origin tabs
+      // and survives a full close → reopen within the TTL window.
+      localStorage.setItem(RESUME_KEY, JSON.stringify(payload));
+    } catch (_) {}
+  }
+
+  function readResumeState() {
+    try {
+      // sessionStorage first — it scopes to this tab, so different
+      // tabs each get their own current-position resume.
+      const ss = sessionStorage.getItem(RESUME_KEY);
+      if (ss) return JSON.parse(ss);
+      const ls = localStorage.getItem(RESUME_KEY);
+      if (ls) {
+        const p = JSON.parse(ls);
+        if (p && Date.now() - (p.savedAt || 0) < RESUME_TTL_MS) return p;
+      }
+    } catch (_) {}
+    return null;
+  }
+
   function prettyName(file) {
     if (!file) return '';
     return file.replace(/\.[^.]+$/, '').replace(/_/g, ' ')
@@ -60,8 +102,17 @@
       const res = await fetch('/audio-files');
       playlist = await res.json();
       if (!Array.isArray(playlist) || !playlist.length) return;
+
+      // Resume from where the previous page left off if the snapshot is
+      // recent and matches a track still in the playlist. Otherwise
+      // honour the user's pinned pick or fall through to track 0.
+      const resume = readResumeState();
       let idx = 0;
-      if (selectedTrack) {
+      if (resume?.track && playlist.includes(resume.track)
+          && Date.now() - (resume.savedAt || 0) < RESUME_TTL_MS) {
+        idx = playlist.indexOf(resume.track);
+        pendingResumeTime = resume.time || 0;
+      } else if (selectedTrack) {
         const i = playlist.indexOf(selectedTrack);
         if (i >= 0) idx = i;
         else selectedTrack = null;
@@ -90,6 +141,19 @@
       // starts, not what loops.
       loadTrack((trackIndex + 1) % playlist.length, true);
     };
+    // Cross-page resume: seek to the previously-saved currentTime
+    // once the browser has enough metadata to do so. canplay fires
+    // earlier than loadedmetadata on some platforms — both are safe
+    // to seek from.
+    if (pendingResumeTime != null) {
+      const seekTo = pendingResumeTime;
+      pendingResumeTime = null;
+      const trySeek = () => {
+        try { audio.currentTime = seekTo; } catch (_) {}
+      };
+      audio.addEventListener('loadedmetadata', trySeek, { once: true });
+      audio.addEventListener('canplay',        trySeek, { once: true });
+    }
     if (autoplay) {
       audio.play().then(() => { started = true; refreshUI(); }).catch(() => {});
     }
@@ -135,25 +199,28 @@
     const style = document.createElement('style');
     style.textContent = `
       #music-fab {
-        position: fixed; bottom: 18px; left: 18px; z-index: 9000;
-        width: 46px; height: 46px; border-radius: 50%;
+        /* Bumped up well above the legal-footer (which lives near the
+           bottom edge) so the icon is always obviously clickable. */
+        position: fixed; bottom: 80px; left: 22px; z-index: 9000;
+        width: 50px; height: 50px; border-radius: 50%;
         background: rgba(30, 255, 74, 0.12);
         border: 1px solid rgba(30, 255, 74, 0.4);
         color: #1eff4a;
-        font-size: 22px; cursor: pointer;
+        font-size: 24px; cursor: pointer;
         box-shadow: 0 4px 16px rgba(0,0,0,0.5);
         transition: background 0.15s, transform 0.1s;
         display: flex; align-items: center; justify-content: center;
         padding: 0; line-height: 1;
       }
-      #music-fab:hover { background: rgba(30, 255, 74, 0.22); }
+      #music-fab:hover { background: rgba(30, 255, 74, 0.22); transform: translateY(-1px); }
       #music-fab.playing { animation: musicFabPulse 1.6s ease-in-out infinite; }
       @keyframes musicFabPulse {
         0%,100% { box-shadow: 0 4px 16px rgba(0,0,0,0.5), 0 0 0 0 rgba(30,255,74,0.0); }
-        50%     { box-shadow: 0 4px 16px rgba(0,0,0,0.5), 0 0 0 8px rgba(30,255,74,0.08); }
+        50%     { box-shadow: 0 4px 16px rgba(0,0,0,0.5), 0 0 0 9px rgba(30,255,74,0.08); }
       }
       #music-modal {
-        position: fixed; bottom: 76px; left: 18px; z-index: 9001;
+        /* Anchored just above the FAB. */
+        position: fixed; bottom: 142px; left: 22px; z-index: 9001;
         background: #161c25; border: 1px solid #2a3548; border-radius: 8px;
         padding: 18px 20px; min-width: 300px; max-width: 360px; display: none;
         box-shadow: 0 8px 32px rgba(0,0,0,0.7);
@@ -257,14 +324,29 @@
   }
 
   // Pause music while the tab is hidden — keeps the player polite.
+  // Also snapshot the resume state so reopening the tab or navigating
+  // away mid-song doesn't lose the position.
   document.addEventListener('visibilitychange', () => {
-    if (!audio) return;
     if (document.hidden) {
-      try { audio.pause(); } catch (_) {}
-    } else if (unlocked) {
+      saveResumeState();
+      if (audio) { try { audio.pause(); } catch (_) {} }
+    } else if (audio && unlocked) {
       audio.play().catch(() => {});
     }
   });
+
+  // Save whenever the page is about to be torn down. pagehide fires on
+  // both reload and cross-document navigation; beforeunload is the
+  // belt-and-suspenders fallback.
+  window.addEventListener('pagehide',     saveResumeState);
+  window.addEventListener('beforeunload', saveResumeState);
+
+  // Cheap periodic snapshot while playing so even a sudden tab close
+  // (kill, crash) loses at most ~2 s of position. setInterval is fine
+  // here — JSON serialise is microseconds.
+  saveTimer = setInterval(() => {
+    if (audio && !audio.paused) saveResumeState();
+  }, 2000);
 
   injectUI();
   loadPlaylist();
