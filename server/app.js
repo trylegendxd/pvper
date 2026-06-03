@@ -60,12 +60,32 @@ app.use(rateLimit({
   standardHeaders: true, legacyHeaders: false,
 }));
 
+// Per-route limiters — the global 600/min limiter above is fine for
+// browsing, but game actions (spin / hit / reveal) and social writes
+// (request / accept / chat) can be spammed by a malicious client to
+// thrash the DB. Tighter limits stop a single IP from doing that
+// without affecting normal play.
+const gamesLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,              // ~2/sec average — plenty for blackjack/mines bursts
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'rate_limited' },
+});
+const friendsLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,               // social writes — rarely needs more than 1/sec
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'rate_limited' },
+});
+
 // API routes
 app.use('/api/auth',    authRoutes);
 app.use('/api/wallet',  walletRoutes);
-app.use('/api/games',   gameRoutes);
+app.use('/api/games',   gamesLimiter, gameRoutes);
 app.use('/api/admin',   adminRoutes);
-app.use('/api/friends', friendsRoutes);
+app.use('/api/friends', friendsLimiter, friendsRoutes);
 
 // ── Audio endpoints (preserved from original shooter server.js) ─────────
 // Anything that starts with one of these names is treated as a sound

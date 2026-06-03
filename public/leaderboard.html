@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Leaderboard · FPS Arena</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/styles.css">
+<style>
+.lb-wrap { max-width: 880px; margin: 24px auto 60px; padding: 0 16px; }
+.lb-title { font-size: 26px; letter-spacing: 3px; color: #fff; margin-bottom: 4px; }
+.lb-sub   { color: var(--dim); font-size: 13px; letter-spacing: 1px; margin-bottom: 18px; }
+.lb-table {
+  width: 100%; border-collapse: collapse; background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; overflow: hidden;
+}
+.lb-table th, .lb-table td {
+  padding: 10px 14px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.05);
+  font-size: 13px;
+}
+.lb-table th {
+  background: rgba(255,255,255,0.03); color: var(--dim);
+  letter-spacing: 1px; font-weight: 600; text-transform: uppercase; font-size: 11px;
+}
+.lb-table td.rank { font-weight: 700; color: var(--dim); width: 50px; }
+.lb-table tr.me   { background: rgba(127, 217, 122, 0.05); }
+.lb-table tr.me td.rank { color: #7fd97a; }
+.lb-table td.name { color: #fff; font-weight: 600; }
+.lb-table td.mmr  { color: var(--gold); font-weight: 700; font-variant-numeric: tabular-nums; }
+.lb-table td.num  { font-variant-numeric: tabular-nums; }
+.lb-table tr:nth-child(1) td.rank { color: #ffce4a; }
+.lb-table tr:nth-child(2) td.rank { color: #c9d2dc; }
+.lb-table tr:nth-child(3) td.rank { color: #c97f43; }
+.lb-empty {
+  text-align: center; padding: 40px 20px; color: var(--dim);
+  background: rgba(255,255,255,0.02); border: 1px dashed rgba(255,255,255,0.08); border-radius: 6px;
+}
+.lb-me-row {
+  margin-top: 18px; padding: 14px 18px; background: rgba(127, 217, 122, 0.06);
+  border: 1px solid rgba(127, 217, 122, 0.18); border-radius: 6px;
+  display: flex; justify-content: space-between; align-items: center; gap: 18px;
+}
+.lb-me-label { color: var(--dim); font-size: 11px; letter-spacing: 2px; }
+.lb-me-value { color: #fff; font-size: 16px; font-weight: 700; }
+.lb-me-value .mmr { color: var(--gold); margin-left: 10px; }
+</style>
+</head>
+<body>
+<div class="topbar" id="topbar"></div>
+<div class="lb-wrap">
+  <div class="lb-title">SHOOTER LEADERBOARD</div>
+  <div class="lb-sub">Top 25 by MMR · live from the matchmaking ranking table</div>
+
+  <div id="lb-me-card" class="lb-me-row" style="display:none;">
+    <div>
+      <div class="lb-me-label">YOUR RANK</div>
+      <div class="lb-me-value">
+        <span id="lb-me-pos">—</span>
+        <span class="mmr">MMR <span id="lb-me-mmr">—</span></span>
+      </div>
+    </div>
+    <div style="text-align:right;">
+      <div class="lb-me-label">RECORD</div>
+      <div class="lb-me-value">
+        <span id="lb-me-wins" style="color:#7fd97a;">0</span>W /
+        <span id="lb-me-losses" style="color:#ff8080;">0</span>L
+      </div>
+    </div>
+  </div>
+
+  <div id="lb-host"></div>
+</div>
+<div class="legal-footer">Credits are fictional play-money credits only and have no real-world monetary value.</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/auth.js"></script>
+<script>
+(async () => {
+  const user = await renderTopbar();
+  if (!user) return; // renderTopbar redirected to /login.html
+
+  const host = document.getElementById('lb-host');
+  let data;
+  try {
+    data = await api('/api/games/shooter/leaderboard');
+  } catch (e) {
+    host.innerHTML = `<div class="lb-empty">Failed to load leaderboard: ${escapeHtml(e.message || String(e))}</div>`;
+    return;
+  }
+  const rows = (data?.leaderboard || []);
+  if (!rows.length) {
+    host.innerHTML = '<div class="lb-empty">No ranked matches played yet — be the first.</div>';
+    return;
+  }
+
+  // Find the current user's row, if present in the top 25.
+  const meIdx = rows.findIndex(r => r.username?.toLowerCase() === user.username?.toLowerCase());
+
+  // Render the table.
+  const table = document.createElement('table');
+  table.className = 'lb-table';
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th>#</th><th>Player</th><th>MMR</th><th>Level</th>
+        <th>W</th><th>L</th><th>K</th><th>D</th><th>Matches</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows.map((r, i) => `
+        <tr class="${i === meIdx ? 'me' : ''}">
+          <td class="rank">${i + 1}</td>
+          <td class="name">${escapeHtml(r.username)}</td>
+          <td class="mmr">${r.mmr ?? 1000}</td>
+          <td class="num">${r.level ?? 1}</td>
+          <td class="num" style="color:#7fd97a;">${r.wins ?? 0}</td>
+          <td class="num" style="color:#ff8080;">${r.losses ?? 0}</td>
+          <td class="num">${r.kills ?? 0}</td>
+          <td class="num">${r.deaths ?? 0}</td>
+          <td class="num">${r.total_matches ?? 0}</td>
+        </tr>
+      `).join('')}
+    </tbody>`;
+  host.appendChild(table);
+
+  // Show the "your rank" callout, even if the user isn't in the top 25.
+  try {
+    const stats = await api('/api/games/shooter/stats');
+    const me = stats?.ranking;
+    if (me) {
+      document.getElementById('lb-me-card').style.display = '';
+      document.getElementById('lb-me-pos').textContent = meIdx >= 0 ? `#${meIdx + 1}` : 'Below top 25';
+      document.getElementById('lb-me-mmr').textContent = me.mmr ?? 1000;
+      document.getElementById('lb-me-wins').textContent = me.wins ?? 0;
+      document.getElementById('lb-me-losses').textContent = me.losses ?? 0;
+    }
+  } catch (_) { /* stats fetch is best-effort */ }
+})();
+</script>
+</body>
+</html>

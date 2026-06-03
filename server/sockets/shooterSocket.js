@@ -31,13 +31,85 @@ const {
   startTeamShooterMatch, finishTeamShooterMatch, cancelTeamShooterMatch,
 } = S;
 
-// Lightweight helper — logs a rejected action to the replay buffer AND bumps
-// the per-player suspicious counter. Does not auto-ban or disconnect anyone.
+// Module-level reference to the Socket.IO instance, populated by attach().
+// noteSuspicious/kickForCheating need it to forfeit the match without
+// having to thread io through every caller.
+let _ioRef = null;
+
+// Anti-cheat threshold. MAX_SUSPICIOUS_SCORE (50) is intentionally a high
+// "soft cap" purely for logging; CHEAT_KICK_THRESHOLD is the actual
+// auto-action point. Set lower so a sustained pattern of rejected actions
+// (movement teleports, fire-rate violations, weapon-mode bypasses, shots
+// after switching weapons, etc.) ends the match instead of just being
+// logged for an admin to read.
+const CHEAT_KICK_THRESHOLD = 30;
+
+// Lightweight helper — logs a rejected action to the replay buffer, bumps
+// the per-player suspicious counter, and once the counter exceeds the
+// kick threshold forfeits the match and disconnects the offender.
 function noteSuspicious(match, socketId, reason, extra = {}) {
   if (!match) return;
   const st = match.gameState?.[socketId];
-  if (st) st.suspiciousScore = (st.suspiciousScore || 0) + 1;
-  Replay.log(match.id, 'suspicious_action_rejected', { s: socketId, reason, ...extra });
+  if (!st) return;
+  st.suspiciousScore = (st.suspiciousScore || 0) + 1;
+  Replay.log(match.id, 'suspicious_action_rejected', {
+    s: socketId, reason, score: st.suspiciousScore, ...extra,
+  });
+  if (st.suspiciousScore > CHEAT_KICK_THRESHOLD && !st.cheatKicked) {
+    st.cheatKicked = true;
+    kickForCheating(match, socketId, reason);
+  }
+}
+
+// Auto-forfeit a player whose suspicious score has crossed the threshold.
+// Logs an audit_logs row (best-effort), forfeits the match using the
+// existing endMatch path, and disconnects the offending socket.
+function kickForCheating(match, socketId, lastReason) {
+  if (!_ioRef || !match || match.ended) return;
+  const ns = _ioRef.of('/shooter');
+  const p = players.get(socketId);
+  Replay.log(match.id, 'cheat_kick', { s: socketId, lastReason });
+
+  // Audit log — fire and forget; never block on it.
+  pool.query(
+    `INSERT INTO audit_logs (action, target_id, details)
+     VALUES ('cheat_kick', $1, $2::jsonb)`,
+    [p?.userId || null, JSON.stringify({
+      matchId: match.id, socketId, lastReason,
+      score: match.gameState?.[socketId]?.suspiciousScore,
+      isTeamMatch: !!match.isTeamMatch,
+      tier: match.lobbyId,
+    })]
+  ).catch(() => {});
+
+  // Tell the offender + everyone else in the match so HUDs can show why
+  // the match ended.
+  ns.to(socketId).emit('match_error', { error: 'cheat_kick', reason: lastReason });
+  for (const sid of match.playerIds) {
+    if (sid !== socketId) ns.to(sid).emit('opponent_kicked', { socketId, reason: 'cheating' });
+  }
+
+  // Forfeit: opponent (1v1) or other team (team modes) wins via the
+  // existing endMatch path. For team modes, only end the match if the
+  // kicked player's team is now empty — otherwise just remove them.
+  if (match.isTeamMatch) {
+    const myTeam = match.gameState[socketId]?.team;
+    match.playerIds = match.playerIds.filter(id => id !== socketId);
+    delete match.gameState[socketId];
+    const remaining = Object.values(match.gameState).filter(s => s.team === myTeam).length;
+    if (remaining === 0 && myTeam) {
+      endMatch(_ioRef, match.id, myTeam === 'a' ? 'b' : 'a', 'cheat_kick');
+    }
+  } else {
+    const opp = match.playerIds.find(id => id !== socketId);
+    endMatch(_ioRef, match.id, opp, 'cheat_kick');
+  }
+
+  // Drop the connection — they'll have to reconnect to play again.
+  const sock = ns.sockets.get(socketId);
+  if (sock) {
+    setTimeout(() => { try { sock.disconnect(true); } catch (_) {} }, 100);
+  }
 }
 
 function broadcastLobbies(io) {
@@ -1689,6 +1761,7 @@ async function _startMatchInner(io, lobby) {
 }
 
 function attach(io) {
+  _ioRef = io;            // module-level so noteSuspicious can forfeit
   const ns = io.of('/shooter');
   ns.use((socket, next) => {
     const req = socket.request;
