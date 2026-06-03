@@ -68,10 +68,44 @@ input:focus { border-color:var(--accent); }
   font-variant-numeric: tabular-nums;
 }
 .dmg-num.hs { color: #ffce4a; font-size: 22px; }
+.dmg-num.wb { color: #b06bff; }
+.dmg-num.wb.hs { color: #d893ff; }
 @keyframes dmgNumFloat {
   0%   { opacity: 0; transform: translate(calc(-50% + var(--dx, 0px)), -30%) scale(0.7); }
   18%  { opacity: 1; transform: translate(calc(-50% + var(--dx, 0px)), -55%) scale(1.0); }
   100% { opacity: 0; transform: translate(calc(-50% + var(--dx, 0px)), -130%) scale(1.05); }
+}
+
+/* Post-match head-to-head stats grid */
+.h2h-grid {
+  display: flex; flex-direction: column; gap: 6px;
+  margin: 16px 0; min-width: 320px;
+}
+.h2h-header, .h2h-row {
+  display: grid; grid-template-columns: 1fr 110px 1fr;
+  align-items: center; padding: 8px 12px; gap: 8px;
+}
+.h2h-header {
+  font-size: 12px; letter-spacing: 2px; color: var(--dim);
+  border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 10px;
+}
+.h2h-header span:nth-child(1) { text-align: right; }
+.h2h-header span:nth-child(3) { text-align: left; }
+.h2h-row {
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.05);
+  border-radius: 4px;
+}
+.h2h-val {
+  font-size: 18px; font-weight: 700; color: #cdd4dc;
+  font-variant-numeric: tabular-nums;
+}
+.h2h-val:nth-child(1) { text-align: right; }
+.h2h-val:nth-child(3) { text-align: left; }
+.h2h-val.pos { color: #7fd97a; }
+.h2h-label {
+  text-align: center; font-size: 11px; letter-spacing: 2px;
+  color: var(--dim); text-transform: uppercase;
 }
 
 /* MM waiting-room vote rows */
@@ -2111,6 +2145,8 @@ const GameEngine = {
   _knifeSwing:    0,         // 1 at slash start, decays to 0 (~250 ms); drives knife arc
   _camShake:      0,         // 0..1 — camera jolt intensity, decays per frame. Set by triggerShake().
   _oppLastPos:    Object.create(null),  // socketId → last {x,z} for spatial footstep delta
+  _tracerPool:    [],        // pool of THREE.Line bullet tracers, recycled by _spawnTracer.
+  _tracerLife:    0.10,      // seconds each tracer is visible before fading out.
   _gunBobT:       0,
   _muzzleFlash:   null,
 
@@ -3304,7 +3340,7 @@ const GameEngine = {
       UIManager.setCrosshairSpread(this._spread);
     }
 
-    // Bullet holes — guns only. The knife doesn't pierce walls.
+    // Bullet holes + tracers — guns only. The knife doesn't pierce walls.
     if (!isMelee) {
       for (const pd of pelletDirs) {
         const bray = { origin: { x: origin.x, y: origin.y, z: origin.z }, direction: pd };
@@ -3315,6 +3351,9 @@ const GameEngine = {
           if (inf && inf.t < minT) { minT = inf.t; hitInfo = inf; }
         }
         if (hitInfo) this.addBulletHole(hitInfo.hitPoint, hitInfo.normal);
+        // Tracer — length matches the actual ray distance so it stops at
+        // whatever the bullet would have hit, fades over ~100 ms.
+        this._spawnTracer(origin, pd, minT < Infinity ? minT : 60, { local: true });
       }
     }
 
@@ -3746,6 +3785,8 @@ const GameEngine = {
     // Keep the Web Audio listener glued to the camera so remote_shot
     // PannerNodes can pan/attenuate against the player's actual POV.
     try { AudioManager.updateListener?.(this.camera); } catch (_) {}
+    // Fade out any active bullet tracers.
+    this._tickTracers(dt);
     // Drifting sky clouds.
     this._updateClouds(dt);
     this._drawRadar();
@@ -3997,6 +4038,62 @@ const GameEngine = {
   triggerShake(intensity) {
     const v = Math.max(0, Math.min(1, Number(intensity) || 0));
     if (v > this._camShake) this._camShake = v;
+  },
+
+  // ── Bullet tracers ────────────────────────────────────────────────────
+  // A thin yellow line that briefly visualises a shot in world space.
+  // Pool-allocated so heavy auto-fire doesn't spam allocations. Used for
+  // both the local player's shots and remote_shot broadcasts so you can
+  // SEE where bullets are flying, not just hear them.
+  _spawnTracer(origin, direction, length = 14, opts = {}) {
+    if (!window.THREE || !this.scene) return;
+    const TR_LEN  = Math.max(2, Math.min(60, length));
+    const color   = opts.color   ?? (opts.local ? 0xfff2a0 : 0xffd065);
+    const opacity = opts.opacity ?? 0.85;
+    // Find a recyclable tracer or build a new one.
+    let slot = this._tracerPool.find(t => t.ttl <= 0);
+    if (!slot) {
+      const geo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1),
+      ]);
+      const mat = new THREE.LineBasicMaterial({
+        color, transparent: true, opacity: 0, depthTest: true,
+      });
+      const line = new THREE.Line(geo, mat);
+      this.scene.add(line);
+      slot = { line, ttl: 0 };
+      this._tracerPool.push(slot);
+      // Hard cap the pool — 32 simultaneous tracers is more than any
+      // realistic burst.
+      if (this._tracerPool.length > 32) {
+        const old = this._tracerPool.shift();
+        this.scene.remove(old.line);
+        old.line.geometry.dispose();
+        old.line.material.dispose();
+      }
+    }
+    const o = new THREE.Vector3(origin.x, origin.y, origin.z);
+    const dl = Math.hypot(direction.x, direction.y, direction.z) || 1;
+    const d = new THREE.Vector3(direction.x / dl, direction.y / dl, direction.z / dl)
+      .multiplyScalar(TR_LEN);
+    slot.line.geometry.setFromPoints([o, o.clone().add(d)]);
+    slot.line.material.color.setHex(color);
+    slot.line.material.opacity = opacity;
+    slot.ttl     = this._tracerLife;
+    slot.maxTtl  = this._tracerLife;
+    slot.peak    = opacity;
+  },
+
+  _tickTracers(dt) {
+    for (const slot of this._tracerPool) {
+      if (slot.ttl > 0) {
+        slot.ttl -= dt;
+        const k = Math.max(0, slot.ttl / (slot.maxTtl || 0.1));
+        slot.line.material.opacity = (slot.peak || 0.85) * k;
+      } else {
+        slot.line.material.opacity = 0;
+      }
+    }
   },
 
   _onResize() {
@@ -4369,12 +4466,14 @@ const UIManager = {
     }, ttl);
   },
 
-  showDamageNumber(damage, headshot) {
+  showDamageNumber(damage, headshot, penetrated) {
     const host = document.getElementById('hud-crosshair');
     if (!host || !Number.isFinite(damage) || damage <= 0) return;
     const el = document.createElement('div');
-    el.className = 'dmg-num' + (headshot ? ' hs' : '');
-    el.textContent = headshot ? `−${damage}!` : `−${damage}`;
+    el.className = 'dmg-num' + (headshot ? ' hs' : '') + (penetrated ? ' wb' : '');
+    let label = headshot ? `−${damage}!` : `−${damage}`;
+    if (penetrated) label = `${label}  · WALL`;
+    el.textContent = label;
     // Small random horizontal offset so back-to-back hits don't overlap.
     el.style.setProperty('--dx', `${(Math.random() - 0.5) * 30}px`);
     host.appendChild(el);
@@ -4504,13 +4603,47 @@ const UIManager = {
     }
 
     const s = data.stats;
-    document.getElementById('pm-stats').innerHTML = `
-      <div class="stat-row"><span class="stat-label">Kills</span><span class="stat-value">${s.kills}</span></div>
-      <div class="stat-row"><span class="stat-label">Deaths</span><span class="stat-value">${s.deaths}</span></div>
-      <div class="stat-row"><span class="stat-label">Headshots</span><span class="stat-value">${s.headshots ?? 0}</span></div>
-      <div class="stat-row"><span class="stat-label">Shots Fired</span><span class="stat-value">${s.shotsFired}</span></div>
-      <div class="stat-row"><span class="stat-label">Accuracy</span><span class="stat-value">${s.accuracy}%</span></div>
-    `;
+    const o = data.opponentStats;
+    const host = document.getElementById('pm-stats');
+    if (o) {
+      // Side-by-side head-to-head. Tint the winning side of each row
+      // green so you can see at a glance who outplayed the other.
+      const myName = '<span style="color:#fff;">YOU</span>';
+      const opName = `<span style="color:#fff;">${escapeHtml(o.username || 'OPPONENT')}</span>`;
+      // higherIsBetter=true means the higher value gets the win tint.
+      const row = (label, mine, theirs, higherIsBetter = true, suffix = '') => {
+        const myWin = higherIsBetter ? (mine > theirs) : (mine < theirs);
+        const opWin = higherIsBetter ? (theirs > mine) : (theirs < mine);
+        const myCls = myWin ? 'pos' : '';
+        const opCls = opWin ? 'pos' : '';
+        return `
+          <div class="h2h-row">
+            <span class="h2h-val ${myCls}">${mine}${suffix}</span>
+            <span class="h2h-label">${label}</span>
+            <span class="h2h-val ${opCls}">${theirs}${suffix}</span>
+          </div>`;
+      };
+      host.innerHTML = `
+        <div class="h2h-grid">
+          <div class="h2h-header">
+            <span>${myName}</span><span></span><span>${opName}</span>
+          </div>
+          ${row('Kills',     s.kills,     o.kills)}
+          ${row('Deaths',    s.deaths,    o.deaths, /*higherIsBetter*/ false)}
+          ${row('Headshots', s.headshots ?? 0, o.headshots ?? 0)}
+          ${row('Shots',     s.shotsFired, o.shotsFired)}
+          ${row('Accuracy',  s.accuracy,  o.accuracy ?? 0, true, '%')}
+        </div>
+      `;
+    } else {
+      host.innerHTML = `
+        <div class="stat-row"><span class="stat-label">Kills</span><span class="stat-value">${s.kills}</span></div>
+        <div class="stat-row"><span class="stat-label">Deaths</span><span class="stat-value">${s.deaths}</span></div>
+        <div class="stat-row"><span class="stat-label">Headshots</span><span class="stat-value">${s.headshots ?? 0}</span></div>
+        <div class="stat-row"><span class="stat-label">Shots Fired</span><span class="stat-value">${s.shotsFired}</span></div>
+        <div class="stat-row"><span class="stat-label">Accuracy</span><span class="stat-value">${s.accuracy}%</span></div>
+      `;
+    }
 
     // Ranking progression block (omitted in training mode).
     const rankEl = document.getElementById('pm-ranking');
@@ -6219,6 +6352,11 @@ const NetworkManager = {
     // direction). The server only emits this for non-melee weapons.
     s.on('remote_shot',         d => {
       try { AudioManager.playSpatialShot?.(d.origin, d.weapon); } catch (_) {}
+      // Tracer line for the enemy shot — gives a visual cue of *where*
+      // they're firing from, complementing the spatial audio.
+      if (d.origin && d.direction) {
+        try { GameEngine._spawnTracer?.(d.origin, d.direction, 50, { local: false }); } catch (_) {}
+      }
     });
     // Voice chat signaling — payloads are relayed by the server to
     // teammates only. The VoiceChat module handles all RTC state.
@@ -6236,7 +6374,7 @@ const NetworkManager = {
     s.on('mm_invite_declined',   d => { try { App.onMmInviteDeclined(d); }   catch (_) {} });
     s.on('hit_result',          d => {
       if (d.hit) {
-        try { UIManager.showDamageNumber(d.damage, !!d.headshot); } catch (_) {}
+        try { UIManager.showDamageNumber(d.damage, !!d.headshot, !!d.penetrated); } catch (_) {}
         UIManager.flashHitMarker(!!d.headshot);
         if (d.headshot) AudioManager.playKill();
         else            AudioManager.playHit();

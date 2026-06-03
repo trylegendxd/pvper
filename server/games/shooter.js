@@ -109,11 +109,20 @@ const headBox = (p) => ({
   min:{x:p.x-0.22, y:p.y+1.45, z:p.z-0.22},
   max:{x:p.x+0.22, y:p.y+1.85, z:p.z+0.22},
 });
+// Thin cover (railings, fence walls, partition boards) is considered
+// penetrable — bullets pass through at reduced damage. A box is "thin"
+// when either of its horizontal dimensions is below the threshold,
+// which catches things like a 9 × 0.25 catwalk railing or a 0.5 × 8
+// fence without affecting solid crates / shipping containers.
+const COVER_PENETRABLE_MIN = 0.7;
+const COVER_PENETRATION_DAMAGE_MULT = 0.5;
+
 function coverAabb(box) {
   const p = box.position, s = box.size;
   return {
     min: { x: p.x - s.w/2, y: p.y,       z: p.z - s.d/2 },
     max: { x: p.x + s.w/2, y: p.y + s.h, z: p.z + s.d/2 },
+    penetrable: Math.min(s.w, s.d) < COVER_PENETRABLE_MIN,
   };
 }
 
@@ -624,6 +633,7 @@ module.exports = {
   lobbies, matches, players,
   // Helpers
   rayHitDistance, playerBox, headBox, coverAabb, positionAtTime,
+  COVER_PENETRABLE_MIN, COVER_PENETRATION_DAMAGE_MULT,
   symmetricalMap, randomMap, csDepotMap, buildMapByType,
   MAP_TYPES, resolveMapType, lobbySnapshot,
   WEAPON_MODES, ROUND_OPTIONS, resolveWeaponMode, resolveRounds,

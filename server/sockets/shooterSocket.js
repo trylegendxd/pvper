@@ -25,6 +25,7 @@ const {
   THROWABLE_CONFIG, THROWABLE_TYPES, MAX_THROW_DIRECTION_DEVIATION,
   lobbies, matches, players,
   rayHitDistance, playerBox, headBox, coverAabb, positionAtTime,
+  COVER_PENETRATION_DAMAGE_MULT,
   symmetricalMap, randomMap, csDepotMap, buildMapByType,
   MAP_TYPES, resolveMapType, lobbySnapshot,
   startShooterMatch, finishShooterMatch, cancelShooterMatch,
@@ -227,6 +228,16 @@ function endMatch(io, matchId, winnerArg, reason) {
       // Always echo the player's latest public stats so the UI can refresh.
       const liveStats = await Ranking.publicStatsFor(p.userId).catch(() => null);
 
+      // Head-to-head: ship the OPPONENT's stats too so the post-match
+      // screen can render a side-by-side comparison instead of just
+      // listing what the player did in isolation.
+      const oppState = (sockId === aSock ? bState : aState) || {};
+      const oppPlayer = sockId === aSock ? players.get(bSock) : players.get(aSock);
+      const oppShotsFired = oppState.shotsFired || 0;
+      const oppAccuracy = oppShotsFired
+        ? Math.round(((oppState.shotsHit || 0) / oppShotsFired) * 100)
+        : 0;
+
       sock?.emit('match_end', {
         won, creditChange, newBalance, reason,
         stats: {
@@ -236,6 +247,15 @@ function endMatch(io, matchId, winnerArg, reason) {
           shotsFired: myState.shotsFired || 0,
           shotsHit: myState.shotsHit || 0,
           accuracy,
+        },
+        opponentStats: {
+          username: oppPlayer?.username || '?',
+          kills: oppState.kills || 0,
+          deaths: oppState.deaths || 0,
+          headshots: oppState.headshots || 0,
+          shotsFired: oppShotsFired,
+          shotsHit: oppState.shotsHit || 0,
+          accuracy: oppAccuracy,
         },
         ranking: progress,         // { xpGained, mmrChange, newMmr, newLevel, leveledUp, ... }
         liveStats,                 // current public profile snapshot
@@ -318,6 +338,21 @@ function endTeamMatch(io, match, winnerArg, reason) {
         // Net change for the player: win → +bet share of the pot; lose → -bet
         const creditChange = isWinner ? +baseBet : -baseBet;
         const liveStats = await Ranking.publicStatsFor(p.userId).catch(() => null);
+        // Aggregate the enemy team's combat stats so the post-match
+        // screen can show "your team vs theirs" alongside the per-player
+        // numbers.
+        const enemyTeam = me.team === 'a' ? 'b' : 'a';
+        const enemyStates = Object.values(match.gameState).filter(s => s.team === enemyTeam);
+        const enemyAgg = enemyStates.reduce((acc, s) => ({
+          kills:      acc.kills      + (s.kills || 0),
+          deaths:     acc.deaths     + (s.deaths || 0),
+          headshots:  acc.headshots  + (s.headshots || 0),
+          shotsFired: acc.shotsFired + (s.shotsFired || 0),
+          shotsHit:   acc.shotsHit   + (s.shotsHit || 0),
+        }), { kills: 0, deaths: 0, headshots: 0, shotsFired: 0, shotsHit: 0 });
+        const enemyAcc = enemyAgg.shotsFired
+          ? Math.round((enemyAgg.shotsHit / enemyAgg.shotsFired) * 100) : 0;
+
         sock?.emit('match_end', {
           won: !!isWinner,
           creditChange,
@@ -333,6 +368,11 @@ function endTeamMatch(io, match, winnerArg, reason) {
             shotsFired: me.shotsFired || 0,
             shotsHit: me.shotsHit || 0,
             accuracy: me.shotsFired ? Math.round(((me.shotsHit || 0) / me.shotsFired) * 100) : 0,
+          },
+          opponentStats: {
+            username: `Team ${enemyTeam.toUpperCase()} (${enemyStates.length})`,
+            ...enemyAgg,
+            accuracy: enemyAcc,
           },
           liveStats,
           replaySaved: true,
@@ -2506,10 +2546,16 @@ function attach(io) {
 
       // Broadcast the shot to every other player in the match so they
       // can spatialise the gunshot SFX (distance attenuation + HRTF
-      // panning). Knife slashes are silent at range, so we skip melee.
+      // panning) AND render a brief tracer line in the world.
+      // Knife slashes have no audible signature at range and no muzzle
+      // exit, so we skip melee.
       if (!W.melee && origin) {
         const shotPayload = {
           origin: { x: origin.x, y: origin.y, z: origin.z },
+          // Direction is the *primary* shot ray — even for shotgun we
+          // ship the single aim direction so the tracer points where
+          // the player aimed. Per-pellet spread is purely visual.
+          direction: direction ? { x: direction.x, y: direction.y, z: direction.z } : null,
           weapon: wKey,
           shooterId: socket.id,
         };
@@ -2570,6 +2616,7 @@ function attach(io) {
       let bestNearest = Infinity;
       let bestDmg = 0;
       let bestHead = false;
+      let bestPen = false;          // true if the winning ray went through thin cover
 
       for (const cSock of candidates) {
         const cState = match.gameState[cSock];
@@ -2581,24 +2628,43 @@ function attach(io) {
         // be used as a free hitscan. Guns use 80m.
         const MR = W.maxRange || 80;
         let dmgHere = 0, hitHere = false, headHere = false, nearestHere = Infinity;
+        let penetratedHere = false;
         for (const ray of rays) {
-          let coverDist = Infinity;
+          // Split cover into "blocking" (solid crates, walls) and
+          // "penetrable" (thin railings, fence boards). Penetrable
+          // cover doesn't stop the bullet — it just halves the damage.
+          let coverDist = Infinity;     // closest BLOCKING cover
+          let penDist   = Infinity;     // closest penetrable cover (for tagging)
           for (const c of match.coverAabbs) {
-            const d = rayHitDistance(ray, c, MR); if (d < coverDist) coverDist = d;
+            const d = rayHitDistance(ray, c, MR);
+            if (d === Infinity) continue;
+            if (c.penetrable) { if (d < penDist)   penDist   = d; }
+            else              { if (d < coverDist) coverDist = d; }
           }
           for (const w of walls) {
+            // Arena walls are never penetrable.
             const d = rayHitDistance(ray, w, MR); if (d < coverDist) coverDist = d;
           }
           const headDist = rayHitDistance(ray, headB, MR);
           const bodyDist = rayHitDistance(ray, bodyB, MR);
           // Reject hits past the weapon's max reach.
           if (headDist > MR && bodyDist > MR) continue;
+          // Did the ray go *through* any thin cover before reaching the
+          // target? If so this pellet/shot is a wall-bang.
+          const isPen = (penDist !== Infinity) &&
+                        (penDist < Math.min(headDist, bodyDist));
           if (headDist < coverDist && headDist <= bodyDist) {
-            dmgHere += W.headDmg; hitHere = true; headHere = true;
+            const mult = isPen ? COVER_PENETRATION_DAMAGE_MULT : 1;
+            dmgHere += Math.round(W.headDmg * mult);
+            hitHere = true; headHere = true;
             if (headDist < nearestHere) nearestHere = headDist;
+            if (isPen) penetratedHere = true;
           } else if (bodyDist < coverDist && bodyDist !== Infinity) {
-            dmgHere += W.dmg; hitHere = true;
+            const mult = isPen ? COVER_PENETRATION_DAMAGE_MULT : 1;
+            dmgHere += Math.round(W.dmg * mult);
+            hitHere = true;
             if (bodyDist < nearestHere) nearestHere = bodyDist;
+            if (isPen) penetratedHere = true;
           }
         }
         if (hitHere && nearestHere < bestNearest) {
@@ -2606,6 +2672,7 @@ function attach(io) {
           bestTarget  = cSock;
           bestDmg     = dmgHere;
           bestHead    = headHere;
+          bestPen     = penetratedHere;
         }
       }
 
@@ -2642,7 +2709,7 @@ function attach(io) {
       Replay.log(match.id, 'damage_dealt', {
         s: socket.id, target: oppSock, dmg: totalDmg,
       });
-      socket.emit('hit_result', { hit: true, headshot: didHead, damage: totalDmg, ammo: wState.ammo, weapon: wKey });
+      socket.emit('hit_result', { hit: true, headshot: didHead, damage: totalDmg, penetrated: bestPen, ammo: wState.ammo, weapon: wKey });
       // Notify the victim. The single helper carries attackerPos so
       // future damage sources don't re-duplicate the payload shape.
       emitYouHit(ns, oppSock, state.position, {
