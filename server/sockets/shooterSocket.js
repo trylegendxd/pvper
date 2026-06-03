@@ -86,7 +86,7 @@ const {
   THROWABLE_CONFIG, THROWABLE_TYPES, MAX_THROW_DIRECTION_DEVIATION,
   lobbies, matches, players,
   rayHitDistance, playerBox, headBox, coverAabb, positionAtTime,
-  COVER_PENETRATION_DAMAGE_MULT,
+  COVER_PENETRATION_DAMAGE_MULT, damageMultiplier,
   symmetricalMap, randomMap, csDepotMap, buildMapByType,
   MAP_TYPES, resolveMapType, lobbySnapshot,
   startShooterMatch, finishShooterMatch, cancelShooterMatch,
@@ -2747,14 +2747,16 @@ function attach(io) {
           const isPen = (penDist !== Infinity) &&
                         (penDist < Math.min(headDist, bodyDist));
           if (headDist < coverDist && headDist <= bodyDist) {
-            const mult = isPen ? COVER_PENETRATION_DAMAGE_MULT : 1;
-            dmgHere += Math.round(W.headDmg * mult);
+            const penMult = isPen ? COVER_PENETRATION_DAMAGE_MULT : 1;
+            const distMult = damageMultiplier(W, headDist);
+            dmgHere += Math.round(W.headDmg * penMult * distMult);
             hitHere = true; headHere = true;
             if (headDist < nearestHere) nearestHere = headDist;
             if (isPen) penetratedHere = true;
           } else if (bodyDist < coverDist && bodyDist !== Infinity) {
-            const mult = isPen ? COVER_PENETRATION_DAMAGE_MULT : 1;
-            dmgHere += Math.round(W.dmg * mult);
+            const penMult = isPen ? COVER_PENETRATION_DAMAGE_MULT : 1;
+            const distMult = damageMultiplier(W, bodyDist);
+            dmgHere += Math.round(W.dmg * penMult * distMult);
             hitHere = true;
             if (bodyDist < nearestHere) nearestHere = bodyDist;
             if (isPen) penetratedHere = true;

@@ -271,7 +271,7 @@ input:focus { border-color:var(--accent); }
 .score-timer { font-size:14px;color:#bbb;font-family:monospace;letter-spacing:2px;min-width:52px;text-align:center; }
 
 /* Kill feed */
-#hud-killfeed { top:8px;right:8px;display:flex;flex-direction:column;gap:3px;align-items:flex-end; }
+#hud-killfeed { top:8px;right:8px;display:flex;flex-direction:column;gap:3px;align-items:flex-end;pointer-events:auto; }
 .kf-entry { background:rgba(0,0,0,.65);padding:2px 8px;font-size:11px;font-family:monospace;border-radius:2px;animation:kfSlideIn .2s ease;border-right:2px solid #555; }
 .kf-entry.you-killed { border-right-color:#4b9eff; } .kf-entry.you-died { border-right-color:#e63946; }
 .kf-killer.you { color:#4b9eff; } .kf-killer.opp { color:#e63946; }
@@ -1013,6 +1013,14 @@ input:focus { border-color:var(--accent); }
       <span class="ammo-sep" id="ammo-reserve">/30</span>
     </div>
     <div class="ammo-label" id="ammo-label">AK-47</div>
+    <!-- Reload progress bar — hidden by default, visible while
+         GameEngine._reloadStartedAt is set. Width animates from 0 → 100%
+         over the weapon's reloadMs. -->
+    <div id="hud-reload-bar"
+         style="display:none;height:5px;width:120px;margin-top:6px;background:rgba(255,255,255,0.08);border-radius:2px;overflow:hidden;">
+      <div id="hud-reload-fill"
+           style="height:100%;width:0%;background:linear-gradient(90deg,#ffce4a,#fff2a0);transition:width 0.05s linear;"></div>
+    </div>
   </div>
 
   <!-- Throwable HUD: selected item + remaining count -->
@@ -1177,16 +1185,34 @@ const CFG = {
 // `moveSpeed` is the top walking speed (m/s) while holding that
 // weapon — CS2-style: lighter guns walk faster, heavier guns slower.
 // There's no sprint anymore; this IS the top speed.
+// falloffStart / falloffEnd / minMult mirror the server table so the
+// training-mode raycast applies the same distance attenuation.
 const WEAPONS = {
-  rifle:   { name:'AK-47',   fireMode:'auto',  fireMs:105,  mag:30,  dmg:22, headDmg:100, reloadMs:2000, pellets:1, spread:0.022, spreadMove:0.35, spreadDecay:4,   moveSpeed: 4.6, maxRange: 80 },
-  pistol:  { name:'PISTOL',  fireMode:'semi',  fireMs:180,  mag:12,  dmg:34, headDmg:100, reloadMs:1500, pellets:1, spread:0.014, spreadMove:0.20, spreadDecay:5,   moveSpeed: 5.2, maxRange: 80 },
-  shotgun: { name:'SHOTGUN', fireMode:'semi',  fireMs:700,  mag:6,   dmg:16, headDmg:60,  reloadMs:2500, pellets:6, spread:0.10,  spreadMove:0.50, spreadDecay:3,   moveSpeed: 4.8, maxRange: 80 },
-  sniper:  { name:'M40A3',   fireMode:'semi',  fireMs:1500, mag:5,   dmg:50, headDmg:100, reloadMs:3500, pellets:1, spread:0.003, spreadMove:0.28, spreadDecay:1.5, moveSpeed: 4.2, maxRange: 80 },
+  rifle:   { name:'AK-47',   fireMode:'auto',  fireMs:105,  mag:30,  dmg:22, headDmg:100, reloadMs:2000, pellets:1, spread:0.022, spreadMove:0.35, spreadDecay:4,   moveSpeed: 4.6, maxRange: 80,
+             falloffStart: 25, falloffEnd: 55, minMult: 0.55 },
+  pistol:  { name:'PISTOL',  fireMode:'semi',  fireMs:180,  mag:12,  dmg:34, headDmg:100, reloadMs:1500, pellets:1, spread:0.014, spreadMove:0.20, spreadDecay:5,   moveSpeed: 5.2, maxRange: 80,
+             falloffStart: 14, falloffEnd: 38, minMult: 0.35 },
+  shotgun: { name:'SHOTGUN', fireMode:'semi',  fireMs:700,  mag:6,   dmg:16, headDmg:60,  reloadMs:2500, pellets:6, spread:0.10,  spreadMove:0.50, spreadDecay:3,   moveSpeed: 4.8, maxRange: 80,
+             falloffStart: 8,  falloffEnd: 22, minMult: 0.20 },
+  sniper:  { name:'M40A3',   fireMode:'semi',  fireMs:1500, mag:5,   dmg:50, headDmg:100, reloadMs:3500, pellets:1, spread:0.003, spreadMove:0.28, spreadDecay:1.5, moveSpeed: 4.2, maxRange: 80,
+             falloffStart: 80, falloffEnd: 80, minMult: 1.0 },
   // Knife — fastest move speed, infinite "ammo", short reach. Server
   // enforces the reach cap so clients can't fake a long-range hit;
   // client uses the same value for the training-mode bot raycast.
-  knife:   { name:'KNIFE',   fireMode:'melee', fireMs:500,  mag:999, dmg:55, headDmg:80,  reloadMs:0,    pellets:1, spread:0,     spreadMove:0,    spreadDecay:0,   moveSpeed: 5.8, maxRange: 2.2 },
+  knife:   { name:'KNIFE',   fireMode:'melee', fireMs:500,  mag:999, dmg:55, headDmg:80,  reloadMs:0,    pellets:1, spread:0,     spreadMove:0,    spreadDecay:0,   moveSpeed: 5.8, maxRange: 2.2,
+             falloffStart: 2.2, falloffEnd: 2.2, minMult: 1.0 },
 };
+
+// Same falloff curve the server uses. Pure utility, no Three.js refs.
+function damageMultiplier(w, distance) {
+  if (!w) return 1;
+  const start = w.falloffStart, end = w.falloffEnd, min = w.minMult ?? 1;
+  if (!start || !end || end <= start) return 1;
+  if (distance <= start) return 1;
+  if (distance >= end)   return min;
+  const k = (distance - start) / (end - start);
+  return 1 + (min - 1) * k;
+}
 const WEAPON_ORDER = ['rifle', 'pistol', 'shotgun', 'sniper', 'knife'];
 
 // ══════════════════════════════════════════════════════════════
@@ -2243,9 +2269,13 @@ const GameEngine = {
   _gunRecoil:     0,
   _knifeSwing:    0,         // 1 at slash start, decays to 0 (~250 ms); drives knife arc
   _camShake:      0,         // 0..1 — camera jolt intensity, decays per frame. Set by triggerShake().
+  _reloadStartedAt: 0,       // performance.now() when the current reload kicked off (0 = idle).
+  _reloadDurationMs: 0,      // total ms for the current reload (so the bar can compute progress).
   _oppLastPos:    Object.create(null),  // socketId → last {x,z} for spatial footstep delta
   _tracerPool:    [],        // pool of THREE.Line bullet tracers, recycled by _spawnTracer.
   _tracerLife:    0.10,      // seconds each tracer is visible before fading out.
+  _sparkPool:     [],        // pool of small spheres used for wall-impact flashes.
+  _sparkLife:     0.14,      // seconds the impact spark stays visible.
   // Spawn invulnerability — server tells us when an opponent is invuln
   // and we render a blue aura around their model for the duration.
   _invuln:        Object.create(null), // socketId → invulnUntil (ms)
@@ -3462,7 +3492,11 @@ const GameEngine = {
           const inf = rayHitInfo(bray, b3, 80);
           if (inf && inf.t < minT) { minT = inf.t; hitInfo = inf; }
         }
-        if (hitInfo) this.addBulletHole(hitInfo.hitPoint, hitInfo.normal);
+        if (hitInfo) {
+          this.addBulletHole(hitInfo.hitPoint, hitInfo.normal);
+          // Impact spark — small bright sphere at the wall hit point.
+          this._spawnImpactSpark(hitInfo.hitPoint);
+        }
         // Tracer — length matches the actual ray distance so it stops at
         // whatever the bullet would have hit, fades over ~100 ms.
         this._spawnTracer(origin, pd, minT < Infinity ? minT : 60, { local: true });
@@ -3495,10 +3529,10 @@ const GameEngine = {
             max:{x:Bot.pos.x+0.22, y:1.85, z:Bot.pos.z+0.22} }, MR);
         if (headDist > MR && bodyDist > MR) continue;
         if (headDist < coverDist && headDist <= bodyDist) {
-          Bot.takeDamage(w.headDmg);
+          Bot.takeDamage(Math.round(w.headDmg * damageMultiplier(w, headDist)));
           anyHead = true; anyHit = true;
         } else if (bodyDist < coverDist && bodyDist !== Infinity) {
-          Bot.takeDamage(w.dmg);
+          Bot.takeDamage(Math.round(w.dmg * damageMultiplier(w, bodyDist)));
           anyHit = true;
         }
       }
@@ -3523,8 +3557,11 @@ const GameEngine = {
     const wS = this._wState();
     if (wS.reloading || wS.ammo === w.mag) return;
     wS.reloading = true;
+    this._reloadStartedAt  = performance.now();
+    this._reloadDurationMs = w.reloadMs || 0;
     AudioManager.playReload();
     UIManager.showReloadIndicator(true);
+    UIManager.showReloadBar(true);
     if (!App.trainingMode) NetworkManager.sendReload();
     else setTimeout(() => this.finishReload(this.currentWeapon), w.reloadMs);
   },
@@ -3539,6 +3576,9 @@ const GameEngine = {
     if (key === this.currentWeapon) {
       UIManager.updateAmmo(wS.ammo, w.mag, w.name);
       UIManager.showReloadIndicator(false);
+      UIManager.showReloadBar(false);
+      this._reloadStartedAt  = 0;
+      this._reloadDurationMs = 0;
     }
   },
 
@@ -3901,6 +3941,10 @@ const GameEngine = {
     this._tickTracers(dt);
     // Pulse / fade the spawn-invuln aura on any invulnerable opponent.
     this._tickInvulnAuras(dt);
+    // Reload progress bar — width interpolates from 0 → 100 over reloadMs.
+    UIManager.tickReloadBar?.();
+    // Bullet impact sparks decay over ~140 ms.
+    this._tickImpactSparks(dt);
     // Drifting sky clouds.
     this._updateClouds(dt);
     this._drawRadar();
@@ -4206,6 +4250,51 @@ const GameEngine = {
         slot.line.material.opacity = (slot.peak || 0.85) * k;
       } else {
         slot.line.material.opacity = 0;
+      }
+    }
+  },
+
+  // Small bright sphere at the bullet impact point — pool-allocated like
+  // tracers, scale-down + fade-out over _sparkLife. Materializes only
+  // when window.THREE is loaded.
+  _spawnImpactSpark(point) {
+    if (!window.THREE || !this.scene || !point) return;
+    let slot = this._sparkPool.find(s => s.ttl <= 0);
+    if (!slot) {
+      const geo = new THREE.SphereGeometry(0.06, 6, 4);
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0xfff2a0, transparent: true, opacity: 0, depthTest: true,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      this.scene.add(mesh);
+      slot = { mesh, ttl: 0 };
+      this._sparkPool.push(slot);
+      // Bound the pool — bullet holes themselves are a separate cap.
+      if (this._sparkPool.length > 24) {
+        const old = this._sparkPool.shift();
+        this.scene.remove(old.mesh);
+        old.mesh.geometry.dispose();
+        old.mesh.material.dispose();
+      }
+    }
+    slot.mesh.position.set(point.x, point.y, point.z);
+    slot.mesh.material.opacity = 1;
+    slot.mesh.scale.set(1, 1, 1);
+    slot.ttl    = this._sparkLife;
+    slot.maxTtl = this._sparkLife;
+  },
+
+  _tickImpactSparks(dt) {
+    for (const slot of this._sparkPool) {
+      if (slot.ttl > 0) {
+        slot.ttl -= dt;
+        const k = Math.max(0, slot.ttl / (slot.maxTtl || 0.1));
+        slot.mesh.material.opacity = k;
+        // Shrink as it fades.
+        const s = 0.6 + k * 0.6;
+        slot.mesh.scale.set(s, s, s);
+      } else {
+        slot.mesh.material.opacity = 0;
       }
     }
   },
@@ -4578,7 +4667,36 @@ const UIManager = {
     if (mag != null && reserveEl) reserveEl.textContent = '/' + mag;
   },
 
+  showReloadBar(show) {
+    const bar = document.getElementById('hud-reload-bar');
+    const fill = document.getElementById('hud-reload-fill');
+    if (!bar || !fill) return;
+    if (show) {
+      bar.style.display = '';
+      fill.style.width = '0%';
+    } else {
+      bar.style.display = 'none';
+      fill.style.width = '0%';
+    }
+  },
+
+  // Called from the game loop while a reload is in flight. Updates the
+  // bar's width based on elapsed / total.
+  tickReloadBar() {
+    const start = GameEngine._reloadStartedAt;
+    const dur   = GameEngine._reloadDurationMs;
+    if (!start || !dur) return;
+    const fill = document.getElementById('hud-reload-fill');
+    if (!fill) return;
+    const elapsed = performance.now() - start;
+    const pct = Math.max(0, Math.min(100, (elapsed / dur) * 100));
+    fill.style.width = pct + '%';
+  },
+
   showReloadIndicator(show) {
+    // Keep the progress bar in sync with the text indicator so every
+    // reset path (match start, match end, respawn) clears both.
+    this.showReloadBar(show);
     const el = document.getElementById('ammo-label');
     if (show) {
       el.textContent = 'RELOADING...';
@@ -7286,8 +7404,12 @@ const App = {
 
     const kCls = iKilled ? 'you' : 'opp';
     const dCls = iDied   ? 'you' : 'opp';
+    // Linkify names to the public profile so a player can click any
+    // entry to see who killed them. target="_blank" so the click
+    // doesn't yank them out of the match tab.
+    const linkify = (n) => `<a href="/profile.html?u=${encodeURIComponent(n || '')}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;pointer-events:auto;">${escapeHtml(n || '?')}</a>`;
     UIManager.addKillfeedEntry(
-      `<span class="kf-killer ${kCls}">${data.killerName}</span><span class="kf-icon">☠</span><span class="kf-killed ${dCls}">${data.killedName}</span>`,
+      `<span class="kf-killer ${kCls}">${linkify(data.killerName)}</span><span class="kf-icon">☠</span><span class="kf-killed ${dCls}">${linkify(data.killedName)}</span>`,
       iKilled ? 'you-killed' : iDied ? 'you-died' : ''
     );
     if (iDied) {

@@ -37,16 +37,40 @@ const MAX_SUSPICIOUS_SCORE      = 50;     // soft cap — not auto-banned, only 
 const MAX_SHOT_DIRECTION_DEVIATION = 0.6; // dot-product floor between shot dir and look dir
 
 // Weapon configs — must mirror client's WEAPONS
+// Per-weapon distance damage falloff. Between `falloffStart` and
+// `falloffEnd` (metres) the damage multiplier interpolates from 1.0
+// down to `minMult`. Below `falloffStart` damage is full; above
+// `falloffEnd` damage caps at `minMult`. Sniper is intentionally
+// flat (no falloff) and knife inherits irrelevant values (melee).
 const WEAPONS = {
-  rifle:   { fireMs: 105,  mag: 30,  dmg: 22, headDmg: 100, reloadMs: 2000, pellets: 1, spread: 0.0,  melee: false, maxRange: 80 },
-  pistol:  { fireMs: 180,  mag: 12,  dmg: 34, headDmg: 100, reloadMs: 1500, pellets: 1, spread: 0.0,  melee: false, maxRange: 80 },
-  shotgun: { fireMs: 700,  mag: 6,   dmg: 16, headDmg: 60,  reloadMs: 2500, pellets: 6, spread: 0.10, melee: false, maxRange: 80 },
-  sniper:  { fireMs: 1500, mag: 5,   dmg: 50, headDmg: 100, reloadMs: 3500, pellets: 1, spread: 0.0,  melee: false, maxRange: 80 },
+  rifle:   { fireMs: 105,  mag: 30,  dmg: 22, headDmg: 100, reloadMs: 2000, pellets: 1, spread: 0.0,  melee: false, maxRange: 80,
+             falloffStart: 25, falloffEnd: 55, minMult: 0.55 },
+  pistol:  { fireMs: 180,  mag: 12,  dmg: 34, headDmg: 100, reloadMs: 1500, pellets: 1, spread: 0.0,  melee: false, maxRange: 80,
+             falloffStart: 14, falloffEnd: 38, minMult: 0.35 },
+  shotgun: { fireMs: 700,  mag: 6,   dmg: 16, headDmg: 60,  reloadMs: 2500, pellets: 6, spread: 0.10, melee: false, maxRange: 80,
+             falloffStart: 8,  falloffEnd: 22, minMult: 0.20 },
+  sniper:  { fireMs: 1500, mag: 5,   dmg: 50, headDmg: 100, reloadMs: 3500, pellets: 1, spread: 0.0,  melee: false, maxRange: 80,
+             falloffStart: 80, falloffEnd: 80, minMult: 1.0 },
   // Knife is a melee weapon: infinite "ammo", short reach. The server
   // rejects any hit beyond maxRange so it can't be used like a free
   // hitscan gun.
-  knife:   { fireMs: 500,  mag: 999, dmg: 55, headDmg: 80,  reloadMs: 0,    pellets: 1, spread: 0.0,  melee: true,  maxRange: 2.2 },
+  knife:   { fireMs: 500,  mag: 999, dmg: 55, headDmg: 80,  reloadMs: 0,    pellets: 1, spread: 0.0,  melee: true,  maxRange: 2.2,
+             falloffStart: 2.2, falloffEnd: 2.2, minMult: 1.0 },
 };
+
+// Returns the damage multiplier for a given weapon + hit distance.
+// Linear interpolation between falloffStart and falloffEnd, clamped.
+function damageMultiplier(weaponCfg, distance) {
+  if (!weaponCfg) return 1;
+  const start = weaponCfg.falloffStart;
+  const end   = weaponCfg.falloffEnd;
+  const min   = weaponCfg.minMult ?? 1;
+  if (!start || !end || end <= start) return 1;
+  if (distance <= start) return 1;
+  if (distance >= end)   return min;
+  const k = (distance - start) / (end - start);
+  return 1 + (min - 1) * k;
+}
 const DEFAULT_WEAPON = 'rifle';
 
 // Persistent lobbies — same as before
@@ -634,6 +658,7 @@ module.exports = {
   // Helpers
   rayHitDistance, playerBox, headBox, coverAabb, positionAtTime,
   COVER_PENETRABLE_MIN, COVER_PENETRATION_DAMAGE_MULT,
+  damageMultiplier,
   symmetricalMap, randomMap, csDepotMap, buildMapByType,
   MAP_TYPES, resolveMapType, lobbySnapshot,
   WEAPON_MODES, ROUND_OPTIONS, resolveWeaponMode, resolveRounds,
