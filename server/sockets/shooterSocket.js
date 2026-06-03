@@ -10,8 +10,37 @@
 const { pool } = require('../db');
 const { getBalance } = require('../wallet');
 const S = require('../games/shooter');
-const Replay  = require('../games/shooterReplay');
-const Ranking = require('../games/shooterRanking');
+const Replay       = require('../games/shooterReplay');
+const Ranking      = require('../games/shooterRanking');
+const Achievements = require('../games/shooterAchievements');
+
+// Spawn invulnerability — every fresh respawn gets this much grace
+// before damage applies again, so a player can't be shot the instant
+// the death overlay clears.
+const SPAWN_INVULN_MS = 1000;
+
+// Emit a one-shot invuln event to all players in a match so they can
+// render an aura (or skip their own crosshair fire-confirm). Best-effort
+// — if io isn't ready yet (called from a very early respawn path) the
+// emit just no-ops.
+function emitInvulnStart(io, match, socketId, until) {
+  if (!io || !match) return;
+  const ns = io.of('/shooter');
+  const payload = { socketId, until };
+  for (const sid of match.playerIds) ns.to(sid).emit('invuln_start', payload);
+}
+
+// Fire a single achievement grant to a single socket. Awaits the DB
+// write, then emits if anything was actually new. Wrapped in try/catch
+// so the kill flow is never delayed by an achievement bug.
+function tryGrant(io, socketId, userId, key) {
+  if (!userId || !key) return;
+  Achievements.grantOne(userId, key).then(def => {
+    if (def && _ioRef) {
+      _ioRef.of('/shooter').to(socketId).emit('achievement_unlocked', def);
+    }
+  }).catch(() => {});
+}
 
 const {
   LOBBY_DEFS, MAX_HEALTH, KILLS_TO_WIN, MATCH_DURATION_MS, RESPAWN_DELAY_MS,
@@ -228,6 +257,20 @@ function endMatch(io, matchId, winnerArg, reason) {
       // Always echo the player's latest public stats so the UI can refresh.
       const liveStats = await Ranking.publicStatsFor(p.userId).catch(() => null);
 
+      // Achievement scan — uses the per-player match stats + their
+      // post-match public profile (level, streak, total matches) to
+      // detect milestone unlocks. Each grant is checked vs an in-memory
+      // owned-set so duplicates skip the DB write.
+      const matchStatsForAch = {
+        kills:    myState.kills || 0,
+        deaths:   myState.deaths || 0,
+        headshots: myState.headshots || 0,
+      };
+      const newAchievements = await Achievements.detectMatchEnd({
+        userId: p.userId, isWinner: won,
+        matchStats: matchStatsForAch, liveStats,
+      }).catch(() => []);
+
       // Head-to-head: ship the OPPONENT's stats too so the post-match
       // screen can render a side-by-side comparison instead of just
       // listing what the player did in isolation.
@@ -260,6 +303,7 @@ function endMatch(io, matchId, winnerArg, reason) {
         ranking: progress,         // { xpGained, mmrChange, newMmr, newLevel, leveledUp, ... }
         liveStats,                 // current public profile snapshot
         replaySaved: true,         // killcam placeholder hook for the frontend
+        achievements: newAchievements, // newly-earned achievements for the toast
       });
     }
   }).catch(err => console.error('[shooter] finishMatch failed', err));
@@ -338,6 +382,13 @@ function endTeamMatch(io, match, winnerArg, reason) {
         // Net change for the player: win → +bet share of the pot; lose → -bet
         const creditChange = isWinner ? +baseBet : -baseBet;
         const liveStats = await Ranking.publicStatsFor(p.userId).catch(() => null);
+        const newAchievements = await Achievements.detectMatchEnd({
+          userId: p.userId, isWinner: !!isWinner,
+          matchStats: {
+            kills: me.kills || 0, deaths: me.deaths || 0, headshots: me.headshots || 0,
+          },
+          liveStats,
+        }).catch(() => []);
         // Aggregate the enemy team's combat stats so the post-match
         // screen can show "your team vs theirs" alongside the per-player
         // numbers.
@@ -376,6 +427,7 @@ function endTeamMatch(io, match, winnerArg, reason) {
           },
           liveStats,
           replaySaved: true,
+          achievements: newAchievements,
         });
       }
     })
@@ -754,9 +806,13 @@ function tickThrowables(io, match) {
             state.respawning = false;
             state.lastMoveAt = Date.now();
             state.lastSpeed = 0;
-            ns.to(sid).emit('respawn', { position: spawn, health: MAX_HEALTH });
+            const invulnUntil = Date.now() + SPAWN_INVULN_MS;
+            state.invulnUntil = invulnUntil;
+            state.streakKills = 0;
+            ns.to(sid).emit('respawn', { position: spawn, health: MAX_HEALTH, invulnUntil });
             const otherSock = match.playerIds.find(x => x !== sid);
-            if (otherSock) ns.to(otherSock).emit('opponent_respawn', { position: spawn });
+            if (otherSock) ns.to(otherSock).emit('opponent_respawn', { position: spawn, invulnUntil });
+            emitInvulnStart(io, match, sid, invulnUntil);
           } catch (e) { console.error('[shooter] fire respawn failed', e); }
         }, RESPAWN_DELAY_MS);
       }
@@ -2566,15 +2622,17 @@ function attach(io) {
 
       // Find every possible target: in team mode, only enemy team members;
       // in 1v1, the single other player. Respawning targets are skipped.
+      // Shootable = not respawning AND not within the spawn-invuln window.
+      const nowMs = Date.now();
+      const isShootable = (st) => st && !st.respawning && (st.invulnUntil || 0) <= nowMs;
       const candidates = match.isTeamMatch
         ? match.playerIds.filter(id =>
             id !== socket.id &&
-            match.gameState[id] &&
-            !match.gameState[id].respawning &&
+            isShootable(match.gameState[id]) &&
             match.gameState[id].team !== state.team)
         : (() => {
             const opp = match.playerIds.find(id => id !== socket.id);
-            return (opp && match.gameState[opp] && !match.gameState[opp].respawning) ? [opp] : [];
+            return (opp && isShootable(match.gameState[opp])) ? [opp] : [];
           })();
 
       if (!candidates.length) {
@@ -2720,7 +2778,25 @@ function attach(io) {
 
       if (fatal) {
         state.kills++;
+        state.streakKills = (state.streakKills || 0) + 1;
         oppState.deaths++;
+        oppState.streakKills = 0;          // dying resets the killer's-side streak counter
+
+        // Real-time achievement grants. These are fire-and-forget — the
+        // tryGrant helper resolves async and only emits if it was new.
+        const killerUserId = players.get(socket.id)?.userId;
+        if (killerUserId) {
+          tryGrant(io, socket.id, killerUserId, Achievements.KEYS.FIRST_KILL);
+          if (didHead)       tryGrant(io, socket.id, killerUserId, Achievements.KEYS.FIRST_HEADSHOT);
+          if (bestPen)       tryGrant(io, socket.id, killerUserId, Achievements.KEYS.WALL_BANGER);
+          if (wKey === 'knife') tryGrant(io, socket.id, killerUserId, Achievements.KEYS.COLD_STEEL);
+          if (wKey === 'shotgun' && totalDmg >= MAX_HEALTH) {
+            tryGrant(io, socket.id, killerUserId, Achievements.KEYS.ONE_PUMP);
+          }
+          if (state.streakKills === 3) tryGrant(io, socket.id, killerUserId, Achievements.KEYS.KILLING_SPREE);
+          if (state.streakKills === 5) tryGrant(io, socket.id, killerUserId, Achievements.KEYS.RAMPAGE);
+        }
+
         // Team mode: scoring is by team and the winner is whichever team
         // hits killsToWin first.
         let winnerSock = null;
@@ -2812,11 +2888,15 @@ function attach(io) {
             oppState.respawning = false;
             oppState.lastMoveAt = Date.now();
             oppState.lastSpeed  = 0;
+            // Spawn invulnerability — fresh respawn gets SPAWN_INVULN_MS of grace.
+            const invulnUntil = Date.now() + SPAWN_INVULN_MS;
+            oppState.invulnUntil = invulnUntil;
             // Refill throwables on respawn so molotov/smoke counts reset.
             refillThrowables(oppState);
             Replay.log(match.id, 'player_spawn', { s: oppSock, p: spawn });
-            ns.to(oppSock).emit('respawn', { position: spawn, health: MAX_HEALTH });
-            ns.to(socket.id).emit('opponent_respawn', { position: spawn });
+            ns.to(oppSock).emit('respawn', { position: spawn, health: MAX_HEALTH, invulnUntil });
+            ns.to(socket.id).emit('opponent_respawn', { position: spawn, invulnUntil });
+            emitInvulnStart(io, match, oppSock, invulnUntil);
           } catch (e) {
             console.error('[shooter] respawn failed, forcing fallback', e);
             // Still emit respawn so the player isn't stuck on the death

@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Achievements · FPS Arena</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/styles.css">
+<style>
+.ach-wrap { max-width: 1000px; margin: 24px auto 60px; padding: 0 16px; }
+.ach-title { font-size: 26px; letter-spacing: 3px; color: #fff; margin-bottom: 4px; }
+.ach-sub   { color: var(--dim); font-size: 13px; letter-spacing: 1px; margin-bottom: 6px; }
+.ach-progress {
+  margin-bottom: 22px; padding: 14px 18px;
+  background: rgba(255, 206, 74, 0.05);
+  border: 1px solid rgba(255, 206, 74, 0.2); border-radius: 6px;
+  display: flex; justify-content: space-between; align-items: center; gap: 18px;
+}
+.ach-progress-bar {
+  flex: 1; height: 8px; background: rgba(255,255,255,0.06); border-radius: 4px; overflow: hidden;
+  margin: 0 12px;
+}
+.ach-progress-fill { height: 100%; background: var(--gold); transition: width .6s ease; }
+.ach-progress-num { color: var(--gold); font-weight: 700; font-size: 18px; min-width: 70px; text-align: right; }
+.ach-cat {
+  font-size: 12px; letter-spacing: 3px; color: var(--dim);
+  margin: 22px 0 12px; text-transform: uppercase;
+  border-top: 1px solid rgba(255,255,255,0.06); padding-top: 14px;
+}
+.ach-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px;
+}
+.ach-card {
+  background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 6px; padding: 14px 16px; display: flex; gap: 12px; align-items: flex-start;
+  transition: border-color .15s;
+}
+.ach-card.earned {
+  border-color: rgba(255, 206, 74, 0.45);
+  background: rgba(255, 206, 74, 0.04);
+}
+.ach-card.locked { opacity: 0.55; }
+.ach-icon { font-size: 32px; line-height: 1; flex-shrink: 0; }
+.ach-card.locked .ach-icon { filter: grayscale(1); }
+.ach-name { font-weight: 700; color: #fff; font-size: 14px; margin-bottom: 4px; }
+.ach-card.earned .ach-name { color: var(--gold); }
+.ach-desc { font-size: 12px; color: var(--dim); line-height: 1.4; margin-bottom: 6px; }
+.ach-earned-at { font-size: 10px; color: #7fd97a; letter-spacing: 1px; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<div class="topbar" id="topbar"></div>
+<div class="ach-wrap">
+  <div class="ach-title">ACHIEVEMENTS</div>
+  <div class="ach-sub">Earn them by playing the shooter. New ones pop up after each match.</div>
+
+  <div class="ach-progress">
+    <span style="color:var(--dim);font-size:11px;letter-spacing:2px;">UNLOCKED</span>
+    <div class="ach-progress-bar"><div class="ach-progress-fill" id="ach-bar-fill" style="width:0%"></div></div>
+    <span class="ach-progress-num" id="ach-progress-count">0 / 0</span>
+  </div>
+
+  <div id="ach-host"></div>
+</div>
+<div class="legal-footer">Credits are fictional play-money credits only and have no real-world monetary value.</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/auth.js"></script>
+<script>
+(async () => {
+  const user = await renderTopbar();
+  if (!user) return;
+
+  const host = document.getElementById('ach-host');
+  let data;
+  try {
+    data = await api('/api/games/shooter/achievements');
+  } catch (e) {
+    host.innerHTML = `<div style="color:#ff8080;padding:20px;text-align:center;">Failed to load: ${escapeHtml(e.message || String(e))}</div>`;
+    return;
+  }
+  const list = data?.achievements || [];
+  if (!list.length) {
+    host.innerHTML = '<div style="color:var(--dim);padding:40px;text-align:center;">No achievements available yet — the migration may not have run.</div>';
+    return;
+  }
+
+  const earnedCount = list.filter(a => a.earned_at).length;
+  document.getElementById('ach-progress-count').textContent = `${earnedCount} / ${list.length}`;
+  requestAnimationFrame(() => {
+    document.getElementById('ach-bar-fill').style.width = (earnedCount / list.length * 100) + '%';
+  });
+
+  // Group by category, preserving sort_order within each.
+  const byCat = new Map();
+  for (const a of list) {
+    if (!byCat.has(a.category)) byCat.set(a.category, []);
+    byCat.get(a.category).push(a);
+  }
+  // Render — category order is whatever appeared first in the sorted list.
+  for (const [cat, items] of byCat) {
+    const head = document.createElement('div');
+    head.className = 'ach-cat';
+    head.textContent = cat;
+    host.appendChild(head);
+    const grid = document.createElement('div');
+    grid.className = 'ach-grid';
+    for (const a of items) {
+      const card = document.createElement('div');
+      card.className = 'ach-card ' + (a.earned_at ? 'earned' : 'locked');
+      const when = a.earned_at ? new Date(a.earned_at).toLocaleDateString() : '';
+      card.innerHTML = `
+        <div class="ach-icon">${a.icon || '🏆'}</div>
+        <div style="flex:1;min-width:0;">
+          <div class="ach-name">${escapeHtml(a.name)}</div>
+          <div class="ach-desc">${escapeHtml(a.description)}</div>
+          ${a.earned_at ? `<div class="ach-earned-at">Earned ${escapeHtml(when)}</div>` : ''}
+        </div>`;
+      grid.appendChild(card);
+    }
+    host.appendChild(grid);
+  }
+})();
+</script>
+</body>
+</html>

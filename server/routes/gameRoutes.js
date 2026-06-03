@@ -1,11 +1,12 @@
 // server/routes/gameRoutes.js — HTTP endpoints for roulette/blackjack/mines + history
 const express = require('express');
 const requireAuth = require('../middleware/requireAuth');
-const roulette  = require('../games/roulette');
-const blackjack = require('../games/blackjack');
-const mines     = require('../games/mines');
-const ranking   = require('../games/shooterRanking');
-const { pool }  = require('../db');
+const roulette     = require('../games/roulette');
+const blackjack    = require('../games/blackjack');
+const mines        = require('../games/mines');
+const ranking      = require('../games/shooterRanking');
+const achievements = require('../games/shooterAchievements');
+const { pool }     = require('../db');
 
 const router = express.Router();
 
@@ -21,6 +22,17 @@ router.get('/shooter/stats', requireAuth, async (req, res) => {
     });
   } catch (e) {
     res.status(400).json({ error: e.message || 'stats_failed' });
+  }
+});
+
+// All achievements + whether the player has earned each. Locked rows
+// have earned_at = null. Used by /achievements.html to render the grid.
+router.get('/shooter/achievements', requireAuth, async (req, res) => {
+  try {
+    const list = await achievements.listForUser(req.session.userId);
+    res.json({ ok: true, achievements: list });
+  } catch (e) {
+    res.status(400).json({ error: e.message || 'achievements_failed' });
   }
 });
 

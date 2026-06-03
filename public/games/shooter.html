@@ -70,6 +70,28 @@ input:focus { border-color:var(--accent); }
 .dmg-num.hs { color: #ffce4a; font-size: 22px; }
 .dmg-num.wb { color: #b06bff; }
 .dmg-num.wb.hs { color: #d893ff; }
+
+/* Achievement toast (bottom-right, gold accent) */
+.ach-toast {
+  display: flex; align-items: center; gap: 12px;
+  background: linear-gradient(135deg, rgba(255, 206, 74, 0.10) 0%, rgba(0,0,0,0.85) 70%);
+  border: 1px solid rgba(255, 206, 74, 0.5);
+  padding: 12px 16px 14px; border-radius: 6px; width: 320px;
+  box-shadow: 0 6px 26px rgba(0,0,0,0.6), 0 0 30px rgba(255, 206, 74, 0.15);
+  transform: translateX(120%); opacity: 0; transition: transform .45s cubic-bezier(.2,1.2,.4,1), opacity .25s;
+  pointer-events: auto;
+}
+.ach-toast.show { transform: translateX(0); opacity: 1; }
+.ach-toast-icon { font-size: 32px; line-height: 1; flex-shrink: 0; }
+.ach-toast-eyebrow {
+  font-size: 9px; letter-spacing: 3px; color: #ffce4a;
+  font-weight: 700; margin-bottom: 4px;
+}
+.ach-toast-name {
+  font-size: 16px; font-weight: 700; color: #fff;
+  letter-spacing: 1px; margin-bottom: 3px;
+}
+.ach-toast-desc { font-size: 11px; color: #aaa; line-height: 1.35; }
 @keyframes dmgNumFloat {
   0%   { opacity: 0; transform: translate(calc(-50% + var(--dx, 0px)), -30%) scale(0.7); }
   18%  { opacity: 1; transform: translate(calc(-50% + var(--dx, 0px)), -55%) scale(1.0); }
@@ -2147,6 +2169,10 @@ const GameEngine = {
   _oppLastPos:    Object.create(null),  // socketId → last {x,z} for spatial footstep delta
   _tracerPool:    [],        // pool of THREE.Line bullet tracers, recycled by _spawnTracer.
   _tracerLife:    0.10,      // seconds each tracer is visible before fading out.
+  // Spawn invulnerability — server tells us when an opponent is invuln
+  // and we render a blue aura around their model for the duration.
+  _invuln:        Object.create(null), // socketId → invulnUntil (ms)
+  _invulnAuras:   Object.create(null), // socketId → Mesh (the glowing shell)
   _gunBobT:       0,
   _muzzleFlash:   null,
 
@@ -3787,6 +3813,8 @@ const GameEngine = {
     try { AudioManager.updateListener?.(this.camera); } catch (_) {}
     // Fade out any active bullet tracers.
     this._tickTracers(dt);
+    // Pulse / fade the spawn-invuln aura on any invulnerable opponent.
+    this._tickInvulnAuras(dt);
     // Drifting sky clouds.
     this._updateClouds(dt);
     this._drawRadar();
@@ -4093,6 +4121,65 @@ const GameEngine = {
       } else {
         slot.line.material.opacity = 0;
       }
+    }
+  },
+
+  // ── Spawn invulnerability aura ────────────────────────────────────────
+  // Tells the renderer that this opponent is currently invulnerable until
+  // `until` (epoch ms). The aura mesh is shown until that time, fading
+  // out in the last 250 ms so the player can see invuln dropping.
+  setOpponentInvuln(socketId, until) {
+    if (!until || !socketId) return;
+    this._invuln[socketId] = until;
+  },
+
+  _getInvulnAura(socketId) {
+    if (this._invulnAuras[socketId]) return this._invulnAuras[socketId];
+    if (!window.THREE) return null;
+    const geo = new THREE.SphereGeometry(0.95, 12, 10);
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0x66c6ff, transparent: true, opacity: 0.0,
+      depthWrite: false, side: THREE.BackSide,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.visible = false;
+    this.scene.add(mesh);
+    this._invulnAuras[socketId] = mesh;
+    return mesh;
+  },
+
+  _tickInvulnAuras(dt) {
+    const now = Date.now();
+    const myId = typeof App !== 'undefined' ? App.myId : null;
+    for (const sid of Object.keys(this._invuln)) {
+      // Don't render an aura on the local player — invuln is implicit.
+      if (sid === myId) continue;
+      const until = this._invuln[sid];
+      const remaining = until - now;
+      const aura = this._getInvulnAura(sid);
+      if (!aura) continue;
+      if (remaining <= 0) {
+        aura.visible = false;
+        aura.material.opacity = 0;
+        delete this._invuln[sid];
+        continue;
+      }
+      // Pull position from the live opponent model. Team mode keys by
+      // socket id; 1v1 has a single opponentGroup we use as a fallback.
+      let pos = null;
+      if (this._otherPlayers?.has(sid)) {
+        pos = this._otherPlayers.get(sid).curPos;
+      } else if (this.opponentGroup?.visible && this._oppCurPos) {
+        pos = this._oppCurPos;
+      }
+      if (!pos) { aura.visible = false; continue; }
+      aura.position.set(pos.x, 0.9, pos.z);
+      aura.visible = true;
+      // Pulse: alpha 0.22..0.42 + fade-out in the last 250 ms.
+      const fadeWindow = 250;
+      const baseAlpha = 0.32 + Math.sin(now * 0.012) * 0.10;
+      const fadeMul = remaining < fadeWindow ? Math.max(0, remaining / fadeWindow) : 1;
+      aura.material.opacity = baseAlpha * fadeMul;
     }
   },
 
@@ -6366,6 +6453,15 @@ const NetworkManager = {
     s.on('voice_peer_left',      d => { try { VoiceChat.onPeerLeft(d); }     catch (_) {} });
 
     // Public matchmaking queue events.
+    // Spawn invulnerability state for opponents — server fires this for
+    // every respawn (including the local player's, which is filtered by
+    // App.myId in the aura tick).
+    s.on('invuln_start',         d => {
+      try { GameEngine.setOpponentInvuln(d.socketId, d.until); } catch (_) {}
+    });
+    // Achievement toast — server emits this in real time for at-kill
+    // achievements and bundled in match_end for post-match milestones.
+    s.on('achievement_unlocked', d => { try { App.showAchievement(d); } catch (_) {} });
     s.on('mm_team_update',       d => { try { App.onMmTeamUpdate(d); }       catch (_) {} });
     s.on('mm_match_countdown',   d => { try { App.onMmMatchCountdown(d); }   catch (_) {} });
     s.on('mm_pair_cancelled',    d => { try { App.onMmPairCancelled(d); }    catch (_) {} });
@@ -7140,9 +7236,46 @@ const App = {
     AudioManager.playMusic();
     // Tear down voice peer connections + release the mic.
     try { VoiceChat.stop(); } catch (_) {}
+    // Stagger achievement toasts so a player who unlocked several at
+    // once sees each one rather than them stacking instantly.
+    if (Array.isArray(data.achievements)) {
+      data.achievements.forEach((def, i) => {
+        setTimeout(() => this.showAchievement(def), 600 + i * 1100);
+      });
+    }
   },
 
   onDisconnect() { alert('Disconnected. Please refresh.'); },
+
+  // Show a golden achievement toast in the bottom-right. Stacks vertically
+  // when several achievements fire in quick succession (e.g. at match end).
+  showAchievement(def) {
+    if (!def || !def.name) return;
+    let host = document.getElementById('ach-toast-host');
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'ach-toast-host';
+      host.style.cssText = 'position:fixed;bottom:80px;right:22px;display:flex;flex-direction:column;gap:8px;z-index:9500;pointer-events:none;';
+      document.body.appendChild(host);
+    }
+    const t = document.createElement('div');
+    t.className = 'ach-toast';
+    t.innerHTML = `
+      <div class="ach-toast-icon">${def.icon || '🏆'}</div>
+      <div style="flex:1;min-width:0;">
+        <div class="ach-toast-eyebrow">ACHIEVEMENT UNLOCKED</div>
+        <div class="ach-toast-name">${escapeHtml(def.name)}</div>
+        <div class="ach-toast-desc">${escapeHtml(def.description || '')}</div>
+      </div>
+    `;
+    host.appendChild(t);
+    // Fade in via class so the CSS handles the easing.
+    requestAnimationFrame(() => t.classList.add('show'));
+    setTimeout(() => {
+      t.classList.remove('show');
+      setTimeout(() => t.remove(), 400);
+    }, 4500);
+  },
 
   rematch() {
     if (this.trainingMode || !this.currentLobby) {
