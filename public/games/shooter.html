@@ -296,13 +296,18 @@ input:focus { border-color:var(--accent); }
 .ammo-label   { font-size:10px;color:#444;letter-spacing:1px;margin-top:3px; }
 .ammo-reload  { font-size:12px;color:#f1c40f;letter-spacing:1px;animation:pulse .6s ease infinite alternate; }
 
-/* Crosshair */
+/* Crosshair — colour / size / thickness / gap / dot / outline driven by
+   the Crosshair module which writes inline styles on these elements. */
 #hud-crosshair { top:50%;left:50%;transform:translate(-50%,-50%);width:0;height:0; }
-.ch-line { position:absolute;background:rgba(0,255,255,.88);box-shadow:0 0 3px rgba(0,0,0,.8);transition:all .05s linear; }
+.ch-line { position:absolute;background:#00ffff;transition:all .05s linear; }
 #ch-top    { width:2px;left:-1px;bottom:6px;height:8px; }
 #ch-bottom { width:2px;left:-1px;top:6px;height:8px; }
 #ch-left   { height:2px;top:-1px;right:6px;width:8px; }
 #ch-right  { height:2px;top:-1px;left:6px;width:8px; }
+#ch-dot {
+  position:absolute; left:-1px; top:-1px; width:2px; height:2px;
+  background:#00ffff; border-radius:50%; display:none;
+}
 
 /* Kill notify */
 #hud-kill-notify { top:50%;left:50%;transform:translate(-50%,-70px);background:rgba(0,0,0,.75);border:1px solid #4b9eff;padding:6px 20px;font-size:18px;font-weight:bold;color:#4b9eff;letter-spacing:2px;border-radius:2px;display:none; }
@@ -983,6 +988,7 @@ input:focus { border-color:var(--accent); }
     <div class="ch-line" id="ch-bottom"></div>
     <div class="ch-line" id="ch-left"></div>
     <div class="ch-line" id="ch-right"></div>
+    <div id="ch-dot"></div>
   </div>
 
   <div class="hud-el" id="hud-hit-marker"></div>
@@ -1147,8 +1153,33 @@ input:focus { border-color:var(--accent); }
       </select>
     </div>
 
+    <!-- Crosshair customisation. Each control writes through to
+         Crosshair.set() which persists to localStorage and live-updates
+         the on-screen reticle. -->
+    <div class="setting-row" style="border-top:1px solid rgba(255,255,255,0.05);padding-top:12px;margin-top:8px;">
+      <div class="sr-head"><label>Crosshair</label></div>
+      <div style="display:grid;grid-template-columns:auto 1fr;gap:8px 10px;align-items:center;margin-top:8px;font-size:11px;letter-spacing:1px;color:var(--dim);">
+        <span>Colour</span>
+        <input type="color" id="ch-color" value="#00ffff" style="width:64px;height:26px;background:transparent;border:1px solid #444;border-radius:3px;padding:1px;cursor:pointer;">
+
+        <span>Length <span id="ch-length-val" style="color:#fff;">8</span></span>
+        <input type="range" id="ch-length" min="1" max="20" step="1" value="8">
+
+        <span>Thickness <span id="ch-thickness-val" style="color:#fff;">2</span></span>
+        <input type="range" id="ch-thickness" min="1" max="5" step="1" value="2">
+
+        <span>Gap <span id="ch-gap-val" style="color:#fff;">6</span></span>
+        <input type="range" id="ch-gap" min="0" max="20" step="1" value="6">
+      </div>
+      <div style="display:flex;gap:14px;margin-top:10px;flex-wrap:wrap;font-size:11px;letter-spacing:1px;color:var(--dim);">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="ch-dot"> Centre dot</label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="ch-outline" checked> Black outline</label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="ch-dynamic" checked> Dynamic (bloom on fire)</label>
+      </div>
+    </div>
+
     <div class="controls-hint">
-      <b>WASD</b> move · <b>Shift</b> sprint · <b>C</b> crouch · <b>Space</b> jump · <b>Left Click</b> shoot · <b>1/2/3/4</b> weapons · <b>R</b> reload · <b>Y</b> all-chat · <b>U</b> team-chat · <b>Tab</b> scoreboard · <b>Esc</b> pause
+      <b>WASD</b> move · <b>Shift</b> silent walk · <b>Ctrl</b> crouch · <b>Space</b> jump · <b>Left Click</b> shoot · <b>1/2/3/4</b> weapons · <b>R</b> reload · <b>Y</b> all-chat · <b>U</b> team-chat · <b>Tab</b> scoreboard · <b>Esc</b> pause
     </div>
 
     <div class="settings-btns">
@@ -1238,6 +1269,39 @@ function damageMultiplier(w, distance) {
   if (distance >= end)   return min;
   const k = (distance - start) / (end - start);
   return 1 + (min - 1) * k;
+}
+
+// CS:GO-style per-weapon recoil profiles. `pitch` is the base upward
+// kick magnitude (radians) for the first shot, `pitchRamp` adds extra
+// per subsequent shot in the burst; `yaw` is the magnitude of the
+// horizontal jitter applied via yawPattern (1 = right, -1 = left).
+// `decay` is the rate at which the kick decays back to centre, and
+// `resetMs` is the idle window before the shot index resets so a new
+// burst starts from the easy part of the pattern.
+const RECOIL = {
+  rifle:   { pitch: 0.020, pitchRamp: 0.004, yaw: 0.013, decay: 7.5, resetMs: 350,
+             yawPattern: [0, 0, 0, -1, -1, 1, 1, -1, 1, -1, 1, 0.6, -0.6, 0.4, -0.4] },
+  pistol:  { pitch: 0.014, pitchRamp: 0.002, yaw: 0.007, decay: 9.5, resetMs: 400,
+             yawPattern: [0, 0, -1, 1, -1, 1, -0.6, 0.6] },
+  shotgun: { pitch: 0.050, pitchRamp: 0.000, yaw: 0.000, decay: 5.0, resetMs: 800,
+             yawPattern: [0] },
+  sniper:  { pitch: 0.060, pitchRamp: 0.000, yaw: 0.000, decay: 3.0, resetMs: 1500,
+             yawPattern: [0] },
+  knife:   { pitch: 0.000, pitchRamp: 0.000, yaw: 0.000, decay: 0,    resetMs: 0,
+             yawPattern: [0] },
+};
+
+// Movement-based spread multipliers — applied to the per-pellet jitter
+// in _shoot(). Matches CS muscle memory: standing still is best,
+// crouching is even better, walking is bad, jumping is terrible.
+function movementSpreadMultiplier(engine) {
+  if (!engine._grounded) return 4.5;           // airborne
+  if (engine.crouching)  return 0.40;          // crouched
+  const keys = engine._keys || {};
+  const moving = keys['KeyW'] || keys['KeyS'] || keys['KeyA'] || keys['KeyD'];
+  if (moving && engine.silentWalking) return 1.5;
+  if (moving)                          return 2.5;
+  return 1.0;                                   // standing still
 }
 const WEAPON_ORDER = ['rifle', 'pistol', 'shotgun', 'sniper', 'knife'];
 
@@ -1346,18 +1410,27 @@ const AudioManager = {
     this._fetchAndLoadMusic();
     this._loadSfxBuffers();
 
-    // Unlock audio + start music on first user gesture (browser autoplay policy)
+    // Unlock audio + start music on the first user gesture (browser
+    // autoplay policy). Listen on every trusted gesture event so the
+    // smallest interaction is enough to unlock playback. Chrome's MEI
+    // sometimes lets playback start without any interaction at all —
+    // we try _music.play() immediately when wantMusic is set, and only
+    // fall back to this unlock listener if that fails.
+    const UNLOCK_EVENTS = ['pointerdown','pointerup','click','mousedown',
+                           'keydown','keyup','touchstart','touchend','wheel'];
     const unlock = () => {
       this._unlocked = true;
       this.resume();
       if (this._wantMusic && this._music) {
         this._music.play().catch(() => {});
       }
-      window.removeEventListener('pointerdown', unlock);
-      window.removeEventListener('keydown',     unlock);
+      for (const ev of UNLOCK_EVENTS) {
+        window.removeEventListener(ev, unlock, { capture: true });
+      }
     };
-    window.addEventListener('pointerdown', unlock);
-    window.addEventListener('keydown',     unlock);
+    for (const ev of UNLOCK_EVENTS) {
+      window.addEventListener(ev, unlock, { capture: true, passive: true });
+    }
 
     // Cross-page music resume: snapshot state every 2 s while playing,
     // and on pagehide / beforeunload so the menu pages can pick up
@@ -2433,6 +2506,11 @@ const GameEngine = {
   _camShake:      0,         // 0..1 — camera jolt intensity, decays per frame. Set by triggerShake().
   _reloadStartedAt: 0,       // performance.now() when the current reload kicked off (0 = idle).
   _reloadDurationMs: 0,      // total ms for the current reload (so the bar can compute progress).
+  // ── CS:GO-style recoil state ────────────────────────────────────────────
+  _pitchKick:        0,      // positive: camera tilts up. Subtracted from pitch in _update.
+  _yawKick:          0,      // positive: camera drifts right. Added to yaw in _update.
+  _recoilShotCount:  0,      // index into the active weapon's yawPattern.
+  _lastRecoilShotAt: 0,      // performance.now() of the last shot — burst resets after resetMs idle.
   _oppLastPos:    Object.create(null),  // socketId → last {x,z} for spatial footstep delta
   _tracerPool:    [],        // pool of THREE.Line bullet tracers, recycled by _spawnTracer.
   _tracerLife:    0.10,      // seconds each tracer is visible before fading out.
@@ -3645,12 +3723,17 @@ const GameEngine = {
     const baseDir = this.raycaster.ray.direction.clone();
     const origin  = this.raycaster.ray.origin;
 
+    // Movement spread multiplier — standing > crouching > walking > jumping.
+    // Applied to the per-pellet jitter so firing while strafing or in the
+    // air sprays widely, and crouching/standing keeps shots tight.
+    const moveMult = isMelee ? 1 : movementSpreadMultiplier(this);
+
     // Generate pellets (1 for rifle/pistol, multiple for shotgun, no spread for melee)
     const pelletDirs = [];
     for (let i = 0; i < w.pellets; i++) {
       const d = baseDir.clone();
       const sp = isMelee ? 0
-        : (w.pellets > 1 ? w.spread : w.spread + this._spread * 0.04);
+        : ((w.pellets > 1 ? w.spread : w.spread + this._spread * 0.04) * moveMult);
       d.x += (Math.random() - 0.5) * sp;
       d.y += (Math.random() - 0.5) * sp;
       d.normalize();
@@ -3665,6 +3748,7 @@ const GameEngine = {
       this._gunRecoil = 1.0;
       this._spread = Math.min(1, this._spread + w.spreadMove);
       UIManager.setCrosshairSpread(this._spread);
+      this._applyRecoilKick(this.currentWeapon);
     }
 
     // Bullet holes + tracers — guns only. The knife doesn't pierce walls.
@@ -4013,6 +4097,17 @@ const GameEngine = {
     this._currentEyeH = this._currentEyeH !== undefined
       ? this._currentEyeH + (targetEyeH - this._currentEyeH) * Math.min(1, dt * 14)
       : targetEyeH;
+    // Decay any active recoil kick toward zero each frame.
+    {
+      const r = RECOIL[this.currentWeapon] || { decay: 7 };
+      const k = Math.min(1, (r.decay || 7) * dt);
+      this._pitchKick += (0 - this._pitchKick) * k;
+      this._yawKick   += (0 - this._yawKick)   * k;
+      // Clamp to avoid floating-point drift.
+      if (Math.abs(this._pitchKick) < 0.0005) this._pitchKick = 0;
+      if (Math.abs(this._yawKick)   < 0.0005) this._yawKick   = 0;
+    }
+
     // Killcam takes over the camera while it's playing the killer's POV.
     // Skip the local-player camera update so we don't fight its RAF tick.
     if (!(typeof Killcam !== 'undefined' && Killcam._active)) {
@@ -4028,8 +4123,11 @@ const GameEngine = {
       }
       this.camera.position.set(this.pos.x, this._currentEyeH, this.pos.z);
       this.camera.rotation.order = 'YXZ';
-      this.camera.rotation.y = this.yaw + shakeY;
-      this.camera.rotation.x = this.pitch + shakeX;
+      // Add recoil kick on top of the aim. _pitchKick is positive when
+      // the camera should tilt UP — that means subtracting from
+      // rotation.x in YXZ (the same convention used by mousemove).
+      this.camera.rotation.y = this.yaw + this._yawKick + shakeY;
+      this.camera.rotation.x = this.pitch - this._pitchKick + shakeX;
     }
 
     // Spread decay
@@ -4381,6 +4479,28 @@ const GameEngine = {
   triggerShake(intensity) {
     const v = Math.max(0, Math.min(1, Number(intensity) || 0));
     if (v > this._camShake) this._camShake = v;
+  },
+
+  // CS:GO-style per-shot recoil kick. Reads the active weapon's profile
+  // from RECOIL{} and pushes the camera up + sideways via _pitchKick
+  // and _yawKick. The kick is decayed each frame in _update so the
+  // recoil settles back as the player stops firing.
+  _applyRecoilKick(weaponKey) {
+    const r = RECOIL[weaponKey];
+    if (!r) return;
+    const now = performance.now();
+    // Burst window — reset shot index after resetMs of no firing.
+    if (now - this._lastRecoilShotAt > r.resetMs) this._recoilShotCount = 0;
+    this._lastRecoilShotAt = now;
+    const n = this._recoilShotCount;
+    const pat = r.yawPattern || [0];
+    const yawSign = pat[Math.min(n, pat.length - 1)] || 0;
+    this._pitchKick += r.pitch + (r.pitchRamp * n);
+    this._yawKick   += yawSign * r.yaw;
+    this._recoilShotCount++;
+    // Also bias yaw + pitch back into the player's aim slowly via the
+    // existing pitch/yaw mutation so the recoil "pulls" the aim a bit.
+    // The decay function in _update brings it back to zero on idle.
   },
 
   // ── Bullet tracers ────────────────────────────────────────────────────
@@ -4918,13 +5038,7 @@ const UIManager = {
   },
 
   setCrosshairSpread(t) {
-    const gap = 6 + t * 14;
-    const top = document.getElementById('ch-top');
-    if (!top) return;
-    document.getElementById('ch-top').style.bottom    = `${gap}px`;
-    document.getElementById('ch-bottom').style.top    = `${gap}px`;
-    document.getElementById('ch-left').style.right    = `${gap}px`;
-    document.getElementById('ch-right').style.left    = `${gap}px`;
+    try { Crosshair.applySpread(t); } catch (_) {}
   },
 
   flashHitMarker(headshot) {
@@ -6958,6 +7072,81 @@ const Settings = {
   },
 };
 
+// ── Crosshair customisation ─────────────────────────────────────────────
+// Tweaks colour / length / thickness / gap / dot / outline / dynamic and
+// persists every change to localStorage under fps_crosshair so a player's
+// crosshair preference follows them between matches.
+const Crosshair = {
+  KEY: 'fps_crosshair',
+  defaults: {
+    color: '#00ffff', length: 8, thickness: 2, gap: 6,
+    dot: false, outline: true, dynamic: true,
+  },
+  data: null,
+
+  load() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(this.KEY) || '{}');
+      this.data = Object.assign({}, this.defaults, saved);
+    } catch (_) { this.data = Object.assign({}, this.defaults); }
+    return this.data;
+  },
+  save() { try { localStorage.setItem(this.KEY, JSON.stringify(this.data)); } catch (_) {} },
+  get(k) { return (this.data || this.defaults)[k]; },
+  set(k, v) {
+    if (!this.data) this.load();
+    this.data[k] = v;
+    this.save();
+    this.apply();
+  },
+
+  // Push the current settings to the four .ch-line elements + the dot.
+  // Called whenever any field changes and on boot.
+  apply() {
+    if (!this.data) this.load();
+    const cfg = this.data;
+    const ids = ['ch-top','ch-bottom','ch-left','ch-right'];
+    const els = ids.map(id => document.getElementById(id));
+    if (els.some(e => !e)) return;
+    // Each line: thickness × length, half-thickness offset from centre.
+    const t = Math.max(1, cfg.thickness | 0);
+    const l = Math.max(1, cfg.length    | 0);
+    const offset = -Math.floor(t / 2);
+    els[0].style.cssText = `width:${t}px;left:${offset}px;bottom:${cfg.gap}px;height:${l}px;background:${cfg.color};` +
+      (cfg.outline ? 'box-shadow:0 0 0 1px rgba(0,0,0,0.95);' : 'box-shadow:none;');
+    els[1].style.cssText = `width:${t}px;left:${offset}px;top:${cfg.gap}px;height:${l}px;background:${cfg.color};` +
+      (cfg.outline ? 'box-shadow:0 0 0 1px rgba(0,0,0,0.95);' : 'box-shadow:none;');
+    els[2].style.cssText = `height:${t}px;top:${offset}px;right:${cfg.gap}px;width:${l}px;background:${cfg.color};` +
+      (cfg.outline ? 'box-shadow:0 0 0 1px rgba(0,0,0,0.95);' : 'box-shadow:none;');
+    els[3].style.cssText = `height:${t}px;top:${offset}px;left:${cfg.gap}px;width:${l}px;background:${cfg.color};` +
+      (cfg.outline ? 'box-shadow:0 0 0 1px rgba(0,0,0,0.95);' : 'box-shadow:none;');
+    const dot = document.getElementById('ch-dot');
+    if (dot) {
+      const dsize = Math.max(2, t);
+      const doff  = -Math.floor(dsize / 2);
+      dot.style.cssText = `position:absolute;left:${doff}px;top:${doff}px;width:${dsize}px;height:${dsize}px;background:${cfg.color};border-radius:50%;` +
+        (cfg.outline ? 'box-shadow:0 0 0 1px rgba(0,0,0,0.95);' : 'box-shadow:none;') +
+        `display:${cfg.dot ? 'block' : 'none'};`;
+    }
+  },
+
+  // Called from the existing UIManager.setCrosshairSpread — honours the
+  // dynamic flag so users who pin a static crosshair don't see the gap
+  // bloom on shoot.
+  applySpread(t) {
+    if (!this.data) this.load();
+    const cfg = this.data;
+    if (!cfg.dynamic) return;
+    const gap = cfg.gap + t * 14;
+    const top = document.getElementById('ch-top');
+    if (!top) return;
+    document.getElementById('ch-top').style.bottom    = `${gap}px`;
+    document.getElementById('ch-bottom').style.top    = `${gap}px`;
+    document.getElementById('ch-left').style.right    = `${gap}px`;
+    document.getElementById('ch-right').style.left    = `${gap}px`;
+  },
+};
+
 // ══════════════════════════════════════════════════════════════
 //  APP
 // ══════════════════════════════════════════════════════════════
@@ -6984,12 +7173,15 @@ const App = {
 
   async init() {
     Settings.load();
+    Crosshair.load();
     UIManager.init();
     AudioManager.init();
     GameEngine.init();
     NetworkManager.init();
     Settings.apply();
+    Crosshair.apply();
     this._wireSettingsUI();
+    this._wireCrosshairUI();
 
     // Platform integration: skip the old in-game login screen entirely.
     // Auth is enforced server-side via the express-session cookie.
@@ -7073,6 +7265,47 @@ const App = {
         trackSv.textContent = cur ? 'Auto · now: ' + AudioManager.prettyTrackName(cur) : 'Auto rotate';
       }
     });
+  },
+
+  // Wire the crosshair customisation controls inside the settings
+  // overlay. Each control writes through Crosshair.set() which
+  // persists + re-renders live.
+  _wireCrosshairUI() {
+    const cfg = Crosshair.load();
+    const $ = (id) => document.getElementById(id);
+    const colorEl = $('ch-color');
+    const lenEl   = $('ch-length');
+    const thkEl   = $('ch-thickness');
+    const gapEl   = $('ch-gap');
+    const dotEl   = $('ch-dot');
+    const outEl   = $('ch-outline');
+    const dynEl   = $('ch-dynamic');
+    if (!colorEl) return;
+    // Initial values.
+    colorEl.value = cfg.color;
+    lenEl.value   = cfg.length;
+    $('ch-length-val').textContent = cfg.length;
+    thkEl.value   = cfg.thickness;
+    $('ch-thickness-val').textContent = cfg.thickness;
+    gapEl.value   = cfg.gap;
+    $('ch-gap-val').textContent = cfg.gap;
+    dotEl.checked = !!cfg.dot;
+    outEl.checked = !!cfg.outline;
+    dynEl.checked = !!cfg.dynamic;
+    // Wire.
+    colorEl.addEventListener('input', e => Crosshair.set('color', e.target.value));
+    lenEl.addEventListener('input', e => {
+      const v = +e.target.value; $('ch-length-val').textContent = v; Crosshair.set('length', v);
+    });
+    thkEl.addEventListener('input', e => {
+      const v = +e.target.value; $('ch-thickness-val').textContent = v; Crosshair.set('thickness', v);
+    });
+    gapEl.addEventListener('input', e => {
+      const v = +e.target.value; $('ch-gap-val').textContent = v; Crosshair.set('gap', v);
+    });
+    dotEl.addEventListener('change', e => Crosshair.set('dot', e.target.checked));
+    outEl.addEventListener('change', e => Crosshair.set('outline', e.target.checked));
+    dynEl.addEventListener('change', e => Crosshair.set('dynamic', e.target.checked));
   },
 
   openSettings()  { UIManager.showSettings(); UIManager.hidePause(); },

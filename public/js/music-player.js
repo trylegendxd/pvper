@@ -118,7 +118,13 @@
         else selectedTrack = null;
       }
       trackIndex = idx;
-      loadTrack(idx, unlocked);
+      // Always attempt optimistic playback. Chrome's MEI auto-allows
+      // playback on origins where the user has previously engaged with
+      // audio, so after the first interaction on the site future
+      // navigations resume without needing another click. The play()
+      // rejection on locked browsers is caught inside loadTrack(); the
+      // unlock-on-gesture path then takes over.
+      loadTrack(idx, true);
       refreshUI();
     } catch (_) {}
   }
@@ -176,18 +182,26 @@
   }
 
   // Browser autoplay policies block audio until the first user
-  // interaction. Watch globally and start playback on the first one.
+  // interaction on the new document. Listen on every trusted gesture
+  // event so the smallest interaction (a click, key, touch, scroll
+  // wheel) is enough to unlock playback. Chrome's MEI sometimes lets
+  // playback start without any interaction at all — we try the optimistic
+  // play first and only fall back to the unlock listener if it fails.
+  const UNLOCK_EVENTS = ['pointerdown','pointerup','click','mousedown',
+                         'keydown','keyup','touchstart','touchend','wheel'];
   function unlock() {
     if (unlocked) return;
     unlocked = true;
     if (audio && !started) {
       audio.play().then(() => { started = true; refreshUI(); }).catch(() => {});
     }
-    window.removeEventListener('pointerdown', unlock);
-    window.removeEventListener('keydown',     unlock);
+    for (const ev of UNLOCK_EVENTS) {
+      window.removeEventListener(ev, unlock, { capture: true });
+    }
   }
-  window.addEventListener('pointerdown', unlock);
-  window.addEventListener('keydown',     unlock);
+  for (const ev of UNLOCK_EVENTS) {
+    window.addEventListener(ev, unlock, { capture: true, passive: true });
+  }
 
   // ── Floating settings UI ───────────────────────────────────────────────
   function injectUI() {
