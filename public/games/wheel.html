@@ -52,21 +52,35 @@ body {
 }
 .w-canvas-wrap {
   position: relative;
-  width: 460px; height: 460px;
+  width: 500px; height: 500px;
   max-width: 100%;
 }
 #w-canvas {
   width: 100%; height: 100%; display: block;
+  filter: drop-shadow(0 6px 22px rgba(0,0,0,0.55));
 }
+/* Pointer sits at the TOP of the wheel and points DOWN — this matches
+   drawWheel()/spinTo()'s math, which puts the winning segment at the
+   12 o'clock position. The earlier bottom-mounted pointer was off by
+   180° and always showed the segment opposite the announced colour. */
 .w-pointer {
-  position: absolute; left: 50%; bottom: 8px;
+  position: absolute; left: 50%; top: -2px;
   transform: translateX(-50%);
   width: 0; height: 0;
-  border-left: 14px solid transparent;
-  border-right: 14px solid transparent;
-  border-bottom: 22px solid #cdd4dc;
-  filter: drop-shadow(0 -2px 4px rgba(0,0,0,0.6));
-  z-index: 2;
+  border-left: 15px solid transparent;
+  border-right: 15px solid transparent;
+  border-top: 28px solid #ffce4a;
+  filter: drop-shadow(0 3px 5px rgba(0,0,0,0.85));
+  z-index: 3;
+}
+/* Glowing dot at the tip of the pointer — sells the "this is what
+   landed" moment with a small bright marker. */
+.w-pointer::after {
+  content: ''; position: absolute;
+  left: -4px; top: 22px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 8px rgba(255, 206, 74, 0.95);
 }
 .w-center-info {
   position: absolute; inset: 0;
@@ -90,11 +104,81 @@ body {
 
 /* Bet panel */
 .w-balance {
-  display: flex; align-items: center; gap: 8px;
-  font-size: 18px; font-weight: 700; color: #fff; margin-bottom: 14px;
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: 18px; font-weight: 700; margin-bottom: 14px;
+  padding: 12px 14px;
+  background: rgba(127, 217, 122, 0.06);
+  border: 1px solid rgba(127, 217, 122, 0.28);
+  border-radius: 6px;
 }
-.w-balance .icon { color: #ffce4a; font-size: 22px; }
-.w-balance .val { font-variant-numeric: tabular-nums; }
+.w-balance .icon { color: #7fd97a; font-size: 14px; }
+.w-balance .val {
+  font-variant-numeric: tabular-nums;
+  color: #7fd97a;
+  text-shadow: 0 0 8px rgba(127, 217, 122, 0.45);
+  font-size: 22px;
+  letter-spacing: 1px;
+  flex: 1;
+}
+.w-balance .cr { color: rgba(127, 217, 122, 0.7); font-size: 11px; letter-spacing: 2px; font-weight: 400; }
+/* Tiny "+xxxx" floater that flashes the credit gain after a win — appears
+   to the right of the balance for ~1.4s before fading. */
+.w-balance .delta {
+  font-size: 14px; color: #7fd97a;
+  text-shadow: 0 0 6px rgba(127, 217, 122, 0.7);
+  opacity: 0;
+  transition: opacity .25s, transform .8s ease-out;
+  transform: translateY(0);
+  font-variant-numeric: tabular-nums;
+}
+.w-balance .delta.show {
+  opacity: 1;
+  transform: translateY(-6px);
+}
+
+/* "YOU WON" toast — appears over the wheel for ~2.4s on a winning spin. */
+.w-win-toast {
+  position: absolute;
+  left: 50%; top: 50%;
+  transform: translate(-50%, -50%) scale(0.6);
+  background: rgba(12, 18, 22, 0.96);
+  border: 2px solid #7fd97a;
+  padding: 18px 38px;
+  font-size: 14px; letter-spacing: 4px;
+  color: #7fd97a; text-align: center;
+  border-radius: 10px;
+  box-shadow: 0 0 36px rgba(127, 217, 122, 0.55),
+              inset 0 0 18px rgba(127, 217, 122, 0.18);
+  pointer-events: none;
+  opacity: 0;
+  z-index: 5;
+  transition: opacity .25s, transform .35s cubic-bezier(.34,1.56,.64,1);
+  font-weight: 700;
+}
+.w-win-toast.show {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+.w-win-toast .amt {
+  display: block;
+  font-size: 44px;
+  margin-top: 6px;
+  letter-spacing: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.w-win-toast .net {
+  display: block;
+  font-size: 12px; letter-spacing: 2px;
+  color: rgba(127, 217, 122, 0.75);
+  margin-top: 4px;
+}
+/* Loss toast — same shape, red palette, shorter dwell. */
+.w-win-toast.loss {
+  border-color: #ff8080;
+  color: #ff8080;
+  box-shadow: 0 0 24px rgba(255, 128, 128, 0.4);
+}
+.w-win-toast.loss .net { color: rgba(255, 128, 128, 0.7); }
 
 .w-shortcuts {
   display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
@@ -251,7 +335,8 @@ body {
       <div class="w-balance">
         <span class="icon">●</span>
         <span class="val" id="w-balance">—</span>
-        <span style="color:var(--dim);font-size:12px;letter-spacing:1px;">CR</span>
+        <span class="cr">CR</span>
+        <span class="delta" id="w-balance-delta"></span>
       </div>
 
       <div class="w-shortcuts">
@@ -278,8 +363,9 @@ body {
     <!-- Wheel (center) -->
     <div class="w-center">
       <div class="w-canvas-wrap">
-        <canvas id="w-canvas" width="920" height="920"></canvas>
+        <canvas id="w-canvas" width="1000" height="1000"></canvas>
         <div class="w-pointer"></div>
+        <div class="w-win-toast" id="w-win-toast"></div>
       </div>
       <div class="w-center-info" id="w-center-info"></div>
     </div>
@@ -350,38 +436,121 @@ const state = {
 const canvas = document.getElementById('w-canvas');
 const ctx    = canvas.getContext('2d');
 
+// Multiplier lookup so we don't recreate the table on every draw.
+const MULT_FOR = { gray: 2, pink: 3, blue: 5, yellow: 50 };
+
 function drawWheel() {
   const w = canvas.width, h = canvas.height;
   const cx = w / 2, cy = h / 2;
-  const outerR = Math.min(cx, cy) - 30;
-  const innerR = outerR - 32;
+  // Radii — order from outside in:
+  //   outer gold accent ring (decoration)
+  //   inner dark gap
+  //   coloured segment ring (this is where the multipliers live)
+  //   inner dark hub with subtle gradient
+  const outerR     = Math.min(cx, cy) - 14;
+  const goldOuterR = outerR;
+  const goldInnerR = outerR - 12;
+  const segOuterR  = goldInnerR - 4;
+  const segInnerR  = segOuterR - 86;
+  const hubR       = segInnerR - 6;
+
   ctx.clearRect(0, 0, w, h);
   if (!state.layout?.length) return;
+
+  // ── Outer gold accent ring ────────────────────────────────────────────
+  ctx.beginPath();
+  ctx.arc(cx, cy, goldOuterR, 0, Math.PI * 2);
+  ctx.arc(cx, cy, goldInnerR, Math.PI * 2, 0, true);
+  const goldGrad = ctx.createRadialGradient(cx, cy, goldInnerR, cx, cy, goldOuterR);
+  goldGrad.addColorStop(0,    '#8a6018');
+  goldGrad.addColorStop(0.45, '#ffce4a');
+  goldGrad.addColorStop(1,    '#7a4d10');
+  ctx.fillStyle = goldGrad;
+  ctx.fill('evenodd');
+  // Black hairline between gold ring and the coloured segments.
+  ctx.beginPath();
+  ctx.arc(cx, cy, goldInnerR, 0, Math.PI * 2);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+  ctx.stroke();
+
+  // ── Coloured segments ────────────────────────────────────────────────
+  // We want segment 0 to start at the TOP (angle -π/2). Rotate the whole
+  // wheel by state.currentAngle on top of that, drawing each ring slice.
   const N = state.layout.length;
   const seg = (Math.PI * 2) / N;
-  // We want segment 0 to start at the TOP (angle -π/2). Rotate the whole
-  // wheel by state.currentAngle on top of that. drawing each ring slice.
   for (let i = 0; i < N; i++) {
     const a0 = -Math.PI / 2 + state.currentAngle + i * seg - seg / 2;
     const a1 = a0 + seg;
     const c  = state.layout[i];
     const col = COLORS[c] || COLORS.gray;
     ctx.beginPath();
-    ctx.arc(cx, cy, outerR, a0, a1);
-    ctx.arc(cx, cy, innerR, a1, a0, true);
+    ctx.arc(cx, cy, segOuterR, a0, a1);
+    ctx.arc(cx, cy, segInnerR, a1, a0, true);
     ctx.closePath();
-    ctx.fillStyle = col.hex;
+    // Subtle radial gradient inside each segment so the ring has a bit
+    // of depth instead of looking like a flat decal.
+    const radGrad = ctx.createRadialGradient(cx, cy, segInnerR, cx, cy, segOuterR);
+    radGrad.addColorStop(0,    col.hex);
+    radGrad.addColorStop(0.75, col.hex);
+    radGrad.addColorStop(1,    shade(col.hex, -0.18));
+    ctx.fillStyle = radGrad;
     ctx.fill();
     // Tiny gap line between segments for a more banded look.
     ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-    ctx.lineWidth = 1;
+    ctx.lineWidth = 1.2;
     ctx.stroke();
+
+    // Multiplier label inside each segment. Rotated tangentially so it
+    // reads naturally as the wheel spins past. Yellow gets darker text
+    // (since the background is light); other colours get bright text.
+    const mid = (a0 + a1) / 2;
+    const labelR = (segOuterR * 0.62) + (segInnerR * 0.38); // closer to the outside
+    const lx = cx + Math.cos(mid) * labelR;
+    const ly = cy + Math.sin(mid) * labelR;
+    ctx.save();
+    ctx.translate(lx, ly);
+    ctx.rotate(mid + Math.PI / 2);  // tangential
+    const mult = MULT_FOR[c];
+    const isYellow = c === 'yellow';
+    ctx.fillStyle = isYellow ? '#1a1208' : 'rgba(255,255,255,0.95)';
+    // Canvas is 1000×1000 displayed at 500×500 (2× downscale), so these
+    // pixel sizes are roughly halved on screen — 32/44 here renders as
+    // ~16/22 px display, which is what fits cleanly inside one segment.
+    ctx.font = `bold ${isYellow ? 44 : 32}px Rajdhani, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`${mult}×`, 0, 0);
+    ctx.restore();
   }
-  // Inner dark hub.
+
+  // ── Inner hub: dark with subtle gradient + thin ring ─────────────────
+  const hubGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, hubR);
+  hubGrad.addColorStop(0,   '#1a2230');
+  hubGrad.addColorStop(0.7, '#0a0e16');
+  hubGrad.addColorStop(1,   '#000');
   ctx.beginPath();
-  ctx.arc(cx, cy, innerR - 1, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(12,15,22,0.92)';
+  ctx.arc(cx, cy, hubR, 0, Math.PI * 2);
+  ctx.fillStyle = hubGrad;
   ctx.fill();
+  // Inner gold accent ring (small, sits just inside the segments).
+  ctx.beginPath();
+  ctx.arc(cx, cy, hubR + 3, 0, Math.PI * 2);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(255, 206, 74, 0.55)';
+  ctx.stroke();
+}
+
+// Darken / lighten a hex colour by `amt` (-1..1). Used for the segment
+// gradient so the outside of each segment is a touch darker.
+function shade(hex, amt) {
+  const n = parseInt(hex.replace('#',''), 16);
+  let r = (n >> 16) & 0xff, g = (n >> 8) & 0xff, b = n & 0xff;
+  const k = 1 + amt;
+  r = Math.max(0, Math.min(255, Math.round(r * k)));
+  g = Math.max(0, Math.min(255, Math.round(g * k)));
+  b = Math.max(0, Math.min(255, Math.round(b * k)));
+  return '#' + ((r << 16) | (g << 8) | b).toString(16).padStart(6, '0');
 }
 
 function spinTo(segmentIndex, durationMs) {
@@ -424,6 +593,48 @@ function spinTick(ts) {
 // ── UI rendering ──────────────────────────────────────────────────────────
 function fmt(n) { return Number(n || 0).toLocaleString(); }
 function fmtBalance() { document.getElementById('w-balance').textContent = fmt(state.balance); }
+
+// Small "+1,234" / "-50" flash next to the balance after a win/loss.
+function flashBalanceDelta(delta) {
+  if (!Number.isFinite(delta) || delta === 0) return;
+  const el = document.getElementById('w-balance-delta');
+  if (!el) return;
+  el.textContent = (delta >= 0 ? '+' : '') + fmt(delta);
+  el.style.color = delta >= 0 ? '#7fd97a' : '#ff8080';
+  el.style.textShadow = delta >= 0
+    ? '0 0 6px rgba(127, 217, 122, 0.7)'
+    : '0 0 6px rgba(255, 128, 128, 0.7)';
+  // Restart animation by toggling the class.
+  el.classList.remove('show');
+  void el.offsetWidth;
+  el.classList.add('show');
+  clearTimeout(flashBalanceDelta._t);
+  flashBalanceDelta._t = setTimeout(() => el.classList.remove('show'), 1400);
+}
+
+// Big toast over the wheel showing the player's win/loss for this round.
+// payout = gross credits received from the winning colour; netChange =
+// payout minus everything they bet across all colours.
+function showResultToast({ payout, netChange, winColor, multiplier, lost }) {
+  const el = document.getElementById('w-win-toast');
+  if (!el) return;
+  if (lost) {
+    el.classList.add('loss');
+    el.innerHTML = `
+      <div>LOST THIS ROUND</div>
+      <span class="amt">−${fmt(Math.abs(netChange))}</span>
+      <span class="net">${winColor.toUpperCase()} ${multiplier}× — none of your bets</span>`;
+  } else {
+    el.classList.remove('loss');
+    el.innerHTML = `
+      <div>YOU WON</div>
+      <span class="amt">+${fmt(payout)}</span>
+      <span class="net">net ${netChange >= 0 ? '+' : ''}${fmt(netChange)} · ${multiplier}× on ${winColor}</span>`;
+  }
+  el.classList.add('show');
+  clearTimeout(showResultToast._t);
+  showResultToast._t = setTimeout(() => el.classList.remove('show'), 2600);
+}
 
 function renderPhase() {
   const phaseEl = document.getElementById('w-phase');
@@ -577,6 +788,21 @@ async function start() {
   sock.on('connect_error', e => console.warn('[wheel] connect_error', e.message));
 
   sock.on('wheel_state', (s) => {
+    // New-round detection — if the round id moved on, zero out our
+    // local view of "this round's bets" so the bet panel doesn't keep
+    // showing last round's stake. Server's wheel_balance also pushes
+    // a fresh mine={} after a payout but a fresh state from a tab join
+    // mid-round only carries totals, not personal stake.
+    if (s.roundId && s.roundId !== state.lastSeenRoundId) {
+      state.lastSeenRoundId = s.roundId;
+      // Only reset mine when a *new* betting round opens. During spin/
+      // result we want to keep showing what we bet so the toast can
+      // reference it.
+      if (s.phase === 'betting') {
+        state.mine = { gray:0, pink:0, blue:0, yellow:0 };
+        renderMine();
+      }
+    }
     state.layout = s.layout || state.layout;
     state.totals = s.totals || state.totals;
     state.phase = s.phase;
@@ -588,7 +814,12 @@ async function start() {
   });
 
   sock.on('wheel_balance', (d) => {
-    if (typeof d.balance === 'number') state.balance = d.balance;
+    if (typeof d.balance === 'number') {
+      // Animate balance jumps so wins/losses register visually.
+      const delta = d.balance - state.balance;
+      state.balance = d.balance;
+      if (Math.abs(delta) >= 1) flashBalanceDelta(delta);
+    }
     state.mine = d.mine || state.mine;
     fmtBalance(); renderTotals(); renderMine();
   });
@@ -612,6 +843,28 @@ async function start() {
     state.history = d.history || state.history;
     state.totals = d.totals || state.totals;
     renderTotals(); renderHistory(); renderBetButtons(); renderPhase();
+
+    // Win/loss toast. Computed locally from our own bet snapshot so we
+    // don't have to wait for wheel_balance to roundtrip — the math is:
+    //   bet on winning colour × multiplier = gross payout
+    //   payout − sum of all our bets       = net change for the round
+    const myWinBet = Number(state.mine?.[d.color] || 0);
+    const myTotalBet = ['gray','pink','blue','yellow'].reduce(
+      (s, c) => s + Number(state.mine?.[c] || 0), 0);
+    if (myTotalBet > 0) {
+      if (myWinBet > 0) {
+        const payout = myWinBet * d.multiplier;
+        showResultToast({
+          payout, netChange: payout - myTotalBet,
+          winColor: d.color, multiplier: d.multiplier, lost: false,
+        });
+      } else {
+        showResultToast({
+          payout: 0, netChange: -myTotalBet,
+          winColor: d.color, multiplier: d.multiplier, lost: true,
+        });
+      }
+    }
   });
 
   drawWheel();
