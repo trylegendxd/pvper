@@ -51,6 +51,19 @@
         </div>`;
       return;
     }
+    if (!cfg.ready) {
+      // Enabled but the operator hasn't finished configuring the RPC /
+      // treasury — don't show a deposit box that could send funds nowhere.
+      root.innerHTML = `
+        <div class="card">
+          <div style="font-size:14px;letter-spacing:2px;color:#fff;">CRYPTO WALLET</div>
+          <div style="font-size:13px;color:#ffce4a;margin-top:8px;">
+            Crypto is being set up — deposits &amp; withdrawals are temporarily unavailable.
+            Please check back shortly.
+          </div>
+        </div>`;
+      return;
+    }
     try { ethers = await loadEthers(); }
     catch (e) { root.innerHTML = `<div class="card">Crypto unavailable: ${esc(e.message)}</div>`; return; }
     renderShell();

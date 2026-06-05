@@ -31,14 +31,26 @@ function envBool(name, def) {
 // Public config — safe to expose (NO private key). Read fresh each call so a
 // runtime env change (tests) is picked up.
 function getCryptoConfig() {
+  const enabled         = envBool('CRYPTO_ENABLED', false);
+  const rpcUrl          = process.env.BASE_RPC_URL || '';
+  const treasuryAddress = process.env.TREASURY_ADDRESS || '';
+  // `ready` gates the user-facing deposit/withdraw/link routes. Being merely
+  // ENABLED is not enough — without an RPC URL we can't verify deposits, and
+  // without a treasury address users would have nowhere to send funds. This
+  // prevents the dangerous "enabled but misconfigured" state where someone
+  // could send real USDC toward a blank/wrong address. The treasury PRIVATE
+  // key is only needed at admin-approval (broadcast) time, so it's not part
+  // of this gate.
+  const ready = enabled && !!rpcUrl && !!treasuryAddress;
   return {
-    enabled:                envBool('CRYPTO_ENABLED', false),
+    enabled,
+    ready,
     network:                process.env.CRYPTO_NETWORK || 'base-sepolia',
     chainId:                Number(process.env.BASE_CHAIN_ID || 84532),
-    rpcUrl:                 process.env.BASE_RPC_URL || '',
+    rpcUrl,
     usdcContractAddress:    process.env.USDC_CONTRACT_ADDRESS || '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
     usdcDecimals:           Number(process.env.USDC_DECIMALS || 6),
-    treasuryAddress:        process.env.TREASURY_ADDRESS || '',
+    treasuryAddress,
     usdcToCreditsRate:      Number(process.env.USDC_TO_CREDITS_RATE || 100),
     minDepositUsdc:         Number(process.env.MIN_DEPOSIT_USDC || 1),
     minWithdrawUsdc:        Number(process.env.MIN_WITHDRAW_USDC || 1),

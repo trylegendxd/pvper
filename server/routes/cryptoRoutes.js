@@ -32,9 +32,13 @@ function pruneNonces() {
   for (const [k, v] of nonces) if (v.expiresAt < now) nonces.delete(k);
 }
 
-// Block everything (except GET /config) when crypto is disabled.
+// Block everything (except GET /config) when crypto is off OR not fully
+// configured. The `ready` check stops users interacting with a half-enabled
+// system (no RPC / no treasury) where funds could be sent into a void.
 function requireEnabled(req, res, next) {
-  if (!usdc.getCryptoConfig().enabled) return res.status(403).json({ error: 'crypto_disabled' });
+  const c = usdc.getCryptoConfig();
+  if (!c.enabled) return res.status(403).json({ error: 'crypto_disabled' });
+  if (!c.ready)   return res.status(503).json({ error: 'crypto_not_configured' });
   next();
 }
 
@@ -43,6 +47,7 @@ router.get('/config', (req, res) => {
   const c = usdc.getCryptoConfig();
   res.json({
     enabled:             c.enabled,
+    ready:               c.ready,
     network:             c.network,
     chainId:             c.chainId,
     usdcContractAddress: c.usdcContractAddress,
