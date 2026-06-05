@@ -36,6 +36,9 @@
   let musicVol       = 0.45;
   let unlocked       = false;
   let started        = false;
+  let playbackInitiated = false;  // true once a track has been kicked off this page
+  let _fadeRAF       = 0;         // active fade-in RAF handle (0 = none)
+  let _errCount      = 0;         // consecutive load errors (skip stale/bad files)
 
   // Cross-page playback continuity. Browsers tear down the JS context on
   // navigation, so the only way to keep music from restarting is to
@@ -44,6 +47,7 @@
   // RESUME_TTL_MS) so closing the tab for hours doesn't drop the user
   // mid-song much later.
   const RESUME_KEY     = 'fps_music_state';
+  const PLAYLIST_KEY   = 'fps_music_playlist';  // cached so we don't wait on /audio-files
   const RESUME_TTL_MS  = 5 * 60 * 1000;  // 5 minutes
   let   saveTimer      = null;
   let   pendingResumeTime = null;        // currentTime to seek to once Audio is ready
@@ -102,36 +106,81 @@
   }
 
   // ── Audio engine ───────────────────────────────────────────────────────
+  // Decide which track + position to start from: a recent cross-page
+  // resume snapshot wins, then the user's pinned pick, else track 0.
+  function pickStartIndex() {
+    const resume = readResumeState();
+    if (resume?.track && playlist.includes(resume.track)
+        && Date.now() - (resume.savedAt || 0) < RESUME_TTL_MS) {
+      pendingResumeTime = resume.time || 0;
+      return playlist.indexOf(resume.track);
+    }
+    if (selectedTrack) {
+      const i = playlist.indexOf(selectedTrack);
+      if (i >= 0) return i;
+      selectedTrack = null;
+    }
+    return 0;
+  }
+
+  function startPlayback() {
+    if (!playlist.length || playbackInitiated) return;
+    playbackInitiated = true;
+    trackIndex = pickStartIndex();
+    // Optimistic playback — Chrome's MEI auto-allows it on origins the
+    // user has engaged with, so navigations resume without a click. A
+    // locked-browser rejection is caught in loadTrack(); the unlock-on-
+    // gesture path then takes over.
+    loadTrack(trackIndex, true);
+    refreshUI();
+  }
+
   async function loadPlaylist() {
+    // 1) Instant start from a cached playlist. Waiting on the /audio-files
+    //    round-trip before creating the Audio was the most audible part of
+    //    the "music breaks when I change pages" gap — skip it when we can.
+    try {
+      const cached = JSON.parse(localStorage.getItem(PLAYLIST_KEY) || 'null');
+      if (Array.isArray(cached) && cached.length) {
+        playlist = cached;
+        startPlayback();
+      }
+    } catch (_) {}
+
+    // 2) Refresh the real list in the background and reconcile.
     try {
       const res = await fetch('/audio-files');
-      playlist = await res.json();
-      if (!Array.isArray(playlist) || !playlist.length) return;
-
-      // Resume from where the previous page left off if the snapshot is
-      // recent and matches a track still in the playlist. Otherwise
-      // honour the user's pinned pick or fall through to track 0.
-      const resume = readResumeState();
-      let idx = 0;
-      if (resume?.track && playlist.includes(resume.track)
-          && Date.now() - (resume.savedAt || 0) < RESUME_TTL_MS) {
-        idx = playlist.indexOf(resume.track);
-        pendingResumeTime = resume.time || 0;
-      } else if (selectedTrack) {
-        const i = playlist.indexOf(selectedTrack);
-        if (i >= 0) idx = i;
-        else selectedTrack = null;
+      const fresh = await res.json();
+      if (Array.isArray(fresh) && fresh.length) {
+        localStorage.setItem(PLAYLIST_KEY, JSON.stringify(fresh));
+        // Keep the currently-playing file's index stable if we can, so a
+        // background refresh doesn't change what plays next.
+        const curFile = playlist[trackIndex];
+        playlist = fresh;
+        const ci = fresh.indexOf(curFile);
+        if (ci >= 0) trackIndex = ci;
+        if (!playbackInitiated) startPlayback();
+        else refreshUI();   // just update the track picker; don't restart
       }
-      trackIndex = idx;
-      // Always attempt optimistic playback. Chrome's MEI auto-allows
-      // playback on origins where the user has previously engaged with
-      // audio, so after the first interaction on the site future
-      // navigations resume without needing another click. The play()
-      // rejection on locked browsers is caught inside loadTrack(); the
-      // unlock-on-gesture path then takes over.
-      loadTrack(idx, true);
-      refreshUI();
     } catch (_) {}
+  }
+
+  // ── Volume fade (masks the cut-in on a fresh-page resume) ────────────────
+  function cancelFade() { if (_fadeRAF) { cancelAnimationFrame(_fadeRAF); _fadeRAF = 0; } }
+  function fadeIn(ms = 700) {
+    if (!audio) return;
+    cancelFade();
+    const target = musicVol;
+    const start = performance.now();
+    audio.volume = 0;
+    const step = () => {
+      if (!audio) { _fadeRAF = 0; return; }
+      const t = Math.min(1, (performance.now() - start) / ms);
+      audio.volume = target * t;
+      if (t < 1) _fadeRAF = requestAnimationFrame(step);
+      else { audio.volume = target; _fadeRAF = 0; }
+    };
+    _fadeRAF = requestAnimationFrame(step);
   }
 
   function loadTrack(idx, autoplay) {
@@ -146,11 +195,21 @@
     const file = playlist[idx];
     audio = new Audio('/audio/' + encodeURIComponent(file));
     audio.loop = false;
+    audio.preload = 'auto';
     audio.volume = musicVol;
     audio.onended = () => {
       // Always advance — pinned track just controls where rotation
       // starts, not what loops.
+      _errCount = 0;
       loadTrack((trackIndex + 1) % playlist.length, true);
+    };
+    audio.onerror = () => {
+      // A missing/corrupt file (e.g. a stale cached playlist) shouldn't
+      // kill the music — skip ahead, but stop after one full lap so we
+      // don't spin forever if every file is unreachable.
+      if (_errCount++ < playlist.length && playlist.length > 1) {
+        loadTrack((trackIndex + 1) % playlist.length, true);
+      }
     };
     // Cross-page resume: seek to the previously-saved currentTime
     // once the browser has enough metadata to do so. canplay fires
@@ -166,7 +225,7 @@
       audio.addEventListener('canplay',        trySeek, { once: true });
     }
     if (autoplay) {
-      audio.play().then(() => { started = true; refreshUI(); }).catch(() => {});
+      audio.play().then(() => { started = true; _errCount = 0; fadeIn(); refreshUI(); }).catch(() => {});
     }
   }
 
@@ -182,6 +241,7 @@
   }
   function setVolume(v) {
     musicVol = Math.max(0, Math.min(1, v));
+    cancelFade();                       // user is taking manual control
     if (audio) audio.volume = musicVol;
     saveSettings();
   }
@@ -198,7 +258,7 @@
     if (unlocked) return;
     unlocked = true;
     if (audio && !started) {
-      audio.play().then(() => { started = true; refreshUI(); }).catch(() => {});
+      audio.play().then(() => { started = true; fadeIn(); refreshUI(); }).catch(() => {});
     }
     for (const ev of UNLOCK_EVENTS) {
       window.removeEventListener(ev, unlock, { capture: true });

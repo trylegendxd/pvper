@@ -26,6 +26,8 @@
     hands:   [],       // array of server hand views
     lastBet: null,     // remember last stake for convenience
     busy:    false,
+    revealN: null,         // staged dealer reveal: # of dealer cards to show
+    suppressOutcome: false,// hide player win/lose colour during the reveal
   };
 
   // ── Animation bookkeeping ─────────────────────────────────────────
@@ -43,6 +45,21 @@
   }
   function currentHand() { return State.hands.find(h => h.status === 'active') || null; }
   function roundOver() { return State.hands.length > 0 && State.hands.every(h => h.status !== 'active'); }
+
+  // sleep + a client-side hand value, used by the staged dealer reveal so
+  // the dealer's running total ticks up as each card is turned over.
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  function handValue(cards) {
+    let total = 0, aces = 0;
+    for (const c of cards) {
+      if (!c || c.hidden) continue;
+      if (c.r === 'A') { total += 11; aces++; }
+      else if (['J', 'Q', 'K', '10'].includes(c.r)) total += 10;
+      else total += Number(c.r);
+    }
+    while (total > 21 && aces > 0) { total -= 10; aces--; }
+    return total;
+  }
 
   function refreshBalance() {
     api('/api/wallet/balance').then(({ balance }) => {
@@ -94,7 +111,16 @@
     if (!State.hands.length) return { cards: [], value: '' };
     const anyActive = State.hands.some(h => h.status === 'active');
     const h = anyActive ? State.hands.find(x => x.status === 'active') : State.hands[0];
-    return { cards: h.dealerCards || [], value: h.dealerValue };
+    let cards = h.dealerCards || [];
+    // Staged reveal: while State.revealN is set, only show that many of
+    // the dealer's cards so they appear one at a time. The running value
+    // is computed from the shown cards (or the server's up-card value
+    // while the hole is still hidden during play).
+    if (State.revealN != null && State.revealN < cards.length) {
+      cards = cards.slice(0, State.revealN);
+    }
+    const value = cards.some(c => c.hidden) ? h.dealerValue : handValue(cards);
+    return { cards, value };
   }
 
   function dealerAnimFor(i, c) {
@@ -140,7 +166,10 @@
     for (const h of State.hands) {
       const el = document.createElement('div');
       let cls = 'bj-hand is-player';
-      if (h.status !== 'active') {
+      // While the dealer is being revealed we DON'T colour the player's
+      // outcome yet — that would spoil the result before the dealer
+      // finishes drawing. Keep it neutral until the reveal completes.
+      if (!State.suppressOutcome && h.status !== 'active') {
         if (h.outcome === 'win' || h.outcome === 'blackjack') cls = 'bj-hand is-win';
         else if (h.outcome === 'push') cls = 'bj-hand is-push';
         else if (h.outcome) cls = 'bj-hand is-lose';
@@ -150,7 +179,7 @@
       el.className = cls;
       const pill = document.createElement('div');
       pill.className = 'bj-pill';
-      pill.textContent = pillText(h);
+      pill.textContent = State.suppressOutcome ? h.playerValue : pillText(h);
       el.appendChild(pill);
       el.appendChild(buildFan(h.playerCards || [], handAnimFor(h)));
       pHost.appendChild(el);
@@ -251,6 +280,28 @@
     finally { State.busy = false; syncActions(); }
   }
 
+  // Turn the dealer's cards over one at a time with a short pause between
+  // each, so the dealer visibly "draws" to 17 instead of every card
+  // popping in at once. Player outcomes stay hidden until it finishes.
+  async function animateDealerReveal() {
+    const full = (State.hands.find(h => (h.dealerCards || []).length) || {}).dealerCards || [];
+    State.suppressOutcome = true;
+    // Step 1: flip the hole card (show the first two).
+    State.revealN = Math.min(2, full.length);
+    render();
+    await sleep(650);
+    // Then deal each additional card with a beat between them.
+    for (let n = 3; n <= full.length; n++) {
+      State.revealN = n;
+      render();
+      await sleep(620);
+    }
+    // Reveal complete — drop the staging flags and show real outcomes.
+    State.revealN = null;
+    State.suppressOutcome = false;
+    render();
+  }
+
   async function act(kind) {
     const h = currentHand();
     if (!h || State.busy) return;
@@ -260,14 +311,30 @@
       double: '/api/games/blackjack/double',
       split:  '/api/games/blackjack/split',
     }[kind];
+    // Was the dealer's hole card still hidden before this action? If so
+    // and the action ends the round, the dealer is about to play — we'll
+    // stage the reveal rather than dumping all the cards at once.
+    const dealerWasHidden = _anim.dealerHidden;
     State.busy = true; syncActions();
     try {
       const r = await api(path, { method: 'POST', body: { handId: h.id } });
       if (Array.isArray(r.hands) && r.hands.length) State.hands = r.hands;
       else if (r.hand) State.hands = State.hands.map(x => x.id === r.hand.id ? r.hand : x);
-      render();
-      if (roundOver()) { maybeShowResult(); refreshBalance(); }
-      else refreshBalance(); // split/double change balance mid-round
+
+      // Stage the dealer reveal only when the dealer actually plays: the
+      // hole was hidden, the round is now over, and at least one hand
+      // didn't bust (if the player busted out the dealer doesn't matter).
+      const dealerPlays = dealerWasHidden && roundOver()
+        && State.hands.some(x => x.status !== 'player_bust');
+      if (dealerPlays) {
+        await animateDealerReveal();
+        maybeShowResult();
+        refreshBalance();
+      } else {
+        render();
+        if (roundOver()) { maybeShowResult(); refreshBalance(); }
+        else refreshBalance(); // split/double change balance mid-round
+      }
     } catch (e) { showMsg(friendly(e.message), 'error'); }
     finally { State.busy = false; syncActions(); }
   }
