@@ -16,7 +16,12 @@
 // ============================================================================
 
 (function () {
-  if (location.pathname.startsWith('/games/')) return;
+  // The shooter is the ONLY page that suppresses menu music — its own
+  // AudioManager handles in-game audio (gunshots, voice, spatial SFX)
+  // and looping music there would fight with it. Every other page,
+  // including the other casino games (rps, roulette, blackjack, mines,
+  // wheel), gets the lobby playlist.
+  if (location.pathname.startsWith('/games/shooter')) return;
   if (location.pathname === '/login.html' || location.pathname === '/register.html') {
     // No music on the auth pages — quieter feel, plus we won't have
     // unlocked autoplay yet anyway.

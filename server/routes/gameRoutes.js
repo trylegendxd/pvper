@@ -222,6 +222,15 @@ router.post('/blackjack/double', requireAuth, async (req, res) => {
     res.status(400).json({ error: e.message || 'double_failed' });
   }
 });
+router.post('/blackjack/split', requireAuth, async (req, res) => {
+  try {
+    const { handId } = req.body || {};
+    const { hand, hands } = await blackjack.splitHand(req.session.userId, handId);
+    res.json({ ok: true, hand, hands });
+  } catch (e) {
+    res.status(400).json({ error: e.message || 'split_failed' });
+  }
+});
 router.get('/blackjack/active', requireAuth, async (req, res) => {
   const hands = await blackjack.getActive(req.session.userId);
   // Keep `hand` for any old client that still uses it (first active).

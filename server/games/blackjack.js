@@ -39,6 +39,17 @@ function isBlackjack(cards) {
   return cards.length === 2 && handValue(cards) === 21;
 }
 
+// Value used to decide if two cards form a splittable pair. Face cards
+// all count as 10 (so 10-J-Q-K are mutually splittable, the common
+// casino rule); aces pair with aces.
+function splitValue(c) {
+  if (['J', 'Q', 'K', '10'].includes(c.r)) return 10;
+  if (c.r === 'A') return 11;
+  return Number(c.r);
+}
+
+const MAX_HANDS_PER_ROUND = 4;   // cap re-splits at 4 hands total
+
 // ── Public view ───────────────────────────────────────────────────────────
 // `dealerCards` and `dealerValue` reflect what this player should SEE.
 // The dealer's hole card stays hidden while ANY hand in the round is
@@ -349,6 +360,108 @@ async function doubleDown(userId, handId) {
   });
 }
 
+// ── Split ───────────────────────────────────────────────────────────────────
+// Turn a two-card pair into two hands. Deducts a second bet equal to the
+// original, deals one fresh card to each resulting hand, and inserts the
+// new hand into the SAME round so it faces the same dealer. Split aces
+// get exactly one card each and auto-stand (standard rule).
+async function splitHand(userId, handId) {
+  return withTx(async (client) => {
+    const { rows } = await client.query(
+      `SELECT * FROM blackjack_hands WHERE id=$1 AND user_id=$2 FOR UPDATE`,
+      [handId, userId]
+    );
+    if (!rows.length) throw new Error('hand_not_found');
+    const hand = rows[0];
+    if (hand.status !== 'active') throw new Error('hand_not_active');
+    if (!hand.round_id) throw new Error('cannot_split');
+    if (hand.player_cards.length !== 2) throw new Error('split_only_on_first_two');
+    const [c0, c1] = hand.player_cards;
+    if (splitValue(c0) !== splitValue(c1)) throw new Error('not_a_pair');
+
+    // Lock the round (shared shoe) + count existing hands for the cap.
+    const { rows: rrows } = await client.query(
+      `SELECT * FROM blackjack_rounds WHERE id=$1 FOR UPDATE`, [hand.round_id]
+    );
+    const round = rrows[0];
+    const { rows: sibs } = await client.query(
+      `SELECT id FROM blackjack_hands WHERE round_id=$1`, [hand.round_id]
+    );
+    if (sibs.length >= MAX_HANDS_PER_ROUND) throw new Error('too_many_splits');
+
+    const bet = Number(hand.bet_amount);
+    const isAces = (c0.r === 'A');
+
+    // New session + bet deduction for the split-off hand.
+    const { rows: gs } = await client.query(
+      `INSERT INTO game_sessions (game_type, status, bet_amount, pot_amount)
+       VALUES ('blackjack','active',$1,$1) RETURNING id`, [bet]
+    );
+    const newSessionId = gs[0].id;
+    await adjustBalance(userId, -bet, 'bet', {
+      refType: 'blackjack', refId: newSessionId, client,
+      metadata: { split_from: hand.session_id },
+    });
+
+    // Deal one card to each new hand from the shared shoe.
+    const deck = round.deck.slice();
+    const origCards = [c0, deck.pop()];
+    const newCards  = [c1, deck.pop()];
+
+    // Resolve immediate statuses. Split aces auto-stand on one card.
+    let origStatus = 'active', origOutcome = null;
+    let newStatus  = 'active', newOutcome  = null;
+    if (isAces) {
+      origStatus = 'player_stand';
+      newStatus  = 'player_stand';
+    } else {
+      if (handValue(origCards) > 21) { origStatus = 'player_bust'; origOutcome = 'lose'; }
+      if (handValue(newCards)  > 21) { newStatus  = 'player_bust'; newOutcome  = 'lose'; }
+    }
+
+    // Persist the shared deck.
+    await client.query(
+      `UPDATE blackjack_rounds SET deck=$1::jsonb WHERE id=$2`,
+      [JSON.stringify(deck), round.id]
+    );
+
+    // Update the original hand (now holds c0 + a fresh card).
+    await client.query(
+      `UPDATE blackjack_hands
+          SET player_cards=$1::jsonb, status=$2, outcome=$3,
+              finished_at = CASE WHEN $2='active' THEN NULL ELSE NOW() END
+        WHERE id=$4`,
+      [JSON.stringify(origCards), origStatus, origOutcome, hand.id]
+    );
+    if (origStatus !== 'active') {
+      await client.query(`UPDATE game_sessions SET status='finished', finished_at=NOW() WHERE id=$1`, [hand.session_id]);
+    }
+
+    // Insert the split-off hand (holds c1 + a fresh card).
+    await client.query(
+      `INSERT INTO blackjack_hands
+         (session_id, user_id, bet_amount, deck, player_cards, dealer_cards,
+          status, outcome, payout, round_id, finished_at)
+       VALUES ($1,$2,$3,'[]'::jsonb,$4::jsonb,$5::jsonb,$6,$7,0,$8,
+               CASE WHEN $6='active' THEN NULL ELSE NOW() END)`,
+      [newSessionId, userId, bet, JSON.stringify(newCards),
+       JSON.stringify(round.dealer_cards), newStatus, newOutcome, round.id]
+    );
+    if (newStatus !== 'active') {
+      await client.query(`UPDATE game_sessions SET status='finished', finished_at=NOW() WHERE id=$1`, [newSessionId]);
+    }
+
+    // If nothing is active anymore (split aces, or both busted) the dealer
+    // plays and the round settles.
+    await _maybePlayDealer(client, hand, round);
+
+    const fresh = (await client.query(`SELECT * FROM blackjack_hands WHERE id=$1`, [handId])).rows[0];
+    const handView  = await _viewWithRound(client, fresh);
+    const handViews = await _allRoundViews(client, fresh);
+    return { hand: handView, hands: handViews };
+  });
+}
+
 // ── Dealer plays once when no hand is still 'active' ─────────────────────
 async function _maybePlayDealer(client, hand, round) {
   if (!round) {
@@ -475,4 +588,4 @@ async function getActive(userId) {
   }));
 }
 
-module.exports = { start, startBatch, hit, stand, doubleDown, getActive, MAX_ACTIVE_HANDS };
+module.exports = { start, startBatch, hit, stand, doubleDown, splitHand, getActive, MAX_ACTIVE_HANDS };
