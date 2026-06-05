@@ -41,7 +41,8 @@ router.get('/', async (req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT f.id, f.user_a, f.user_b, f.requester_id, f.status, f.created_at,
-              ua.username AS user_a_name, ub.username AS user_b_name
+              ua.username AS user_a_name, ua.display_name AS user_a_dname, ua.avatar AS user_a_avatar,
+              ub.username AS user_b_name, ub.display_name AS user_b_dname, ub.avatar AS user_b_avatar
          FROM friendships f
          JOIN users ua ON ua.id = f.user_a
          JOIN users ub ON ub.id = f.user_b
@@ -54,9 +55,18 @@ router.get('/', async (req, res) => {
     const incoming = [];
     const outgoing = [];
     for (const r of rows) {
-      const otherId   = r.user_a === me ? r.user_b   : r.user_a;
-      const otherName = r.user_a === me ? r.user_b_name : r.user_a_name;
-      const entry = { id: r.id, userId: otherId, username: otherName, createdAt: r.created_at };
+      const amA = r.user_a === me;
+      const otherId     = amA ? r.user_b        : r.user_a;
+      const otherName   = amA ? r.user_b_name   : r.user_a_name;
+      const otherDName  = amA ? r.user_b_dname  : r.user_a_dname;
+      const otherAvatar = amA ? r.user_b_avatar : r.user_a_avatar;
+      const entry = {
+        id: r.id, userId: otherId, username: otherName,
+        // Prefer the display name for UI; fall back to the username.
+        displayName: otherDName || otherName,
+        avatar: otherAvatar || null,
+        createdAt: r.created_at,
+      };
       if (r.status === 'accepted') friends.push(entry);
       else if (r.requester_id === me) outgoing.push(entry);
       else incoming.push(entry);

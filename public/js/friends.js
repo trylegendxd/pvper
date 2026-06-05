@@ -10,9 +10,9 @@
 (function () {
   const STATE = {
     me: null,
-    friends: [],         // [{ userId, username }]
-    incoming: [],        // [{ id, userId, username }]
-    outgoing: [],        // [{ id, userId, username }]
+    friends: [],         // [{ userId, username, displayName, avatar }]
+    incoming: [],        // [{ id, userId, username, displayName, avatar }]
+    outgoing: [],        // [{ id, userId, username, displayName, avatar }]
     activeChat: null,    // userId currently open
     presence: new Set(), // userIds currently online
     socket: null,
@@ -89,6 +89,20 @@
     if (el) el.classList.add('has-unread');
   }
 
+  // Small round avatar (display picture). Falls back to the first initial
+  // of the display name when the user hasn't uploaded one.
+  function avatarHtml(f) {
+    const name = f.displayName || f.username || '?';
+    const base = 'width:22px;height:22px;border-radius:50%;flex-shrink:0;object-fit:cover;'
+               + 'border:1px solid rgba(255,255,255,0.16);';
+    if (f.avatar) {
+      return `<img src="${f.avatar}" alt="" referrerpolicy="no-referrer" style="${base}">`;
+    }
+    const initial = escapeHtml(String(name)[0].toUpperCase());
+    return `<span style="${base}display:inline-flex;align-items:center;justify-content:center;`
+         + `background:#2a3548;color:#cdd4dc;font-size:11px;font-weight:700;">${initial}</span>`;
+  }
+
   function render() {
     const root = document.getElementById('friends-root');
     if (!root) return;
@@ -99,7 +113,8 @@
             data-friend="${f.userId}">
           <button class="friend-link" data-open="${f.userId}">
             <span class="dot ${isOnline ? 'on' : 'off'}"></span>
-            <span class="name">${escapeHtml(f.username)}</span>
+            ${avatarHtml(f)}
+            <span class="name">${escapeHtml(f.displayName || f.username)}</span>
           </button>
           <button class="x" title="Unfriend" data-unfriend="${f.userId}">×</button>
         </li>
@@ -108,7 +123,8 @@
 
     const incomingItems = STATE.incoming.map(r => `
       <li class="req-row">
-        <span>${escapeHtml(r.username)}</span>
+        ${avatarHtml(r)}
+        <span>${escapeHtml(r.displayName || r.username)}</span>
         <button class="ok" data-accept="${r.id}">Accept</button>
         <button class="no" data-reject="${r.id}">×</button>
       </li>
@@ -116,7 +132,8 @@
 
     const outgoingItems = STATE.outgoing.map(r => `
       <li class="req-row out">
-        <span>${escapeHtml(r.username)}</span>
+        ${avatarHtml(r)}
+        <span>${escapeHtml(r.displayName || r.username)}</span>
         <span class="status">Pending…</span>
         <button class="no" data-reject="${r.id}">×</button>
       </li>
@@ -139,7 +156,7 @@
       <div class="chat-panel" id="chat-panel">
         ${STATE.activeChat ? `
           <div class="cp-header">
-            <span>${escapeHtml(STATE.friends.find(f => f.userId === STATE.activeChat)?.username || '?')}</span>
+            <span>${escapeHtml((STATE.friends.find(f => f.userId === STATE.activeChat) || {}).displayName || '?')}</span>
             <button id="close-chat">×</button>
           </div>
           <div class="cp-log" id="cp-log"></div>
