@@ -38,7 +38,10 @@ router.post('/login', authLimiter, async (req, res) => {
 router.post('/logout', (req, res) => {
   if (!req.session) return res.json({ ok: true });
   req.session.destroy(() => {
-    res.clearCookie('connect.sid');
+    // Cookie name must match the one configured in app.js ('fps.sid').
+    // Clearing 'connect.sid' (the express-session default) left the real
+    // cookie lingering in the browser after logout.
+    res.clearCookie('fps.sid');
     res.json({ ok: true });
   });
 });

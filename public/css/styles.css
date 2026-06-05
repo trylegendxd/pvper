@@ -176,6 +176,40 @@ table.history td.neg { color: var(--red); }
   .friends-root { grid-template-columns: 1fr; }
 }
 
+/* ── Mobile topbar ────────────────────────────────────────────────────────
+   The nav holds ~12 links; on a phone they'd overflow the viewport. Drop
+   the nav to a full-width, horizontally-scrollable strip below the brand
+   and balance so everything stays reachable with a swipe. */
+@media (max-width: 860px) {
+  .topbar {
+    flex-wrap: wrap; gap: 8px 12px; padding: 10px 14px;
+  }
+  .topbar .brand { font-size: 19px; letter-spacing: 2px; }
+  .topbar .nav {
+    order: 3; width: 100%;
+    overflow-x: auto; gap: 16px;
+    padding-bottom: 4px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+  .topbar .nav a { white-space: nowrap; }
+  .topbar .user { gap: 8px; font-size: 12px; }
+  .container { padding: 20px 14px 84px; }
+  h1.page { font-size: 22px; letter-spacing: 2px; }
+}
+
+/* Respect users who ask for less motion — kill the non-essential CSS
+   animations/transitions site-wide (the canvas dollar-rain also checks
+   this flag in JS). */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* Footer (legal notice) */
 .legal-footer {
   position: fixed; bottom: 0; left: 0; right: 0;

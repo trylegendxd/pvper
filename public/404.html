@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<title>404 · FPS Arena</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/styles.css">
+<style>
+  .nf-wrap {
+    min-height: 80vh; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center;
+    padding: 40px 20px;
+  }
+  .nf-code {
+    font-size: 120px; font-weight: 700; letter-spacing: 8px; line-height: 1;
+    color: #fff; text-shadow: 0 0 40px rgba(255,206,74,.25);
+  }
+  .nf-code .accent { color: var(--gold); }
+  .nf-msg { color: var(--dim); font-size: 15px; letter-spacing: 2px; margin: 14px 0 28px; }
+  .nf-btn {
+    background: linear-gradient(135deg, #ffce4a 0%, #ffb030 100%);
+    color: #000; padding: 12px 30px; border-radius: 4px;
+    font-size: 14px; letter-spacing: 2px; font-weight: 700; text-decoration: none;
+  }
+  .nf-btn:hover { filter: brightness(1.08); text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="topbar" id="topbar"></div>
+<div class="nf-wrap">
+  <div class="nf-code">4<span class="accent">⊕</span>4</div>
+  <div class="nf-msg">This page missed the target. Nothing here.</div>
+  <a class="nf-btn" id="nf-home" href="/dashboard.html">BACK TO HUB</a>
+</div>
+<div class="legal-footer">Credits are fictional play-money credits only and have no real-world monetary value.</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/auth.js"></script>
+<script src="/js/dollar-rain.js"></script>
+<script src="/js/music-player.js"></script>
+<script>
+  // Render the topbar if logged in; otherwise point the button at login.
+  (async () => {
+    const user = await renderTopbar({ requireUser: false });
+    if (!user) document.getElementById('nf-home').setAttribute('href', '/login.html');
+  })();
+</script>
+</body>
+</html>

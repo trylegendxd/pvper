@@ -138,7 +138,17 @@ app.use(express.static(PUBLIC_DIR, { maxAge: '1h', extensions: ['html'] }));
 // Health
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
 
-// 404 (API only — HTML routes fall through to static)
+// 404 (API only — JSON)
 app.use('/api', (_req, res) => res.status(404).json({ error: 'not_found' }));
+
+// Custom 404 for any other unknown route — serve the themed page instead
+// of Express's bare "Cannot GET /…" text. GET requests get the HTML page;
+// other verbs get a short text body.
+app.use((req, res) => {
+  if (req.method === 'GET' && req.accepts('html')) {
+    return res.status(404).sendFile(path.join(PUBLIC_DIR, '404.html'));
+  }
+  res.status(404).type('txt').send('Not found');
+});
 
 module.exports = { app, sessionMiddleware };
