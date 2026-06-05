@@ -198,8 +198,8 @@ router.post('/blackjack/start', requireAuth, async (req, res) => {
 router.post('/blackjack/hit', requireAuth, async (req, res) => {
   try {
     const { handId } = req.body || {};
-    const hand = await blackjack.hit(req.session.userId, handId);
-    res.json({ ok: true, hand });
+    const { hand, hands } = await blackjack.hit(req.session.userId, handId);
+    res.json({ ok: true, hand, hands });
   } catch (e) {
     res.status(400).json({ error: e.message || 'hit_failed' });
   }
@@ -207,8 +207,8 @@ router.post('/blackjack/hit', requireAuth, async (req, res) => {
 router.post('/blackjack/stand', requireAuth, async (req, res) => {
   try {
     const { handId } = req.body || {};
-    const hand = await blackjack.stand(req.session.userId, handId);
-    res.json({ ok: true, hand });
+    const { hand, hands } = await blackjack.stand(req.session.userId, handId);
+    res.json({ ok: true, hand, hands });
   } catch (e) {
     res.status(400).json({ error: e.message || 'stand_failed' });
   }
@@ -216,8 +216,8 @@ router.post('/blackjack/stand', requireAuth, async (req, res) => {
 router.post('/blackjack/double', requireAuth, async (req, res) => {
   try {
     const { handId } = req.body || {};
-    const hand = await blackjack.doubleDown(req.session.userId, handId);
-    res.json({ ok: true, hand });
+    const { hand, hands } = await blackjack.doubleDown(req.session.userId, handId);
+    res.json({ ok: true, hand, hands });
   } catch (e) {
     res.status(400).json({ error: e.message || 'double_failed' });
   }

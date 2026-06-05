@@ -91,18 +91,48 @@
   .dealer-area .val { color: #dfecdf; font-size: 13px; letter-spacing: 2px; opacity: .85; min-height: 18px; }
 
   /* ── Cards ────────────────────────────────────────────────────── */
+  /* Container around the dealer + each seat's hand. The perspective is
+     what makes rotateY-based flips look 3D rather than a flat squash. */
+  .dealer-area .cards,
+  .seat-cards {
+    perspective: 900px;
+  }
+  /* Default card-face: no animation. Animations are opted into via the
+     .fresh (deal-in) and .flipping (hole-card reveal) classes that the
+     renderer adds for cards that JUST appeared. Old cards stay still
+     when the rest of the hand re-renders, so you no longer see every
+     card flicker on every hit/stand. */
   .card-face {
     width: 70px; height: 98px; border-radius: 6px;
     background: #fff; color: #000; padding: 6px;
     display:flex; flex-direction:column; justify-content:space-between;
     font-family: 'Georgia', serif; font-weight: 700; font-size: 18px;
     box-shadow: 0 6px 14px rgba(0,0,0,.55);
-    transform-origin: top center;
-    animation: dealIn .35s cubic-bezier(.22,1.18,.34,1) backwards;
+    transform-origin: center;
+    backface-visibility: hidden;
+    will-change: transform, opacity;
+  }
+  /* Newly-dealt card — slides + rotates in from the deck shoe at the
+     upper-right of the felt and lands with a tiny overshoot. */
+  .card-face.fresh {
+    animation: dealIn .55s cubic-bezier(.22, 1.18, .34, 1) backwards;
   }
   @keyframes dealIn {
-    from { transform: translate(-60px, -90px) rotate(-15deg); opacity: 0; }
-    to   { transform: translate(0,0) rotate(0); opacity: 1; }
+    0%   { transform: translate(220px, -180px) rotate(-22deg) scale(.85); opacity: 0; }
+    55%  { opacity: 1; }
+    85%  { transform: translate(0, 0) rotate(2deg) scale(1.02); opacity: 1; }
+    100% { transform: translate(0,0) rotate(0) scale(1); opacity: 1; }
+  }
+  /* Dealer's hole card revealing — rotates from edge-on (rotateY 90°,
+     invisible) to face-up. The previous hidden card was just removed
+     from the DOM, so this looks like a flip from back to front. */
+  .card-face.flipping {
+    animation: flipReveal .5s cubic-bezier(.4, 0, .2, 1) backwards;
+  }
+  @keyframes flipReveal {
+    0%   { transform: rotateY(90deg) scale(.9); opacity: 0; }
+    35%  { opacity: 1; }
+    100% { transform: rotateY(0) scale(1);     opacity: 1; }
   }
   .card-face.hidden {
     background:
@@ -161,7 +191,15 @@
     position: relative;
     width: 64px; height: 38px;
     pointer-events: none;
+    animation: chipDrop .28s cubic-bezier(.34, 1.56, .64, 1);
   }
+  @keyframes chipDrop {
+    0%   { transform: translateY(-26px); opacity: 0; }
+    100% { transform: translateY(0);     opacity: 1; }
+  }
+  /* Don't re-animate the chip stack for the faded placeholder shown on
+     locked seats during play. */
+  .bet-circle.is-locked .chip-stack { animation: none; }
   .chip-stack .chip-face {
     position: absolute; left: 0; right: 0; bottom: 0;
     height: 26px; border-radius: 50%;

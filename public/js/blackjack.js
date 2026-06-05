@@ -28,6 +28,68 @@
     hands:        [],
   };
 
+  // ── Animation tracking ────────────────────────────────────────────
+  // The renderer re-creates the entire `seats-arc` DOM tree on every
+  // state change. Without bookkeeping, every card would re-run the
+  // deal-in animation on every hit/stand — a flickery mess. We track
+  // per-position counts so the renderer can decide which cards are
+  // ACTUALLY new (got drawn this turn) and only animate those.
+  let _animState = {
+    dealerCount:    0,
+    dealerHidden:   false,
+    seatCounts:    [0, 0, 0],
+    // When true, the NEXT renderPlay() suppresses all animations. Used
+    // when the page resumes mid-game so existing cards don't re-deal
+    // themselves on page load.
+    skipNext:       false,
+    // Counter that increments for each fresh card in a single render,
+    // used to stagger their animation-delay so they appear one at a
+    // time instead of all at once.
+    freshIdx:       0,
+  };
+  function resetAnimState(skipNext = false) {
+    _animState = {
+      dealerCount: 0, dealerHidden: false,
+      seatCounts: [0, 0, 0], skipNext, freshIdx: 0,
+    };
+  }
+  // Compute the CSS class + delay style for a dealer card at index `idx`.
+  // Returns the FULL inline attribute string for the card-face element.
+  function dealerCardAttrs(c, idx) {
+    if (_animState.skipNext) return { cls: '', style: '' };
+    // The hole card just transitioned from hidden to revealed — flip it
+    // first (delay 0), and let any freshly-drawn dealer cards cascade
+    // after it via the shared freshIdx counter.
+    if (idx === 1 && _animState.dealerHidden && !c.hidden
+        && _animState.dealerCount >= 2) {
+      const delay = _animState.freshIdx++ * 90;
+      return { cls: 'flipping', style: `animation-delay:${delay}ms;` };
+    }
+    // Fresh card — it didn't exist in the previous render.
+    if (idx >= _animState.dealerCount) {
+      const delay = _animState.freshIdx++ * 90;
+      return { cls: 'fresh', style: `animation-delay:${delay}ms;` };
+    }
+    return { cls: '', style: '' };
+  }
+  function seatCardAttrs(c, seatIdx, cardIdx) {
+    if (_animState.skipNext) return { cls: '', style: '' };
+    if (cardIdx >= _animState.seatCounts[seatIdx]) {
+      const delay = _animState.freshIdx++ * 90;
+      return { cls: 'fresh', style: `animation-delay:${delay}ms;` };
+    }
+    return { cls: '', style: '' };
+  }
+  function commitAnimState(view, handBySeat) {
+    _animState.dealerCount  = view.cards.length;
+    _animState.dealerHidden = view.cards.some(c => c.hidden);
+    for (let i = 0; i < 3; i++) {
+      _animState.seatCounts[i] = handBySeat[i] ? handBySeat[i].playerCards.length : 0;
+    }
+    _animState.skipNext = false;
+    _animState.freshIdx = 0;
+  }
+
   // ── Helpers ───────────────────────────────────────────────────────
   function chipFor(v) { return CHIPS.find(c => c.v === v) || CHIPS[0]; }
 
@@ -51,10 +113,11 @@
     }).catch(() => {});
   }
 
-  function renderCard(c) {
-    if (c.hidden) return `<div class="card-face hidden"></div>`;
+  function renderCard(c, animCls = '', style = '') {
+    const styleAttr = style ? ` style="${style}"` : '';
+    if (c.hidden) return `<div class="card-face hidden ${animCls}"${styleAttr}></div>`;
     const red = (c.s === '♥' || c.s === '♦');
-    return `<div class="card-face ${red ? 'red' : ''}">
+    return `<div class="card-face ${red ? 'red' : ''} ${animCls}"${styleAttr}>
       <span>${c.r}${c.s}</span>
       <span class="bot">${c.r}${c.s}</span>
     </div>`;
@@ -69,6 +132,9 @@
   // ── Setup-phase render ────────────────────────────────────────────
   function renderSetup() {
     State.phase = 'setup';
+    // No cards on the table during setup, so the next renderPlay (after
+    // DEAL) sees zero pre-existing cards → everything animates in.
+    resetAnimState(false);
     $('dealer-cards').innerHTML = '';
     $('dealer-val').textContent = '';
     $('bj-table-text').style.display = '';
@@ -162,9 +228,14 @@
     State.phase = 'play';
     $('bj-table-text').style.display = 'none';
 
-    // Dealer — share the dealer view across all hands.
+    // Dealer — share the dealer view across all hands. Each card asks
+    // _animState whether it's new / a hole-card reveal so only the cards
+    // that actually changed this turn animate.
     const view = pickDealerView(State.hands);
-    $('dealer-cards').innerHTML = view.cards.map(renderCard).join('');
+    $('dealer-cards').innerHTML = view.cards.map((c, idx) => {
+      const a = dealerCardAttrs(c, idx);
+      return renderCard(c, a.cls, a.style);
+    }).join('');
     $('dealer-val').textContent = view.valueLabel;
 
     // Build the seats: one per ACTUAL hand. Empty seats are locked.
@@ -200,9 +271,13 @@
           ${h.playerCards.length === 2 && State.balance >= h.bet ? `<button class="b-double gold">×2 +${h.bet}</button>` : ''}
         </div>
       ` : '';
+      const cardsHtml = h.playerCards.map((c, cardIdx) => {
+        const a = seatCardAttrs(c, i, cardIdx);
+        return renderCard(c, a.cls, a.style);
+      }).join('');
       return `
         <div class="seat-slot" data-handseat="${i}">
-          <div class="seat-cards">${h.playerCards.map(renderCard).join('')}</div>
+          <div class="seat-cards">${cardsHtml}</div>
           <div class="seat-val">${h.playerValue}</div>
           <div class="seat-banner ${bannerCls}">${bannerText}</div>
           <div class="bet-circle is-locked">
@@ -214,6 +289,10 @@
         </div>
       `;
     }).join('');
+
+    // Snapshot the card counts so the NEXT render knows which cards are
+    // pre-existing (and therefore shouldn't re-animate).
+    commitAnimState(view, handBySeat);
 
     // Wire per-seat buttons
     State.hands.forEach((h, i) => {
@@ -264,19 +343,29 @@
 
   function bannerClassFor(h) {
     if (h.status === 'active') return 'active';
+    // A hand that's done its part but is waiting for the dealer (because
+    // sibling hands are still being played) has no outcome yet — keep it
+    // neutral rather than flashing a win/lose colour prematurely.
+    if (!h.outcome) return 'active';
     if (h.outcome === 'win' || h.outcome === 'blackjack') return 'win';
     if (h.outcome === 'push') return 'push';
     return 'lose';
   }
   function bannerTextFor(h) {
     if (h.status === 'active') return 'YOUR MOVE';
+    // Settled outcomes first.
     switch (h.outcome) {
       case 'blackjack': return `BLACKJACK +${h.payout}`;
       case 'win':       return `WIN +${h.payout}`;
-      case 'lose':      return 'DEALER WINS';
+      case 'lose':      return h.status === 'player_bust' ? 'BUST' : 'DEALER WINS';
       case 'push':      return 'PUSH';
-      default:          return h.status;
     }
+    // No outcome yet — the player has finished this hand but the dealer
+    // hasn't resolved it (still playing other hands). Show a clear
+    // interim label instead of the raw DB status string.
+    if (h.status === 'player_stand') return 'STANDING…';
+    if (h.status === 'player_bust')  return 'BUST';
+    return 'WAITING…';
   }
 
   // ── Server interactions ───────────────────────────────────────────
@@ -304,8 +393,18 @@
         double: '/api/games/blackjack/double',
       })[kind];
       const r = await api(path, { method: 'POST', body: { handId } });
-      State.hands = State.hands.map(h => h.id === r.hand.id ? r.hand : h);
+      // Prefer the full round snapshot — when this action made the dealer
+      // play, every sibling hand was just settled server-side and needs
+      // to refresh. Fall back to patching the single hand for any old
+      // response shape.
+      if (Array.isArray(r.hands) && r.hands.length) {
+        State.hands = r.hands;
+      } else if (r.hand) {
+        State.hands = State.hands.map(h => h.id === r.hand.id ? r.hand : h);
+      }
       renderPlay();
+      // If the whole round is now settled, the balance changed (payouts).
+      if (State.hands.every(h => h.status !== 'active')) refreshBalance();
     } catch (e) { alert(friendly(e.message)); }
   }
 
@@ -330,6 +429,9 @@
       // Reconstruct lastBets from the active hands so REBET stays meaningful.
       State.lastBets = [0, 0, 0];
       r.hands.forEach((h, i) => { if (i < 3) State.lastBets[i] = h.bet; });
+      // Resuming a game on page load — suppress the deal-in animation so
+      // the already-dealt cards just appear instead of flying in.
+      resetAnimState(true);
       renderPlay();
       refreshBalance();
       return;

@@ -202,9 +202,32 @@ body {
   padding: 12px 14px; font-size: 18px;
   font-family: inherit; font-variant-numeric: tabular-nums;
   border-radius: 4px;
-  margin: 10px 0 14px;
+  margin: 10px 0 8px;
 }
 .w-amount-input:focus { outline: none; border-color: var(--gold); }
+
+/* Undo bet row — sits between the amount input and the message strip. */
+.w-undo-row {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+  margin-bottom: 10px;
+}
+.w-undo-row button {
+  background: rgba(255, 100, 100, 0.05);
+  border: 1px solid rgba(255, 100, 100, 0.32);
+  color: #ff9b9b;
+  padding: 9px 8px; font-size: 11px; letter-spacing: 2px;
+  cursor: pointer; font-family: inherit; font-weight: 700;
+  border-radius: 4px;
+  transition: background .12s, border-color .12s, transform .08s;
+}
+.w-undo-row button:hover:not(:disabled) {
+  background: rgba(255, 100, 100, 0.14);
+  border-color: rgba(255, 100, 100, 0.55);
+  transform: translateY(-1px);
+}
+.w-undo-row button:disabled {
+  opacity: 0.32; cursor: not-allowed;
+}
 
 .w-quick {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
@@ -351,6 +374,11 @@ body {
       </div>
 
       <input type="number" id="w-amount" class="w-amount-input" min="0" step="1" value="0" placeholder="0">
+
+      <div class="w-undo-row">
+        <button id="w-undo-last" disabled title="Refund the most recent bet you placed this round">↶ UNDO LAST</button>
+        <button id="w-undo-all"  disabled title="Refund every bet you placed this round">⨯ UNDO ALL</button>
+      </div>
 
       <div id="w-msg" class="w-msg"></div>
 
@@ -768,11 +796,69 @@ document.querySelectorAll('.w-bet').forEach(b => {
       state.balance = res.balance;
       state.totals  = res.totals;
       state.mine    = res.mine;
-      fmtBalance(); renderTotals(); renderMine();
+      fmtBalance(); renderTotals(); renderMine(); updateUndoButtons();
       // Keep the input but cap it at the new balance.
       setAmount(Math.min(getAmount(), state.balance));
       showMsg(`Bet ${fmt(amount)} on ${color}.`, 'ok');
     });
+  });
+});
+
+// Toggle the undo buttons based on (a) we're in the betting phase, and
+// (b) the user actually has at least one bet placed this round. Called
+// whenever phase or state.mine changes.
+function updateUndoButtons() {
+  const canUndo = state.phase === 'betting'
+    && ['gray','pink','blue','yellow'].some(c => Number(state.mine?.[c] || 0) > 0);
+  const a = document.getElementById('w-undo-last');
+  const b = document.getElementById('w-undo-all');
+  if (a) a.disabled = !canUndo;
+  if (b) b.disabled = !canUndo;
+}
+
+document.getElementById('w-undo-last').addEventListener('click', () => {
+  const btn = document.getElementById('w-undo-last');
+  btn.disabled = true;
+  state.socket.emit('wheel_undo_last', {}, (res) => {
+    if (res?.error) {
+      showMsg({
+        not_betting_phase: 'Betting already closed — too late to undo.',
+        no_bets_to_undo:   'You have no bets to undo.',
+      }[res.error] || res.error, 'error');
+      updateUndoButtons();
+      return;
+    }
+    state.balance = res.balance;
+    state.totals  = res.totals;
+    state.mine    = res.mine;
+    fmtBalance(); renderTotals(); renderMine(); updateUndoButtons();
+    if (res.undone) {
+      showMsg(`Undid ${fmt(res.undone.amount)} cr on ${res.undone.color}.`, 'ok');
+      flashBalanceDelta(res.undone.amount);
+    }
+  });
+});
+
+document.getElementById('w-undo-all').addEventListener('click', () => {
+  const btn = document.getElementById('w-undo-all');
+  btn.disabled = true;
+  state.socket.emit('wheel_undo_all', {}, (res) => {
+    if (res?.error) {
+      showMsg({
+        not_betting_phase: 'Betting already closed — too late to undo.',
+        no_bets_to_undo:   'You have no bets to undo.',
+      }[res.error] || res.error, 'error');
+      updateUndoButtons();
+      return;
+    }
+    state.balance = res.balance;
+    state.totals  = res.totals;
+    state.mine    = res.mine;
+    fmtBalance(); renderTotals(); renderMine(); updateUndoButtons();
+    if (res.refunded) {
+      showMsg(`Refunded ${fmt(res.refunded)} cr across all bets.`, 'ok');
+      flashBalanceDelta(res.refunded);
+    }
   });
 });
 
@@ -811,17 +897,22 @@ async function start() {
     state.result = s.result || null;
     drawWheel();
     renderPhase(); renderTotals(); renderHistory(); renderBetButtons();
+    updateUndoButtons();
   });
 
   sock.on('wheel_balance', (d) => {
     if (typeof d.balance === 'number') {
-      // Animate balance jumps so wins/losses register visually.
+      // Animate balance jumps so wins/losses register visually. Skip the
+      // floater for refunds/undos — those callers already flashed it
+      // with the exact undone amount via their cb handler.
       const delta = d.balance - state.balance;
       state.balance = d.balance;
-      if (Math.abs(delta) >= 1) flashBalanceDelta(delta);
+      // Only auto-flash for non-undo changes (place bet, payout). Undo
+      // flashes were already triggered with a friendlier message.
+      if (Math.abs(delta) >= 1 && !d._undo) flashBalanceDelta(delta);
     }
     state.mine = d.mine || state.mine;
-    fmtBalance(); renderTotals(); renderMine();
+    fmtBalance(); renderTotals(); renderMine(); updateUndoButtons();
   });
 
   sock.on('wheel_bet_update', (d) => {
@@ -834,8 +925,10 @@ async function start() {
     // Spin animation runs for the server's phase duration so the wheel
     // settles exactly when the server flips to 'result'.
     state.phaseEndsAt = d.phaseEndsAt;
+    state.phase = 'spinning';
     const dur = Math.max(800, d.phaseEndsAt - d.serverNow);
     spinTo(d.segment, dur);
+    updateUndoButtons();
   });
 
   sock.on('wheel_result', (d) => {

@@ -66,6 +66,19 @@ const state = {
   HISTORY_MAX: 20,
 };
 
+// Per-(userId, color) monotonic counter for generating unique refIds.
+// We can't recompute the seq from `pendingBets.filter(...).length` because
+// undoing a bet removes it from pendingBets — the next placement would
+// then reuse the previous refId and collide on the wallet uniqueness
+// index. This counter only goes up; it's cleared when a new round opens.
+const _seqCounter = new Map();
+function _nextSeq(userId, color) {
+  const k = `${userId}:${color}`;
+  const cur = _seqCounter.get(k) || 0;
+  _seqCounter.set(k, cur + 1);
+  return cur;
+}
+
 function snapshot() {
   return {
     roundId: state.roundId,
@@ -110,6 +123,7 @@ async function openBettingRound() {
   state.userBets = new Map();
   state.pendingBets = [];
   state.result = null;
+  _seqCounter.clear();
   return state.roundId;
 }
 
@@ -231,12 +245,10 @@ async function placeBet(userId, color, amount) {
   if (amount > 1_000_000) throw new Error('amount_too_large');
   if (!state.roundId) throw new Error('no_active_round');
 
-  // Wallet debit. Use a unique-per-(round,color,user,sequence) ref so the
-  // user can place multiple bets on the same colour in the same round
-  // without colliding on the wallet uniqueness index.
-  const seq = state.pendingBets.filter(b =>
-    b.userId === userId && b.color === color
-  ).length;
+  // Wallet debit. Use a monotonic counter per (user, color) so that an
+  // undone bet's seq isn't reused on the next placement — that would
+  // collide on the wallet uniqueness index (same ref_type/ref_id/reason).
+  const seq = _nextSeq(userId, color);
   const refId = `${state.roundId}:${color}:${userId}:${seq}`;
   const res = await adjustBalance(userId, -amount, 'bet', {
     refType: 'wheel', refId,
@@ -257,6 +269,98 @@ async function placeBet(userId, color, amount) {
     balance: res.balance,
     totals: { ...state.totals },
     mine: { ...mine },
+  };
+}
+
+// ── Undo / cancel pending bets ───────────────────────────────────────────
+// Both undo paths refund the wallet using reason='refund' with the SAME
+// ref_id as the original bet. Because the wallet uniqueness index keys
+// on (ref_type, ref_id, reason), the 'bet' debit and the 'refund' credit
+// coexist; the index also prevents a second refund of the same bet.
+//
+// Only valid during the betting phase — once the wheel starts spinning,
+// stakes are locked.
+
+// Remove a single bet (identified by its unique refId) from the live
+// in-memory tracking and decrement the colour totals + the user's stake.
+// Returns the removed bet object, or null if it wasn't found (e.g. a
+// concurrent undo already pulled it).
+function _removePendingBet(userId, refId) {
+  const idx = state.pendingBets.findIndex(b => b.refId === refId);
+  if (idx < 0) return null;
+  const bet = state.pendingBets[idx];
+  state.pendingBets.splice(idx, 1);
+  state.totals[bet.color] = Math.max(0, state.totals[bet.color] - bet.amount);
+  const mine = state.userBets.get(userId);
+  if (mine) {
+    mine[bet.color] = Math.max(0, mine[bet.color] - bet.amount);
+    if (!Object.values(mine).some(v => v > 0)) state.userBets.delete(userId);
+  }
+  return bet;
+}
+
+async function undoLastBet(userId) {
+  if (state.phase !== 'betting') throw new Error('not_betting_phase');
+  // Identify the user's most recent bet by value (not index) so the
+  // refId stays valid across the await even if pendingBets mutates.
+  let target = null;
+  for (let i = state.pendingBets.length - 1; i >= 0; i--) {
+    if (state.pendingBets[i].userId === userId) { target = state.pendingBets[i]; break; }
+  }
+  if (!target) throw new Error('no_bets_to_undo');
+
+  const res = await adjustBalance(userId, target.amount, 'refund', {
+    refType: 'wheel', refId: target.refId,
+    metadata: { color: target.color, undo: 'last', round: state.roundId },
+  });
+
+  // Remove by refId AFTER the wallet credit lands — robust to any
+  // concurrent reshuffling of the pendingBets array.
+  _removePendingBet(userId, target.refId);
+
+  return {
+    balance: res.balance,
+    totals: { ...state.totals },
+    mine: state.userBets.get(userId) || { gray: 0, pink: 0, blue: 0, yellow: 0 },
+    undone: { color: target.color, amount: target.amount },
+  };
+}
+
+async function undoAllBets(userId) {
+  if (state.phase !== 'betting') throw new Error('not_betting_phase');
+  // Snapshot the user's bets up front; refund each by its unique refId.
+  // Index-free so concurrent placements/undos can't corrupt the walk.
+  const mineBets = state.pendingBets.filter(b => b.userId === userId);
+  if (!mineBets.length) throw new Error('no_bets_to_undo');
+
+  let lastBalance = null;
+  let totalRefund = 0;
+  for (const b of mineBets) {
+    try {
+      const res = await adjustBalance(userId, b.amount, 'refund', {
+        refType: 'wheel', refId: b.refId,
+        metadata: { color: b.color, undo: 'all', round: state.roundId },
+      });
+      lastBalance = res.balance;
+      const removed = _removePendingBet(userId, b.refId);
+      if (removed) totalRefund += removed.amount;
+    } catch (e) {
+      if (e.message !== 'duplicate_transaction') throw e;
+      // Already refunded elsewhere — still drop it from local tracking.
+      _removePendingBet(userId, b.refId);
+    }
+  }
+  state.userBets.delete(userId);
+
+  // If every refund hit duplicate_transaction we never got a balance —
+  // read it fresh so the client still updates correctly.
+  if (lastBalance == null) lastBalance = await getBalance(userId);
+
+  return {
+    balance: lastBalance,
+    totals: { ...state.totals },
+    mine: { gray: 0, pink: 0, blue: 0, yellow: 0 },
+    refunded: totalRefund,
   };
 }
 
@@ -282,5 +386,5 @@ module.exports = {
   SEGMENT_LAYOUT, SEGMENT_COUNT, COLOR_MULT, COLORS, PHASE_MS,
   state, snapshot, userBetSnapshot,
   openBettingRound, beginSpin, settleSpin,
-  placeBet, recentHistory,
+  placeBet, undoLastBet, undoAllBets, recentHistory,
 };

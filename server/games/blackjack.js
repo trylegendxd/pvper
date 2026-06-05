@@ -100,6 +100,19 @@ async function _viewWithRound(client, hand) {
   return publicViewWithDealer(hand, ctx.dealerCards, ctx.dealerPlayed, anyActive);
 }
 
+// Build views for EVERY hand in the round, ordered by creation. This is
+// what the action endpoints return so the client can refresh sibling
+// hands that got settled when the dealer played (otherwise, standing on
+// the last active hand would settle the others server-side but leave
+// them stale on the client until a page reload).
+async function _allRoundViews(client, hand) {
+  const ctx = await _loadRoundContext(client, hand);
+  const anyActive = ctx.siblings.some(s => s.status === 'active');
+  return ctx.siblings.map(h =>
+    publicViewWithDealer(h, ctx.dealerCards, ctx.dealerPlayed, anyActive)
+  );
+}
+
 // ── Multi-hand start ──────────────────────────────────────────────────────
 // Atomically: validates count + balance, opens game_sessions, deducts bets,
 // shuffles ONE deck, deals 2 cards to each hand and 2 to the shared dealer,
@@ -249,7 +262,9 @@ async function hit(userId, handId) {
     }
 
     const fresh = (await client.query(`SELECT * FROM blackjack_hands WHERE id=$1`, [handId])).rows[0];
-    return _viewWithRound(client, fresh);
+    const handView  = await _viewWithRound(client, fresh);
+    const handViews = await _allRoundViews(client, fresh);
+    return { hand: handView, hands: handViews };
   });
 }
 
@@ -273,7 +288,9 @@ async function stand(userId, handId) {
     await _maybePlayDealer(client, hand, round);
 
     const fresh = (await client.query(`SELECT * FROM blackjack_hands WHERE id=$1`, [handId])).rows[0];
-    return _viewWithRound(client, fresh);
+    const handView  = await _viewWithRound(client, fresh);
+    const handViews = await _allRoundViews(client, fresh);
+    return { hand: handView, hands: handViews };
   });
 }
 
@@ -326,7 +343,9 @@ async function doubleDown(userId, handId) {
     await _maybePlayDealer(client, hand, round);
 
     const fresh = (await client.query(`SELECT * FROM blackjack_hands WHERE id=$1`, [handId])).rows[0];
-    return _viewWithRound(client, fresh);
+    const handView  = await _viewWithRound(client, fresh);
+    const handViews = await _allRoundViews(client, fresh);
+    return { hand: handView, hands: handViews };
   });
 }
 

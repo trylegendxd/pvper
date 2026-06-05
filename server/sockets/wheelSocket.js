@@ -144,6 +144,43 @@ function attach(io) {
         cb?.({ error: e.message || 'bet_failed' });
       }
     });
+
+    socket.on('wheel_undo_last', async (_unused, cb) => {
+      try {
+        const result = await wheel.undoLastBet(socket.data.userId);
+        cb?.({
+          ok: true, balance: result.balance,
+          totals: result.totals, mine: result.mine, undone: result.undone,
+        });
+        // Broadcast the updated colour totals to every viewer (the live
+        // bet pool just shrank), then push this user's fresh balance +
+        // personal stake.
+        io.of('/wheel').emit('wheel_bet_update', {
+          totals: result.totals,
+          phaseEndsAt: wheel.state.phaseEndsAt,
+        });
+        pushUserState(socket.data.userId, socket.id).catch(() => {});
+      } catch (e) {
+        cb?.({ error: e.message || 'undo_failed' });
+      }
+    });
+
+    socket.on('wheel_undo_all', async (_unused, cb) => {
+      try {
+        const result = await wheel.undoAllBets(socket.data.userId);
+        cb?.({
+          ok: true, balance: result.balance,
+          totals: result.totals, mine: result.mine, refunded: result.refunded,
+        });
+        io.of('/wheel').emit('wheel_bet_update', {
+          totals: result.totals,
+          phaseEndsAt: wheel.state.phaseEndsAt,
+        });
+        pushUserState(socket.data.userId, socket.id).catch(() => {});
+      } catch (e) {
+        cb?.({ error: e.message || 'undo_failed' });
+      }
+    });
   });
 
   // Boot the loop. Wrapped in setTimeout so it doesn't run before the
