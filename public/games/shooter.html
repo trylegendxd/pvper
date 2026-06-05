@@ -309,18 +309,6 @@ input:focus { border-color:var(--accent); }
   position:absolute; left:-1px; top:-1px; width:2px; height:2px;
   background:#00ffff; border-radius:50%; display:none;
 }
-/* Tap-fire readiness pip — a tiny 4×4 dot 18 px above the crosshair.
-   Green + softly glowing when first-shot accuracy is armed, hidden
-   when mid-burst, moving, or airborne. The .ready class is toggled
-   per-frame in the engine's update loop. */
-#ch-readypip {
-  position:absolute; left:-2px; top:-22px; width:4px; height:4px;
-  background:#3dd96b; border-radius:50%;
-  box-shadow:0 0 5px rgba(61,217,107,0.85);
-  opacity:0; transition: opacity .12s ease;
-  pointer-events:none;
-}
-#ch-readypip.ready { opacity: 0.95; }
 
 /* Kill notify */
 #hud-kill-notify { top:50%;left:50%;transform:translate(-50%,-70px);background:rgba(0,0,0,.75);border:1px solid #4b9eff;padding:6px 20px;font-size:18px;font-weight:bold;color:#4b9eff;letter-spacing:2px;border-radius:2px;display:none; }
@@ -1002,10 +990,6 @@ input:focus { border-color:var(--accent); }
     <div class="ch-line" id="ch-left"></div>
     <div class="ch-line" id="ch-right"></div>
     <div id="ch-dot"></div>
-    <!-- Tap-fire readiness pip: green = first-shot accuracy is armed,
-         dim = mid-burst / moving / airborne. Sits just above the
-         crosshair. Toggled per-frame in _update. -->
-    <div id="ch-readypip" title="First-shot ready"></div>
   </div>
 
   <div class="hud-el" id="hud-hit-marker"></div>
@@ -1146,7 +1130,7 @@ input:focus { border-color:var(--accent); }
 
     <div class="setting-row">
       <div class="sr-head"><label>Field of view</label><span class="sr-val" id="sv-fov">75°</span></div>
-      <input type="range" id="set-fov" min="60" max="80" step="1" value="75">
+      <input type="range" id="set-fov" min="60" max="100" step="1" value="75">
     </div>
 
     <div class="setting-row">
@@ -3109,13 +3093,18 @@ const GameEngine = {
     if (!hitPoint || !normal) return;
     // Only place holes on vertical surfaces
     if (Math.abs(normal.y) > 0.5) return;
-    const geo  = new THREE.PlaneGeometry(0.09, 0.09);
-    const mat  = new THREE.MeshBasicMaterial({
+    // Shared geometry + material across all bullet holes — every hole is
+    // identical, so allocating a fresh pair per shot just churned the GC
+    // and GPU buffers during sustained auto-fire. Created once and reused
+    // for the engine's lifetime; the per-match cleanup only unhooks the
+    // meshes from the scene, it never disposes these shared assets.
+    if (!this._bhGeo) this._bhGeo = new THREE.PlaneGeometry(0.09, 0.09);
+    if (!this._bhMat) this._bhMat = new THREE.MeshBasicMaterial({
       color: 0x0a0500, transparent: true, opacity: 0.9,
       depthWrite: false, polygonOffset: true,
       polygonOffsetFactor: -4, polygonOffsetUnits: -4,
     });
-    const hole = new THREE.Mesh(geo, mat);
+    const hole = new THREE.Mesh(this._bhGeo, this._bhMat);
     hole.position.set(
       hitPoint.x + normal.x * 0.012,
       hitPoint.y + normal.y * 0.012,
@@ -3130,10 +3119,8 @@ const GameEngine = {
     this.scene.add(hole);
     this._bulletHoles.push(hole);
     if (this._bulletHoles.length > 100) {
-      const old = this._bulletHoles.shift();
-      this.scene.remove(old);
-      old.geometry.dispose();
-      old.material.dispose();
+      // Shared assets — just unhook the oldest mesh from the scene.
+      this.scene.remove(this._bulletHoles.shift());
     }
   },
 
@@ -3334,11 +3321,9 @@ const GameEngine = {
 
   buildArena(coverBoxes, arenaSize = 40, spawnPoints = null) {
     // Clear bullet holes from previous match
-    for (const h of this._bulletHoles) {
-      this.scene.remove(h);
-      h.geometry.dispose();
-      h.material.dispose();
-    }
+    // Holes share one geometry/material (see addBulletHole) — only unhook
+    // them from the scene here; never dispose the shared assets.
+    for (const h of this._bulletHoles) this.scene.remove(h);
     this._bulletHoles = [];
 
     this._arenaObjects.forEach(o => this.scene.remove(o));
@@ -4307,24 +4292,6 @@ const GameEngine = {
       if (Math.abs(this._yawKick)   < 0.0005) this._yawKick   = 0;
     }
 
-    // Tap-fire readiness pip — green when the player's next shot will
-    // benefit from the first-shot accuracy bonus. Throttle to ~20 Hz so
-    // we don't thrash style on every frame.
-    {
-      const now = performance.now();
-      if (!this._lastReadyPipAt || now - this._lastReadyPipAt > 50) {
-        this._lastReadyPipAt = now;
-        const pip = document.getElementById('ch-readypip');
-        if (pip) {
-          const ready = (this.currentWeapon !== 'knife') && isFirstShotReady(this);
-          if (ready !== this._readyPipOn) {
-            this._readyPipOn = ready;
-            pip.classList.toggle('ready', ready);
-          }
-        }
-      }
-    }
-
     // Killcam takes over the camera while it's playing the killer's POV.
     // Skip the local-player camera update so we don't fight its RAF tick.
     if (!(typeof Killcam !== 'undefined' && Killcam._active)) {
@@ -4499,11 +4466,9 @@ const GameEngine = {
     this._oppCurYaw  = 0;
     this.isDead = false;
     // Clear bullet holes from any previous session
-    for (const h of this._bulletHoles) {
-      this.scene.remove(h);
-      h.geometry.dispose();
-      h.material.dispose();
-    }
+    // Holes share one geometry/material (see addBulletHole) — only unhook
+    // them from the scene here; never dispose the shared assets.
+    for (const h of this._bulletHoles) this.scene.remove(h);
     this._bulletHoles = [];
     this.opponentGroup.visible = false;
     this.opponentNameTagEl.style.display = 'none';
@@ -4535,11 +4500,9 @@ const GameEngine = {
     this._arenaObjects.forEach(o => this.scene.remove(o));
     this._arenaObjects = [];
     this._staticBoxes  = [];
-    for (const h of this._bulletHoles) {
-      this.scene.remove(h);
-      h.geometry.dispose();
-      h.material.dispose();
-    }
+    // Holes share one geometry/material (see addBulletHole) — only unhook
+    // them from the scene here; never dispose the shared assets.
+    for (const h of this._bulletHoles) this.scene.remove(h);
     this._bulletHoles = [];
     this.isDead = false;
   },
@@ -4754,7 +4717,7 @@ const GameEngine = {
   },
 
   setFOV(f) {
-    this._fov = Math.max(50, Math.min(80, +f || 75));
+    this._fov = Math.max(50, Math.min(100, +f || 75));
     if (this.camera) {
       this.camera.fov = this._fov;
       this.camera.updateProjectionMatrix();
