@@ -61,28 +61,18 @@ body {
   width: 100%; height: 100%; display: block;
   filter: drop-shadow(0 6px 22px rgba(0,0,0,0.55));
 }
-/* Pointer sits at the TOP of the wheel and points DOWN — this matches
-   drawWheel()/spinTo()'s math, which puts the winning segment at the
-   12 o'clock position. The earlier bottom-mounted pointer was off by
-   180° and always showed the segment opposite the announced colour. */
+/* Grey downward pointer at the BOTTOM of the ring (6 o'clock), matching
+   the reference design. drawWheel()/spinTo() land the winning segment at
+   the bottom so the colour under this marker is the one that's announced. */
 .w-pointer {
-  position: absolute; left: 50%; top: -2px;
+  position: absolute; left: 50%; bottom: 30px;
   transform: translateX(-50%);
   width: 0; height: 0;
-  border-left: 15px solid transparent;
-  border-right: 15px solid transparent;
-  border-top: 28px solid #ffce4a;
-  filter: drop-shadow(0 3px 5px rgba(0,0,0,0.85));
+  border-left: 11px solid transparent;
+  border-right: 11px solid transparent;
+  border-top: 18px solid #aeb6c0;
+  filter: drop-shadow(0 2px 3px rgba(0,0,0,0.7));
   z-index: 3;
-}
-/* Glowing dot at the tip of the pointer — sells the "this is what
-   landed" moment with a small bright marker. */
-.w-pointer::after {
-  content: ''; position: absolute;
-  left: -4px; top: 22px;
-  width: 8px; height: 8px; border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 0 8px rgba(255, 206, 74, 0.95);
 }
 .w-center-info {
   position: absolute; inset: 0;
@@ -271,7 +261,7 @@ body {
   writing-mode: horizontal-tb;
 }
 .w-strip-bar {
-  width: 18px; height: 22px; border-radius: 2px;
+  width: 28px; height: 7px; border-radius: 3px;
   position: relative; flex-shrink: 0;
 }
 .w-strip-bar.fresh { box-shadow: 0 0 8px currentColor; }
@@ -468,133 +458,46 @@ const canvas = document.getElementById('w-canvas');
 const ctx    = canvas.getContext('2d');
 
 // Multiplier lookup so we don't recreate the table on every draw.
-const MULT_FOR = { gray: 2, pink: 3, blue: 5, yellow: 50 };
+// Ring geometry (canvas is 1000×1000, shown at 500 → 2× downscale).
+const RING_R       = 450;    // centreline radius of the tick ring
+const TICK_THICK   = 22;     // radial thickness of each tick
+const TICK_GAP_RAD = 0.052;  // angular gap between ticks
 
+// Draw the wheel as a thin ring of discrete rounded colour ticks — one
+// per segment — matching the reference design. No filled disc, gold ring,
+// gradient or in-ring numbers; the centre stays empty. Each tick is a
+// short round-capped arc stroke, which gives the rounded-dash look.
 function drawWheel() {
   const w = canvas.width, h = canvas.height;
   const cx = w / 2, cy = h / 2;
-  // Radii — order from outside in:
-  //   outer gold accent ring (decoration)
-  //   inner dark gap
-  //   coloured segment ring (this is where the multipliers live)
-  //   inner dark hub with subtle gradient
-  const outerR     = Math.min(cx, cy) - 14;
-  const goldOuterR = outerR;
-  const goldInnerR = outerR - 12;
-  const segOuterR  = goldInnerR - 4;
-  const segInnerR  = segOuterR - 86;
-  const hubR       = segInnerR - 6;
-
   ctx.clearRect(0, 0, w, h);
   if (!state.layout?.length) return;
 
-  // ── Outer gold accent ring ────────────────────────────────────────────
-  ctx.beginPath();
-  ctx.arc(cx, cy, goldOuterR, 0, Math.PI * 2);
-  ctx.arc(cx, cy, goldInnerR, Math.PI * 2, 0, true);
-  const goldGrad = ctx.createRadialGradient(cx, cy, goldInnerR, cx, cy, goldOuterR);
-  goldGrad.addColorStop(0,    '#8a6018');
-  goldGrad.addColorStop(0.45, '#ffce4a');
-  goldGrad.addColorStop(1,    '#7a4d10');
-  ctx.fillStyle = goldGrad;
-  ctx.fill('evenodd');
-  // Black hairline between gold ring and the coloured segments.
-  ctx.beginPath();
-  ctx.arc(cx, cy, goldInnerR, 0, Math.PI * 2);
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = 'rgba(0,0,0,0.85)';
-  ctx.stroke();
-
-  // ── Coloured segments ────────────────────────────────────────────────
-  // We want segment 0 to start at the TOP (angle -π/2). Rotate the whole
-  // wheel by state.currentAngle on top of that, drawing each ring slice.
   const N = state.layout.length;
   const seg = (Math.PI * 2) / N;
+  const half = Math.max(0.005, (seg - TICK_GAP_RAD) / 2);
+  ctx.lineWidth = TICK_THICK;
+  ctx.lineCap = 'round';
   for (let i = 0; i < N; i++) {
-    const a0 = -Math.PI / 2 + state.currentAngle + i * seg - seg / 2;
-    const a1 = a0 + seg;
-    const c  = state.layout[i];
-    const col = COLORS[c] || COLORS.gray;
+    // Segment i's centre angle. Base -π/2 + currentAngle keeps the spin
+    // maths consistent with spinTo (which lands the winner at the bottom).
+    const center = -Math.PI / 2 + state.currentAngle + i * seg;
+    const col = COLORS[state.layout[i]] || COLORS.gray;
     ctx.beginPath();
-    ctx.arc(cx, cy, segOuterR, a0, a1);
-    ctx.arc(cx, cy, segInnerR, a1, a0, true);
-    ctx.closePath();
-    // Subtle radial gradient inside each segment so the ring has a bit
-    // of depth instead of looking like a flat decal.
-    const radGrad = ctx.createRadialGradient(cx, cy, segInnerR, cx, cy, segOuterR);
-    radGrad.addColorStop(0,    col.hex);
-    radGrad.addColorStop(0.75, col.hex);
-    radGrad.addColorStop(1,    shade(col.hex, -0.18));
-    ctx.fillStyle = radGrad;
-    ctx.fill();
-    // Tiny gap line between segments for a more banded look.
-    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-    ctx.lineWidth = 1.2;
+    ctx.arc(cx, cy, RING_R, center - half, center + half);
+    ctx.strokeStyle = col.hex;
     ctx.stroke();
-
-    // Multiplier label inside each segment. Rotated tangentially so it
-    // reads naturally as the wheel spins past. Yellow gets darker text
-    // (since the background is light); other colours get bright text.
-    const mid = (a0 + a1) / 2;
-    const labelR = (segOuterR * 0.62) + (segInnerR * 0.38); // closer to the outside
-    const lx = cx + Math.cos(mid) * labelR;
-    const ly = cy + Math.sin(mid) * labelR;
-    ctx.save();
-    ctx.translate(lx, ly);
-    ctx.rotate(mid + Math.PI / 2);  // tangential
-    const mult = MULT_FOR[c];
-    const isYellow = c === 'yellow';
-    ctx.fillStyle = isYellow ? '#1a1208' : 'rgba(255,255,255,0.95)';
-    // Canvas is 1000×1000 displayed at 500×500 (2× downscale), so these
-    // pixel sizes are roughly halved on screen — 32/44 here renders as
-    // ~16/22 px display, which is what fits cleanly inside one segment.
-    ctx.font = `bold ${isYellow ? 44 : 32}px Rajdhani, sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(`${mult}×`, 0, 0);
-    ctx.restore();
   }
-
-  // ── Inner hub: dark with subtle gradient + thin ring ─────────────────
-  const hubGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, hubR);
-  hubGrad.addColorStop(0,   '#1a2230');
-  hubGrad.addColorStop(0.7, '#0a0e16');
-  hubGrad.addColorStop(1,   '#000');
-  ctx.beginPath();
-  ctx.arc(cx, cy, hubR, 0, Math.PI * 2);
-  ctx.fillStyle = hubGrad;
-  ctx.fill();
-  // Inner gold accent ring (small, sits just inside the segments).
-  ctx.beginPath();
-  ctx.arc(cx, cy, hubR + 3, 0, Math.PI * 2);
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = 'rgba(255, 206, 74, 0.55)';
-  ctx.stroke();
-}
-
-// Darken / lighten a hex colour by `amt` (-1..1). Used for the segment
-// gradient so the outside of each segment is a touch darker.
-function shade(hex, amt) {
-  const n = parseInt(hex.replace('#',''), 16);
-  let r = (n >> 16) & 0xff, g = (n >> 8) & 0xff, b = n & 0xff;
-  const k = 1 + amt;
-  r = Math.max(0, Math.min(255, Math.round(r * k)));
-  g = Math.max(0, Math.min(255, Math.round(g * k)));
-  b = Math.max(0, Math.min(255, Math.round(b * k)));
-  return '#' + ((r << 16) | (g << 8) | b).toString(16).padStart(6, '0');
 }
 
 function spinTo(segmentIndex, durationMs) {
   if (!state.layout?.length) return;
   const N = state.layout.length;
   const seg = (Math.PI * 2) / N;
-  // We want, after the spin, segment `segmentIndex` to be centred at the
-  // pointer position (top of canvas = angle -π/2). The angle expression
-  // for segment i's centre in the rotated wheel is:
-  //     -π/2 + currentAngle + i*seg   (centre at a0 + seg/2 ⇒ i*seg)
-  // To put that at -π/2 we need currentAngle ≡ -i*seg (mod 2π).
-  // Add spin rotations so the animation feels real.
-  const target = -segmentIndex * seg;
+  // Land segment `segmentIndex` under the pointer at the BOTTOM (+π/2).
+  // Segment i's centre angle is (-π/2 + currentAngle + i*seg), so to put
+  // segmentIndex at +π/2 we need currentAngle ≡ π - segmentIndex*seg.
+  const target = Math.PI - segmentIndex * seg;
   // Normalize current angle into (-π, π] for stable maths.
   const cur = state.currentAngle % (Math.PI * 2);
   let delta = ((target - cur) % (Math.PI * 2));

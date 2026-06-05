@@ -92,7 +92,10 @@
       // Result word + glow
       const cw = $('center-word');
       cw.classList.add('show');
-      if (!roundWinner) {
+      // The server sends roundWinner as 'a' | 'b' | 'tie'. 'tie' is a
+      // truthy string, so a plain `!roundWinner` check used to fall
+      // through and mis-render a tie as a LOSE — detect it explicitly.
+      if (!roundWinner || roundWinner === 'tie') {
         cw.classList.add('tie');
         cw.textContent = 'TIE';
         setRoundStatus(`Tie · ${yourChoice} vs ${oppChoice}`);
