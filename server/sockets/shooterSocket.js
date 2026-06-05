@@ -2540,6 +2540,10 @@ function attach(io) {
         yOffset: state.yOffset || 0, crouching: !!state.crouching,
         senderSockId: socket.id,
         senderTeam: state.team || null,
+        // Carry the current weapon so a remote model that missed the
+        // opponent_weapon_switch event (late join, packet loss) can still
+        // correct itself from movement. Server-authoritative value.
+        weapon: state.weapon || DEFAULT_WEAPON,
       };
       if (match.isTeamMatch) {
         for (const id of match.playerIds) {
@@ -2571,6 +2575,15 @@ function attach(io) {
 
       state.weapon = weapon;
       state.lastWeaponSwitchAt = now;
+      // Tell every OTHER player in the match so their third-person model of
+      // this player can swap to the matching weapon. The name was already
+      // validated against WEAPONS + the lobby weaponMode above, so we're
+      // not trusting a raw client string here. Works for both 1v1 and team
+      // modes — just skip the switching socket.
+      const wsPayload = { socketId: socket.id, weapon, team: state.team || null };
+      for (const sid of match.playerIds) {
+        if (sid !== socket.id) ns.to(sid).emit('opponent_weapon_switch', wsPayload);
+      }
       Replay.log(match.id, 'weapon_switch', { s: socket.id, w: weapon });
     });
 
@@ -2659,6 +2672,13 @@ function attach(io) {
         };
         for (const sid of match.playerIds) {
           if (sid !== socket.id) ns.to(sid).emit('remote_shot', shotPayload);
+        }
+      } else if (W.melee) {
+        // Knife swings have no muzzle/audio signature, but enemies should
+        // still SEE a slash. Purely cosmetic + additive — no gameplay
+        // impact, and clients that ignore it just don't animate.
+        for (const sid of match.playerIds) {
+          if (sid !== socket.id) ns.to(sid).emit('remote_melee', { shooterId: socket.id });
         }
       }
 

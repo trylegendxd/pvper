@@ -2725,8 +2725,6 @@ const GameEngine = {
     const pants    = new THREE.MeshLambertMaterial({ color: 0x3d4220 });
     const boots    = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
     const helmetM  = new THREE.MeshLambertMaterial({ color: accentDark });
-    const gunMat   = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
-    const gunGrip  = new THREE.MeshLambertMaterial({ color: 0x3a2a18 });
 
     const box = (w,h,d,mat) => new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat);
     const cyl = (rTop, rBot, h, segs, mat) =>
@@ -2747,6 +2745,10 @@ const GameEngine = {
     brim.position.y = 1.82;
     const strap = box(0.34, 0.03, 0.03, boots);
     strap.position.set(0, 1.77, 0.16);
+    // Dark visor band across the brow/eyes — reads as a helmeted soldier
+    // from medium distance, where the small facial features blur out.
+    const visor = box(0.31, 0.085, 0.05, boots);
+    visor.position.set(0, 1.745, 0.16);
 
     // Eyes
     const eyeL = box(0.06, 0.04, 0.02, eyeWhite);
@@ -2791,6 +2793,11 @@ const GameEngine = {
     belt.position.y = 0.82;
     const buckle = box(0.08, 0.06, 0.04, helmetM);
     buckle.position.set(0, 0.82, 0.20);
+    // Backpack — a team-accent block on the back so the player's team is
+    // readable from behind and the silhouette is fuller. Sits inside the
+    // server z hitbox (±0.4).
+    const backpack = box(0.34, 0.46, 0.16, vestDark);
+    backpack.position.set(0, 1.16, -0.26);
 
     // ── ARMS — cylinders for natural human shape ───────────────────
     const lUpper = cyl(0.08, 0.10, 0.36, 12, uniform);
@@ -2807,27 +2814,15 @@ const GameEngine = {
     const rHand  = box(0.10, 0.10, 0.10, skin);
     rHand.position.set( 0.30, 0.84, 0.36);
 
-    // ── HELD RIFLE (chunky boxes only) ───────────────────────
-    const gunGrp = new THREE.Group();
-    gunGrp.position.set(0.00, 1.00, 0.55);
-    // Receiver
-    const gRecv = box(0.10, 0.10, 0.42, gunMat);
-    // Barrel
-    const gBar  = box(0.06, 0.06, 0.36, gunMat);
-    gBar.position.set(0, 0.02, -0.36);
-    // Handguard (wood)
-    const gHg   = box(0.10, 0.06, 0.20, gunGrip);
-    gHg.position.set(0, -0.04, -0.20);
-    // Stock
-    const gStk  = box(0.08, 0.08, 0.22, gunGrip);
-    gStk.position.set(0, -0.02, 0.28);
-    // Magazine
-    const gMag  = box(0.08, 0.18, 0.06, gunMat);
-    gMag.position.set(0, -0.13, -0.02);
-    // Front sight
-    const gSig  = box(0.02, 0.06, 0.02, gunMat);
-    gSig.position.set(0, 0.06, -0.50);
-    gunGrp.add(gRecv, gBar, gHg, gStk, gMag, gSig);
+    // ── HELD WEAPON SOCKET ───────────────────────────────────
+    // A stable hand/weapon socket. The actual weapon model is attached
+    // separately via _attachThirdPersonWeapon() so it can change to match
+    // whatever the player is currently holding. Position/rotation match
+    // the old fixed rifle so the pose is unchanged.
+    const weaponSocket = new THREE.Group();
+    weaponSocket.name = 'weaponSocket';
+    weaponSocket.position.set(0.00, 1.00, 0.55);
+    weaponSocket.rotation.set(0, 0, 0);
 
     // ── LEGS — cylinders give a much more humanoid silhouette ─────
     const lThigh = cyl(0.11, 0.13, 0.46, 12, pants);
@@ -2843,11 +2838,12 @@ const GameEngine = {
     const rBoot  = box(0.22, 0.10, 0.30, boots);
     rBoot.position.set( 0.13, -0.02, 0.04);
 
-    // Shoulder pads — flat plates in the team accent colour.
-    const shoulderL = box(0.20, 0.10, 0.22, vest);
-    shoulderL.position.set(-0.42, 1.42, 0);
-    const shoulderR = box(0.20, 0.10, 0.22, vest);
-    shoulderR.position.set( 0.42, 1.42, 0);
+    // Shoulder pads — flat plates in the team accent colour. Pulled in a
+    // touch (±0.40) so the silhouette stays closer to the body hitbox.
+    const shoulderL = box(0.18, 0.10, 0.22, vest);
+    shoulderL.position.set(-0.40, 1.42, 0);
+    const shoulderR = box(0.18, 0.10, 0.22, vest);
+    shoulderR.position.set( 0.40, 1.42, 0);
 
     // Helmet stripe — a thin band of team accent across the brow.
     const stripe = box(0.38, 0.04, 0.04, vest);
@@ -2860,14 +2856,14 @@ const GameEngine = {
     legR.add(rThigh, rShin, rBoot);
 
     group.add(
-      head, neck, helmet, brim, strap, stripe,
+      head, neck, helmet, brim, strap, visor, stripe,
       eyeL, eyeR, pupL, pupR, browL, browR,
       mouthBg, teethBar, div1, div2, div3,
       earL, earR,
-      chest, tacVest, waist, pouchL, pouchR, belt, buckle,
+      chest, tacVest, waist, pouchL, pouchR, belt, buckle, backpack,
       shoulderL, shoulderR,
       lUpper, rUpper, lFore, rFore, lHand, rHand,
-      gunGrp,
+      weaponSocket,
       legL, legR,
     );
 
@@ -2875,6 +2871,12 @@ const GameEngine = {
     // walk the swing without needing engine-level state.
     group.userData.legL = legL;
     group.userData.legR = legR;
+    // Modular held-weapon plumbing. Everyone starts with a rifle; the
+    // real weapon is corrected by opponent_weapon_switch / opponent_move
+    // packets once it's known.
+    group.userData.weaponSocket  = weaponSocket;
+    group.userData.currentWeapon = null;
+    this._attachThirdPersonWeapon(group, 'rifle');
     if (assignToOpp) {
       this._oppLegL = legL;
       this._oppLegR = legR;
@@ -2888,6 +2890,129 @@ const GameEngine = {
   _buildOpponentMesh() {
     this.opponentGroup = this._buildPlayerMesh(null, /*assignToOpp*/ true);
     this.scene.add(this.opponentGroup);
+  },
+
+  // ── Third-person weapon models ─────────────────────────────────────────
+  // Lightweight box/cylinder weapons shown in REMOTE players' hands (never
+  // the local first-person view). They only need to read at a distance, so
+  // they deliberately DON'T load the heavy first-person FBX — that would be
+  // far more expensive to instance per remote player. Built in the hand
+  // socket's local space with the muzzle pointing toward -Z (forward), the
+  // same convention the old hard-coded rifle used.
+  //
+  // Materials/geometries are created per-model (not shared) because the
+  // swap logic in _attachThirdPersonWeapon and the cleanup in
+  // _disposeOtherPlayers both dispose meshes as they go — sharing would let
+  // one player's removal free another's weapon. Within a single model the
+  // same material instance is reused across boxes, which is the safe kind
+  // of reuse. Returns a THREE.Group; for guns userData.muzzle is a hidden
+  // flash mesh at the barrel tip.
+  _buildThirdPersonWeaponModel(key) {
+    const g = new THREE.Group();
+    const box = (w, h, d, mat) => new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    const cyl = (rt, rb, h, seg, mat) =>
+      new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg || 10), mat);
+    const dark  = new THREE.MeshLambertMaterial({ color: 0x191919 });
+    const grip  = new THREE.MeshLambertMaterial({ color: 0x3a2a18 });
+    const steel = new THREE.MeshLambertMaterial({ color: 0xb9c2cb });
+    const glass = new THREE.MeshLambertMaterial({ color: 0x223040 });
+    // Bright UNLIT flash so it reads regardless of scene lighting.
+    const addMuzzle = (z) => {
+      const m = box(0.10, 0.10, 0.06, new THREE.MeshBasicMaterial({ color: 0xffdd66 }));
+      m.position.set(0, 0.02, z);
+      m.visible = false;
+      g.add(m);
+      g.userData.muzzle = m;
+    };
+
+    switch (key) {
+      case 'pistol': {
+        // Compact: short slide + grip, nudged toward the right hand.
+        const slide = box(0.07, 0.08, 0.24, dark); slide.position.set(0.04, 0, -0.04);
+        const grp   = box(0.07, 0.15, 0.09, grip); grp.position.set(0.04, -0.11, 0.05); grp.rotation.x = 0.2;
+        const tip   = box(0.04, 0.04, 0.06, dark); tip.position.set(0.04, 0.01, -0.18);
+        g.add(slide, grp, tip);
+        addMuzzle(-0.20);
+        break;
+      }
+      case 'shotgun': {
+        // Thicker, longer barrel + pump handguard + stock.
+        const recv   = box(0.10, 0.11, 0.22, dark); recv.position.set(0, 0, 0.02);
+        const barrel = box(0.07, 0.07, 0.48, dark); barrel.position.set(0, 0.03, -0.30);
+        const tube   = box(0.05, 0.05, 0.42, dark); tube.position.set(0, -0.04, -0.28);
+        const pump   = box(0.09, 0.08, 0.14, grip); pump.position.set(0, -0.05, -0.16);
+        const stock  = box(0.08, 0.10, 0.24, grip); stock.position.set(0, -0.02, 0.26);
+        g.add(recv, barrel, tube, pump, stock);
+        addMuzzle(-0.55);
+        break;
+      }
+      case 'sniper': {
+        // Long barrel + scope on top + longer stock.
+        const recv   = box(0.09, 0.10, 0.40, dark); recv.position.set(0, 0, 0.04);
+        const barrel = box(0.05, 0.05, 0.58, dark); barrel.position.set(0, 0.02, -0.50);
+        const scope  = cyl(0.045, 0.045, 0.28, 10, dark); scope.rotation.x = Math.PI / 2; scope.position.set(0, 0.13, -0.04);
+        const lens   = cyl(0.05, 0.05, 0.02, 10, glass); lens.rotation.x = Math.PI / 2; lens.position.set(0, 0.13, -0.18);
+        const mnt1   = box(0.03, 0.06, 0.03, dark); mnt1.position.set(0, 0.08, 0.06);
+        const mnt2   = box(0.03, 0.06, 0.03, dark); mnt2.position.set(0, 0.08, -0.12);
+        const stock  = box(0.08, 0.10, 0.32, grip); stock.position.set(0, -0.03, 0.32);
+        const mag    = box(0.07, 0.12, 0.05, dark); mag.position.set(0, -0.10, 0);
+        g.add(recv, barrel, scope, lens, mnt1, mnt2, stock, mag);
+        addMuzzle(-0.80);
+        break;
+      }
+      case 'knife': {
+        // Slightly oversized so the blade reads at melee range. No muzzle.
+        const handle = box(0.05, 0.05, 0.18, grip);  handle.position.set(0, -0.02, 0.12);
+        const guard  = box(0.12, 0.03, 0.03, dark);   guard.position.set(0, -0.02, 0.02);
+        const blade  = box(0.025, 0.10, 0.34, steel); blade.position.set(0, 0.0, -0.16); blade.rotation.x = -0.05;
+        const point  = box(0.025, 0.04, 0.10, steel); point.position.set(0, -0.02, -0.36);
+        g.add(handle, guard, blade, point);
+        g.userData.muzzle = null;
+        break;
+      }
+      case 'rifle':
+      default: {
+        const recv   = box(0.10, 0.10, 0.42, dark);
+        const barrel = box(0.06, 0.06, 0.36, dark); barrel.position.set(0, 0.02, -0.36);
+        const hg     = box(0.10, 0.06, 0.20, grip); hg.position.set(0, -0.04, -0.20);
+        const stock  = box(0.08, 0.08, 0.22, grip); stock.position.set(0, -0.02, 0.28);
+        const mag    = box(0.08, 0.18, 0.06, dark); mag.position.set(0, -0.13, -0.02);
+        const sight  = box(0.02, 0.06, 0.02, dark); sight.position.set(0, 0.06, -0.50);
+        g.add(recv, barrel, hg, stock, mag, sight);
+        addMuzzle(-0.56);
+        break;
+      }
+    }
+    g.userData.weaponKey = key;
+    return g;
+  },
+
+  // Swap the weapon held in a player model's hand socket. A cheap no-op
+  // when the weapon hasn't changed, so it's safe to call from every
+  // movement packet. Disposes the previous weapon's geometry/materials and
+  // re-exposes the muzzle flash mesh on the player group.
+  _attachThirdPersonWeapon(playerGroup, weaponKey) {
+    if (!playerGroup || !playerGroup.userData) return;
+    const socket = playerGroup.userData.weaponSocket;
+    if (!socket) return;
+    const key = (typeof WEAPONS !== 'undefined' && WEAPONS[weaponKey]) ? weaponKey : 'rifle';
+    if (playerGroup.userData.currentWeapon === key && socket.children.length) return;
+    // Remove + dispose the previously held weapon.
+    for (let i = socket.children.length - 1; i >= 0; i--) {
+      const old = socket.children[i];
+      socket.remove(old);
+      old.traverse?.(o => {
+        if (o.isMesh) {
+          o.geometry?.dispose?.();
+          if (Array.isArray(o.material)) o.material.forEach(m => m.dispose?.());
+          else o.material?.dispose?.();
+        }
+      });
+    }
+    const model = this._buildThirdPersonWeaponModel(key);
+    socket.add(model);
+    playerGroup.userData.currentWeapon = key;
+    playerGroup.userData.muzzle = model.userData?.muzzle || null;
   },
 
   // ── Gun model (blocky/voxel rifle) ─────────────────────────────────────
@@ -4020,6 +4145,8 @@ const GameEngine = {
       const swing = moveSpeed > 0.2 ? Math.sin(this._oppGait) * 0.5 : 0;
       if (this._oppLegL) this._oppLegL.rotation.x =  swing;
       if (this._oppLegR) this._oppLegR.rotation.x = -swing;
+      // Held-weapon bob + decaying knife-slash swing.
+      this._animateWeaponSocket(this.opponentGroup.userData.weaponSocket, moveSpeed > 0.2, this._oppGait, dt);
 
       this._updateNameTag();
     }
@@ -4053,6 +4180,8 @@ const GameEngine = {
         const lR = e.group.userData.legR;
         if (lL) lL.rotation.x =  swing;
         if (lR) lR.rotation.x = -swing;
+        // Held-weapon bob + decaying knife-slash swing.
+        this._animateWeaponSocket(e.group.userData.weaponSocket, moveSpeed > 0.2, e.gait, dt);
       }
     }
 
@@ -4397,6 +4526,10 @@ const GameEngine = {
     this._keys          = {};
     this._oppVisible    = false;
     this.opponentGroup.visible = false;
+    // Reset the 1v1 opponent's held weapon so the next match starts on a
+    // clean rifle; the first weapon-switch / move packet corrects it.
+    this._oppWeapon = null;
+    this._attachThirdPersonWeapon(this.opponentGroup, 'rifle');
     if (this.opponentNameTagEl) this.opponentNameTagEl.style.display = 'none';
     this._disposeOtherPlayers();
     this._arenaObjects.forEach(o => this.scene.remove(o));
@@ -4412,18 +4545,24 @@ const GameEngine = {
   },
 
   // ── Network / bot callbacks ────────────────────────────────────────────
-  onOpponentMove({ position, rotation, yOffset, crouching, senderSockId, senderTeam }) {
+  onOpponentMove({ position, rotation, yOffset, crouching, senderSockId, senderTeam, weapon }) {
     // Killcam is repositioning the opponent group to the victim's death
     // spot — ignore live updates while it runs so they don't drag the
     // body away mid-replay. Resumes automatically when Killcam.stop()
     // clears _active.
     if (typeof Killcam !== 'undefined' && Killcam._active) return;
-    // Team match — route to multi-opponent map.
+    // Team match — route to multi-opponent map (weapon rides along so a
+    // missed switch event still corrects the held model).
     if (App.isTeamMatch && senderSockId) {
-      this._updateOtherPlayer(senderSockId, senderTeam, position, rotation, yOffset, crouching);
+      this._updateOtherPlayer(senderSockId, senderTeam, position, rotation, yOffset, crouching, weapon);
       return;
     }
-    // 1v1 path — single opponent.
+    // 1v1 path — single opponent. Correct the held weapon if the move
+    // packet reports a different one than we last attached.
+    if (weapon && weapon !== this._oppWeapon && this.opponentGroup) {
+      this._attachThirdPersonWeapon(this.opponentGroup, weapon);
+      this._oppWeapon = weapon;
+    }
     this._oppTgtPos.set(position.x, 0, position.z);
     if (rotation != null) this._oppTgtYaw = rotation.y ?? 0;
     this._oppTgtY      = Number(yOffset) || 0;
@@ -4452,7 +4591,7 @@ const GameEngine = {
   // ── Multi-player (team mode) — one mesh per other player ──────────────
   _otherPlayers: null,  // Map<sockId, { group, curPos, tgtPos, curYaw, tgtYaw, curY, tgtY, curCrouch, tgtCrouch }>
 
-  _updateOtherPlayer(sockId, team, position, rotation, yOffset, crouching) {
+  _updateOtherPlayer(sockId, team, position, rotation, yOffset, crouching, weapon) {
     if (!this._otherPlayers) this._otherPlayers = new Map();
     let entry = this._otherPlayers.get(sockId);
     if (!entry) {
@@ -4470,8 +4609,15 @@ const GameEngine = {
         curYaw: rotation?.y || 0, tgtYaw: rotation?.y || 0,
         curY: 0, tgtY: 0, curCrouch: 0, tgtCrouch: 0,
         gait: 0,
+        weapon: weapon || 'rifle',
       };
       this._otherPlayers.set(sockId, entry);
+      // Attach the reported weapon (no-op if it's already the default rifle).
+      this._attachThirdPersonWeapon(group, entry.weapon);
+    } else if (weapon && weapon !== entry.weapon) {
+      // Weapon changed since we last saw this player — swap the model.
+      this._attachThirdPersonWeapon(entry.group, weapon);
+      entry.weapon = weapon;
     }
     // Spatial footstep — same threshold/crouch rule as the 1v1 path.
     const last = this._oppLastPos[sockId];
@@ -4484,6 +4630,59 @@ const GameEngine = {
     if (rotation != null) entry.tgtYaw = rotation.y ?? 0;
     entry.tgtY      = Number(yOffset) || 0;
     entry.tgtCrouch = !!crouching;
+  },
+
+  // ── Held-weapon sync for remote players ───────────────────────────────
+  // Authoritative weapon change pushed by the server. Swaps the visible
+  // held model for the right player: team mode → the per-socket entry,
+  // 1v1 → the single opponentGroup.
+  onOpponentWeaponSwitch({ socketId, weapon } = {}) {
+    if (!weapon) return;
+    if (App.isTeamMatch && socketId) {
+      const entry = this._otherPlayers?.get(socketId);
+      if (entry) {
+        this._attachThirdPersonWeapon(entry.group, weapon);
+        entry.weapon = weapon;
+      }
+    } else if (this.opponentGroup) {
+      this._attachThirdPersonWeapon(this.opponentGroup, weapon);
+      this._oppWeapon = weapon;
+    }
+  },
+
+  // Resolve a remote player's model group from a socket id. Team mode keys
+  // by socket; 1v1 falls back to the single opponentGroup.
+  _remotePlayerGroup(sockId) {
+    if (sockId && this._otherPlayers?.has(sockId)) return this._otherPlayers.get(sockId).group;
+    if (this.opponentGroup?.visible) return this.opponentGroup;
+    return null;
+  },
+
+  // Briefly pop the muzzle-flash mesh on a remote player's weapon.
+  _flashRemoteMuzzle(sockId) {
+    const muzzle = this._remotePlayerGroup(sockId)?.userData?.muzzle;
+    if (!muzzle) return;
+    muzzle.visible = true;
+    clearTimeout(muzzle.userData._t);
+    muzzle.userData._t = setTimeout(() => { muzzle.visible = false; }, 60);
+  },
+
+  // Kick off a knife-slash on a remote player. The per-frame socket
+  // animation swings the weapon forward and eases it back. Cosmetic only.
+  onRemoteMelee({ shooterId } = {}) {
+    const socket = this._remotePlayerGroup(shooterId)?.userData?.weaponSocket;
+    if (socket) socket.userData._slash = 1;
+  },
+
+  // Subtle held-weapon motion: a vertical bob while the player is moving,
+  // plus a decaying forward swing when a knife slash was triggered.
+  _animateWeaponSocket(socket, moving, gait, dt) {
+    if (!socket) return;
+    const bob = moving ? Math.sin((gait || 0) * 2) * 0.02 : 0;
+    let slash = socket.userData._slash || 0;
+    if (slash > 0) { slash = Math.max(0, slash - dt * 4); socket.userData._slash = slash; }
+    socket.position.y = 1.00 + bob;
+    socket.rotation.x = -slash * 0.9;
   },
 
   _disposeOtherPlayers() {
@@ -7043,16 +7242,22 @@ const NetworkManager = {
     s.on('match_countdown_cancel', () => UIManager.stopMatchCountdown());
     s.on('match_start',         d => App.onMatchStart(d));
     s.on('opponent_move',       d => GameEngine.onOpponentMove(d));
+    // An opponent/teammate changed weapon — swap their visible held model.
+    s.on('opponent_weapon_switch', d => { try { GameEngine.onOpponentWeaponSwitch(d); } catch (_) {} });
     // Other players' gunshots — spatialised via PannerNode (distance +
     // direction). The server only emits this for non-melee weapons.
     s.on('remote_shot',         d => {
       try { AudioManager.playSpatialShot?.(d.origin, d.weapon); } catch (_) {}
+      // Pop the muzzle flash on the shooter's third-person weapon.
+      try { GameEngine._flashRemoteMuzzle?.(d.shooterId); } catch (_) {}
       // Tracer line for the enemy shot — gives a visual cue of *where*
       // they're firing from, complementing the spatial audio.
       if (d.origin && d.direction) {
         try { GameEngine._spawnTracer?.(d.origin, d.direction, 50, { local: false }); } catch (_) {}
       }
     });
+    // Melee swing by a remote player — play a quick slash on their model.
+    s.on('remote_melee',        d => { try { GameEngine.onRemoteMelee(d); } catch (_) {} });
     // Voice chat signaling — payloads are relayed by the server to
     // teammates only. The VoiceChat module handles all RTC state.
     s.on('voice_offer',          d => { try { VoiceChat.onOffer(d); }        catch (_) {} });
