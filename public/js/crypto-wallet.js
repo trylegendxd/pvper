@@ -221,14 +221,28 @@
     } catch (_) {}
   }
 
+  // Core link routine — returns true on success. Reused by the Link button
+  // and auto-invoked by deposit() so users don't need a separate step.
+  async function doLink() {
+    if (!signer || !account) { depStatus('Connect a wallet first.', 'err'); return false; }
+    const { message, nonce } = await api('/api/crypto/link-wallet/nonce', { method: 'POST', body: { address: account } });
+    const signature = await signer.signMessage(message);
+    await api('/api/crypto/link-wallet/verify', { method: 'POST', body: { address: account, signature, nonce } });
+    $('#cw-linked').textContent = '✓ linked';
+    return true;
+  }
+
+  async function isLinked() {
+    try {
+      const { wallets } = await api('/api/crypto/wallets');
+      return (wallets || []).some(w => account && w.address.toLowerCase() === account.toLowerCase() && w.verified_at);
+    } catch (_) { return false; }
+  }
+
   async function linkWallet() {
-    if (!signer || !account) { depStatus('Connect a wallet first.', 'err'); return; }
     try {
       $('#cw-link').disabled = true;
-      const { message, nonce } = await api('/api/crypto/link-wallet/nonce', { method: 'POST', body: { address: account } });
-      const signature = await signer.signMessage(message);
-      await api('/api/crypto/link-wallet/verify', { method: 'POST', body: { address: account, signature, nonce } });
-      $('#cw-linked').textContent = '✓ linked';
+      await doLink();
       depStatus('Wallet linked.', 'ok');
     } catch (e) {
       depStatus(friendly(e.message) || 'Link failed.', 'err');
@@ -243,10 +257,11 @@
     const btn = $('#cw-deposit'); btn.disabled = true;
     try {
       await ensureChain();
-      // Make sure the wallet is linked before we move funds.
-      const { wallets } = await api('/api/crypto/wallets');
-      const linked = (wallets || []).some(w => w.address.toLowerCase() === account.toLowerCase() && w.verified_at);
-      if (!linked) { depStatus('Link your wallet first (sign the message).', 'err'); btn.disabled = false; return; }
+      // Auto-link the wallet if it isn't linked yet — one fewer manual step.
+      if (!(await isLinked())) {
+        depStatus('First time: sign the message to link this wallet…', 'wait');
+        await doLink();
+      }
 
       depStatus('Confirm the USDC transfer in your wallet…', 'wait');
       const erc20 = new ethers.Contract(cfg.usdcContractAddress,

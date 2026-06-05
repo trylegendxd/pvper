@@ -181,11 +181,17 @@ async function creditConfirmedDeposit(userId, v) {
     if (dep.status === 'confirmed') {
       return { deposit: dep, balance: await getBalance(userId), credited: false };
     }
-    // Credit via the ledger. The unique index makes this idempotent even if
-    // two requests race through here at once.
+    // IMPORTANT: credit the amount from the FRESH on-chain verification
+    // (v.creditsAmount), NOT dep.credits_amount. The row may have been
+    // created during the pre-mine "pending" phase with amount 0 (no receipt
+    // yet), so reading it back would credit 0. We also overwrite the stored
+    // amounts with the verified values when confirming. The ledger unique
+    // index keeps this idempotent even if two requests race through here.
+    const creditsAmount = Number(v.creditsAmount) || 0;
+    if (creditsAmount <= 0) throw new Error('zero_credit_amount');
     let balance;
     try {
-      const r = await adjustBalance(userId, dep.credits_amount, 'crypto_deposit', {
+      const r = await adjustBalance(userId, creditsAmount, 'crypto_deposit', {
         refType: 'crypto', refId: `${v.chain}:${v.txHash}`, client,
         metadata: { tx_hash: v.txHash, amount_usdc: v.amountUsdc },
       });
@@ -196,9 +202,10 @@ async function creditConfirmedDeposit(userId, v) {
     }
     const { rows: upd } = await client.query(
       `UPDATE crypto_deposits
-          SET status = 'confirmed', confirmations = $1, confirmed_at = NOW()
-        WHERE id = $2 RETURNING *`,
-      [v.confirmations || 0, dep.id]
+          SET status = 'confirmed', confirmations = $1, confirmed_at = NOW(),
+              amount_units = $2, amount_usdc = $3, credits_amount = $4
+        WHERE id = $5 RETURNING *`,
+      [v.confirmations || 0, v.amountUnits, v.amountUsdc, creditsAmount, dep.id]
     );
     return { deposit: upd[0], balance, credited: true };
   });
@@ -282,8 +289,16 @@ router.post('/deposits/refresh', async (req, res) => {
       return res.status(400).json({ status: 'rejected', reason: v.reason });
     }
     if (v.status === 'pending') {
-      await pool.query(`UPDATE crypto_deposits SET confirmations=$1 WHERE id=$2`,
-        [v.confirmations || 0, dep.id]);
+      // Once the tx has a receipt, verify carries the real amounts — fill
+      // them in so the pending row no longer shows 0 USDC.
+      if (v.amountUnits) {
+        await pool.query(
+          `UPDATE crypto_deposits SET confirmations=$1, amount_units=$2, amount_usdc=$3, credits_amount=$4 WHERE id=$5`,
+          [v.confirmations || 0, v.amountUnits, v.amountUsdc, Number(v.creditsAmount) || 0, dep.id]);
+      } else {
+        await pool.query(`UPDATE crypto_deposits SET confirmations=$1 WHERE id=$2`,
+          [v.confirmations || 0, dep.id]);
+      }
       return res.json({ status: 'pending', confirmations: v.confirmations || 0, deposit: { ...dep, confirmations: v.confirmations || 0 } });
     }
     const out = await creditConfirmedDeposit(userId, { ...v, txHash: dep.tx_hash, chain: cfg.network });
