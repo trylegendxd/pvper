@@ -85,7 +85,7 @@ const {
   TEAM_SIZES, privateLobbies, privateLobbiesByCode,
   THROWABLE_CONFIG, THROWABLE_TYPES, MAX_THROW_DIRECTION_DEVIATION,
   lobbies, matches, players,
-  rayHitDistance, playerBox, headBox, coverAabb, positionAtTime,
+  rayHitDistance, playerBox, headBox, coverAabb, arenaWalls, positionAtTime,
   COVER_PENETRATION_DAMAGE_MULT, damageMultiplier,
   symmetricalMap, randomMap, csDepotMap, buildMapByType,
   MAP_TYPES, resolveMapType, lobbySnapshot,
@@ -587,7 +587,7 @@ function stopThrowableTick(match) {
 // Reflect a projectile off the surface it just intersected, with
 // restitution + friction so it loses energy like a real canister.
 // Mutates p.position and p.velocity in place.
-function bounceProjectile(p, kind, cover, px, py, pz, nx, ny, nz, bcfg) {
+function bounceProjectile(p, kind, cover, px, py, pz, nx, ny, nz, bcfg, arenaSize = 40) {
   const R   = bcfg.restitution;
   const RW  = bcfg.wallRestitution;
   const FR  = bcfg.friction;
@@ -603,9 +603,13 @@ function bounceProjectile(p, kind, cover, px, py, pz, nx, ny, nz, bcfg) {
     return;
   }
   if (kind === 'wall') {
-    // Arena edge — reflect whichever axis went out of bounds.
-    if (Math.abs(nx) > 21) {
-      p.position.x = Math.sign(nx) * 20.5;
+    // Arena edge — reflect whichever axis went out of bounds. Scaled to
+    // the real arena size (was hard-coded to the 40-unit ±20.5 boundary,
+    // which clamped Depot throwables to the middle of the map).
+    const half = arenaSize / 2;
+    const edge = half + 0.5;
+    if (Math.abs(nx) > half + 1) {
+      p.position.x = Math.sign(nx) * edge;
       p.position.y = ny;
       p.position.z = nz;
       p.velocity.x = -p.velocity.x * RW;
@@ -614,7 +618,7 @@ function bounceProjectile(p, kind, cover, px, py, pz, nx, ny, nz, bcfg) {
     } else {
       p.position.x = nx;
       p.position.y = ny;
-      p.position.z = Math.sign(nz) * 20.5;
+      p.position.z = Math.sign(nz) * edge;
       p.velocity.z = -p.velocity.z * RW;
       p.velocity.x *= FR;
       p.velocity.y *= FR;
@@ -703,7 +707,10 @@ function tickThrowables(io, match) {
         }
       }
     }
-    if (!hitKind && (Math.abs(nx) > 21 || Math.abs(nz) > 21)) hitKind = 'wall';
+    // Boundary check scaled to the real arena (was hard-coded ±21 for a
+    // 40-unit map, which made throwables bounce off mid-air on Depot).
+    const throwWall = (match.arenaSize || 40) / 2 + 1;
+    if (!hitKind && (Math.abs(nx) > throwWall || Math.abs(nz) > throwWall)) hitKind = 'wall';
 
     // Expiration → fall-in-place impact (prevents stuck-in-air ghosts).
     const expired = now >= p.expiresAt;
@@ -721,7 +728,7 @@ function tickThrowables(io, match) {
     // SMOKE: bounce up to maxBounces times before detonating.
     const bcfg = THROWABLE_CONFIG.smoke?.bounce;
     if (p.type === 'smoke' && bcfg && !expired && (p.bounceCount || 0) < bcfg.maxBounces) {
-      bounceProjectile(p, hitKind, hitCover, px, py, pz, nx, ny, nz, bcfg);
+      bounceProjectile(p, hitKind, hitCover, px, py, pz, nx, ny, nz, bcfg, match.arenaSize || 40);
       p.bounceCount = (p.bounceCount || 0) + 1;
       // If basically standstill after the bounce, settle and detonate.
       const v2 = p.velocity.x*p.velocity.x + p.velocity.y*p.velocity.y + p.velocity.z*p.velocity.z;
@@ -2694,12 +2701,12 @@ function attach(io) {
         }
       }
 
-      const walls = [
-        { min:{x:-20.25, y:0, z:-20.25}, max:{x: 20.25, y:3, z:-19.75} },
-        { min:{x:-20.25, y:0, z: 19.75}, max:{x: 20.25, y:3, z: 20.25} },
-        { min:{x:-20.25, y:0, z:-20.25}, max:{x:-19.75, y:3, z: 20.25} },
-        { min:{x: 19.75, y:0, z:-20.25}, max:{x: 20.25, y:3, z: 20.25} },
-      ];
+      // Boundary walls derived from the match's REAL arena size (cached
+      // on the match). The old hard-coded ±20.25 walls only matched the
+      // 40-unit maps; on the 70 m Depot they became invisible mid-field
+      // walls that swallowed bullets.
+      if (!match.wallAabbs) match.wallAabbs = arenaWalls(match.arenaSize || 40);
+      const walls = match.wallAabbs;
 
       // For each candidate enemy, run all the rays and aggregate damage.
       // Pick the enemy with the closest hit (so a shot in a crowd hits

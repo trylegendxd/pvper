@@ -2150,10 +2150,12 @@ const Bot = {
         };
         let blocked = false;
         for (const b of staticBoxes) {
-          // Check 3D AABB hit (synthesise y bounds)
+          // Check 3D AABB hit. Use the box's REAL top (topY) instead of a
+          // flat 3 m so low cover doesn't block the bot's chest-height
+          // line of sight as if it were a full wall.
           const box3 = {
-            min: { x: b.min.x, y: 0,   z: b.min.z },
-            max: { x: b.max.x, y: 3.0, z: b.max.z },
+            min: { x: b.min.x, y: 0,          z: b.min.z },
+            max: { x: b.max.x, y: (b.topY ?? 3), z: b.max.z },
           };
           if (rayHitsBox({ origin: ray.origin, direction: ray.direction }, box3, lineLen)) {
             blocked = true; break;
@@ -3818,7 +3820,12 @@ const GameEngine = {
         const bray = { origin: { x: origin.x, y: origin.y, z: origin.z }, direction: pd };
         let minT = Infinity, hitInfo = null;
         for (const b of this._staticBoxes) {
-          const b3 = { min: { x: b.min.x, y: 0, z: b.min.z }, max: { x: b.max.x, y: 3, z: b.max.z } };
+          // Use the box's actual height (topY). Previously hard-coded to
+          // 3 m, which made every low crate act as a full-height invisible
+          // wall — tracers and bullet-holes "caught" in mid-air above
+          // short cover. The server's hit detection already uses the real
+          // height, so this also removes a visual/authority mismatch.
+          const b3 = { min: { x: b.min.x, y: 0, z: b.min.z }, max: { x: b.max.x, y: (b.topY ?? 3), z: b.max.z } };
           const inf = rayHitInfo(bray, b3, 80);
           if (inf && inf.t < minT) { minT = inf.t; hitInfo = inf; }
         }
@@ -3843,9 +3850,11 @@ const GameEngine = {
         // Wall/cover ray distance
         let coverDist = Infinity;
         for (const b of this._staticBoxes) {
+          // Real box height (topY) so shots fly OVER low cover in training
+          // exactly as they do against the server in real matches.
           const box3 = {
-            min: { x: b.min.x, y: 0, z: b.min.z },
-            max: { x: b.max.x, y: 3.0, z: b.max.z },
+            min: { x: b.min.x, y: 0,            z: b.min.z },
+            max: { x: b.max.x, y: (b.topY ?? 3), z: b.max.z },
           };
           const d = rayHitDistance(ray, box3, MR);
           if (d < coverDist) coverDist = d;

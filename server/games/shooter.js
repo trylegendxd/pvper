@@ -150,6 +150,25 @@ function coverAabb(box) {
   };
 }
 
+// Boundary-wall AABBs for an arenaSize × arenaSize square arena. Mirrors
+// the four perimeter walls the client builds in buildArena() — 0.5 m
+// thick, 3 m tall, centred on ±half. The server uses these in its hit
+// detection so shots are blocked only by the REAL arena edge. Previously
+// the walls were hard-coded to a 40-unit arena (±20.25); on the 70 m
+// Depot map those phantom walls sat in the MIDDLE of the playfield and
+// silently ate any bullet that crossed x/z = ±20 — the "invisible walls"
+// players were hitting on the big map.
+function arenaWalls(arenaSize = 40) {
+  const half = arenaSize / 2;
+  const t = 0.25; // half of the 0.5 m wall thickness
+  return [
+    { min:{x:-half-t, y:0, z:-half-t}, max:{x: half+t, y:3, z:-half+t} }, // back  (-z)
+    { min:{x:-half-t, y:0, z: half-t}, max:{x: half+t, y:3, z: half+t} }, // front (+z)
+    { min:{x:-half-t, y:0, z:-half-t}, max:{x:-half+t, y:3, z: half+t} }, // left  (-x)
+    { min:{x: half-t, y:0, z:-half-t}, max:{x: half+t, y:3, z: half+t} }, // right (+x)
+  ];
+}
+
 function positionAtTime(history, ts) {
   if (!history?.length) return null;
   if (ts <= history[0].timestamp) return history[0].position;
@@ -656,7 +675,7 @@ module.exports = {
   // Live state (used by shooterSocket.js)
   lobbies, matches, players,
   // Helpers
-  rayHitDistance, playerBox, headBox, coverAabb, positionAtTime,
+  rayHitDistance, playerBox, headBox, coverAabb, arenaWalls, positionAtTime,
   COVER_PENETRABLE_MIN, COVER_PENETRATION_DAMAGE_MULT,
   damageMultiplier,
   symmetricalMap, randomMap, csDepotMap, buildMapByType,
