@@ -9,9 +9,20 @@ A multi-game browser platform with **play-money credits only**. Features:
 - 💳 **Wallet** — server-authoritative balance + full transaction ledger
 - 🛠️ **Admin panel** — user/wallet management, audit logs
 
-> **LEGAL NOTICE**
-> Credits are fictional play-money credits only and have no real-world monetary value.
-> There are no deposits, withdrawals, cash-out paths, prizes, or anything exchangeable for real value.
+> **LEGAL NOTICE (default deployment)**
+> By default (`CRYPTO_ENABLED=false`) credits are fictional play-money credits only with
+> no real-world monetary value, and there are no deposits, withdrawals, or cash-out paths.
+
+> **⚠ REAL-VALUE CRYPTO (optional, off by default)**
+> The platform includes an **optional** USDC-on-Base deposit/withdrawal system
+> (`CRYPTO_ENABLED=false` by default — see [Crypto wallet](#crypto-wallet-usdc-on-base)).
+> When enabled, the site handles **real-value crypto assets**: 1 USDC = 100 credits.
+> Enabling it is a serious decision. Before turning on **mainnet** you must review the
+> laws that apply to you — including online **gambling / gaming** rules, **KYC/AML**,
+> **sanctions** screening, **tax** reporting, **age** restrictions, and **consumer
+> protection** — and obtain any required licences. **Use Base Sepolia (testnet) for all
+> testing first.** Mainnet does not activate unless `CRYPTO_NETWORK=base` and the mainnet
+> chain id / USDC contract are configured explicitly. You operate this at your own risk.
 
 ---
 
@@ -223,6 +234,46 @@ adjustBalance(userId, amount, reason, { refType, refId, metadata, client })
 - A UNIQUE index on `(ref_type, ref_id, reason)` for `reason IN ('win','refund','bet','blackjack_payout','roulette_payout')` makes **duplicate payouts and duplicate refunds impossible** at the DB level — `adjustBalance` throws `duplicate_transaction` instead, and the call sites silently skip.
 - Roulette/blackjack: bet → spin → payout all happen inside a **single** transaction → atomic.
 - Shooter: bet at match start (`startShooterMatch`), payout/refund at match end (`finishShooterMatch` / `cancelShooterMatch`) — also wrapped in transactions.
+
+---
+
+## Crypto wallet (USDC on Base)
+
+**Optional, off by default.** A single-token (USDC), single-treasury deposit/withdrawal
+system on Base. Disabled unless `CRYPTO_ENABLED=true`. Read the real-value crypto notice
+at the top of this README before enabling anything.
+
+- **Rate:** 1 USDC = 100 credits (`USDC_TO_CREDITS_RATE`), USDC has 6 decimals. Internal
+  credits stay integer (sub-credit dust is floored on deposit).
+- **Network:** Base Sepolia (testnet) by default; Base mainnet only when explicitly
+  configured (`CRYPTO_NETWORK=base`, `BASE_CHAIN_ID=8453`, mainnet USDC contract).
+- **Deposit:** the user connects an EVM wallet, links it by signing a nonce message, then
+  the frontend calls `USDC.transfer(treasury, amount)` and submits the resulting tx hash.
+  The backend verifies on-chain (correct chain, USDC contract, `Transfer` event,
+  from = the linked wallet, to = treasury, ≥ min, enough confirmations, not already
+  credited) and credits via the wallet ledger (`reason='crypto_deposit'`) exactly once.
+- **Withdrawal:** the user requests an amount + address. Credits are **held** up front
+  (`reason='crypto_withdrawal_hold'`) and the request goes to `pending_review`. An admin
+  approves (broadcasts USDC from the treasury via the **server-only** `TREASURY_PRIVATE_KEY`)
+  or rejects (refunds, `reason='crypto_withdrawal_refund'`). `REFRESH` confirms or fails+refunds.
+- **Security:** the treasury private key is read only in `server/crypto/baseUsdc.js` and is
+  never returned by `/api/crypto/config` or sent to the browser. Every deposit/withdrawal
+  is idempotent (`unique(chain, tx_hash)` + the extended wallet ledger index). Client-submitted
+  amounts are never trusted — the credited amount comes from the on-chain `Transfer` value.
+- **Files:** `migrations/009_crypto_wallets.sql`, `server/crypto/baseUsdc.js`,
+  `server/routes/cryptoRoutes.js` (mounted at `/api/crypto` and `/api/admin/crypto`),
+  `public/js/crypto-wallet.js` (wallet UI), plus the admin "Crypto" tab.
+
+### Manual test checklist (Base Sepolia)
+
+1. `CRYPTO_ENABLED=false` → crypto UI shows "disabled"; all `/api/crypto/*` return `crypto_disabled`.
+2. Connect wallet → link by signing → invalid/forged signatures and wrong addresses are rejected.
+3. Wrong network is detected and the wallet is asked to switch/add Base Sepolia.
+4. Deposit → wallet sends USDC; the tx hash is captured and POSTed automatically.
+5. Backend rejects: fake hash, duplicate hash, wrong token, wrong recipient, unlinked sender.
+6. Pending until `DEPOSIT_CONFIRMATIONS`; then credits: 1→100, 2.5→250, 10→1000.
+7. Withdrawal request holds credits (1→100, 5→500). Reject refunds; approve broadcasts; refresh confirms.
+8. Existing games + wallet history still work; no private key in the frontend bundle/devtools.
 
 ---
 

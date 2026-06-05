@@ -36,6 +36,7 @@
     <button data-tab="rps">RPS</button>
     <button data-tab="roulette">Roulette</button>
     <button data-tab="blackjack">Blackjack</button>
+    <button data-tab="crypto">Crypto</button>
     <button data-tab="audit">Audit</button>
   </div>
 
@@ -45,6 +46,7 @@
   <div id="panel-rps"       class="panel card"><div id="rps"></div></div>
   <div id="panel-roulette"  class="panel card"><div id="roulette"></div></div>
   <div id="panel-blackjack" class="panel card"><div id="blackjack"></div></div>
+  <div id="panel-crypto"    class="panel card"><div id="crypto"></div></div>
   <div id="panel-audit"     class="panel card"><div id="audit"></div></div>
 </div>
 <div class="legal-footer">Credits are fictional play-money credits only and have no real-world monetary value.</div>
@@ -117,6 +119,41 @@
       document.getElementById('blackjack').innerHTML = renderTable(hands,
         ['created_at','user_id','bet_amount','status','outcome','payout']);
     },
+    async crypto() {
+      const host = document.getElementById('crypto');
+      let data;
+      try { data = await api('/api/admin/crypto/withdrawals'); }
+      catch (e) { host.innerHTML = `<p style="color:var(--dim)">Crypto withdrawals unavailable: ${escapeHtml(e.message)}</p>`; return; }
+      const rows = data.withdrawals || [];
+      if (!rows.length) { host.innerHTML = '<p style="color:var(--dim)">No pending or in-flight withdrawals.</p>'; return; }
+      host.innerHTML = `
+        <table class="history">
+          <thead><tr><th>When</th><th>User</th><th>USDC</th><th>Credits</th><th>To address</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody>${rows.map(w => `
+            <tr>
+              <td>${new Date(w.created_at).toLocaleString()}</td>
+              <td>${escapeHtml(w.username || w.user_id)}</td>
+              <td>${escapeHtml(String(w.amount_usdc))}</td>
+              <td>${escapeHtml(String(w.credits_amount))}</td>
+              <td style="font-family:monospace;font-size:11px;">${escapeHtml(w.to_address)}</td>
+              <td>${escapeHtml(w.status)}${w.tx_hash ? `<br><span style="font-family:monospace;font-size:10px;color:var(--dim)">${escapeHtml(w.tx_hash.slice(0,12))}…</span>` : ''}</td>
+              <td>
+                <div class="adj-row" style="flex-wrap:wrap;gap:4px;">
+                  ${w.status === 'pending_review' ? `
+                    <button class="btn small" onclick="cwApprove('${w.id}')">APPROVE + SEND</button>
+                    <input type="text" placeholder="reject note" data-note-for="${w.id}" style="max-width:120px;">
+                    <button class="btn small" onclick="cwReject('${w.id}')">REJECT</button>
+                  ` : ''}
+                  ${w.status === 'broadcasted' ? `<button class="btn small" onclick="cwRefresh('${w.id}')">REFRESH</button>` : ''}
+                </div>
+              </td>
+            </tr>`).join('')}</tbody>
+        </table>
+        <p style="color:var(--dim);font-size:11px;margin-top:10px;">
+          APPROVE broadcasts the USDC transfer from the treasury wallet using the server-side key.
+          REJECT refunds the held credits. REFRESH checks confirmations and finalises.
+        </p>`;
+    },
     async audit() {
       const { logs } = await api('/api/admin/audit');
       document.getElementById('audit').innerHTML = renderTable(logs,
@@ -145,6 +182,23 @@
       await api('/api/admin/wallet/adjust', { method:'POST', body: { userId, amount: Number(amt), reason } });
       await loaders.users();
     } catch (e) { alert(e.message); }
+  };
+
+  // ── Crypto withdrawal actions ──────────────────────────────────────────
+  window.cwApprove = async (id) => {
+    if (!confirm('Approve and broadcast this USDC withdrawal from the treasury wallet?')) return;
+    try { await api(`/api/admin/crypto/withdrawals/${id}/approve`, { method:'POST' }); await loaders.crypto(); }
+    catch (e) { alert('Approve failed: ' + (e.data?.detail || e.message)); }
+  };
+  window.cwReject = async (id) => {
+    const note = document.querySelector(`[data-note-for="${id}"]`)?.value || '';
+    if (!confirm('Reject this withdrawal and refund the held credits?')) return;
+    try { await api(`/api/admin/crypto/withdrawals/${id}/reject`, { method:'POST', body: { note } }); await loaders.crypto(); }
+    catch (e) { alert('Reject failed: ' + e.message); }
+  };
+  window.cwRefresh = async (id) => {
+    try { await api(`/api/admin/crypto/withdrawals/${id}/refresh`, { method:'POST' }); await loaders.crypto(); }
+    catch (e) { alert('Refresh failed: ' + e.message); }
   };
 
   loaders.users();

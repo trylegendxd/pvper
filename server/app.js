@@ -15,6 +15,7 @@ const walletRoutes   = require('./routes/walletRoutes');
 const gameRoutes     = require('./routes/gameRoutes');
 const adminRoutes    = require('./routes/adminRoutes');
 const friendsRoutes  = require('./routes/friendsRoutes');
+const cryptoRoutes   = require('./routes/cryptoRoutes');
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const AUDIO_DIR  = path.join(PUBLIC_DIR, 'assets', 'audio');
@@ -80,12 +81,24 @@ const friendsLimiter = rateLimit({
   message: { error: 'rate_limited' },
 });
 
+// Crypto endpoints touch an RPC node + the DB, so keep them on a tighter
+// limiter than general browsing.
+const cryptoLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'rate_limited' },
+});
+
 // API routes
-app.use('/api/auth',    authRoutes);
-app.use('/api/wallet',  walletRoutes);
-app.use('/api/games',   gamesLimiter, gameRoutes);
-app.use('/api/admin',   adminRoutes);
-app.use('/api/friends', friendsLimiter, friendsRoutes);
+app.use('/api/auth',         authRoutes);
+app.use('/api/wallet',       walletRoutes);
+app.use('/api/games',        gamesLimiter, gameRoutes);
+app.use('/api/admin/crypto', cryptoLimiter, cryptoRoutes.adminRouter);
+app.use('/api/admin',        adminRoutes);
+app.use('/api/friends',      friendsLimiter, friendsRoutes);
+app.use('/api/crypto',       cryptoLimiter, cryptoRoutes.router);
 
 // ── Audio endpoints (preserved from original shooter server.js) ─────────
 // Anything that starts with one of these names is treated as a sound

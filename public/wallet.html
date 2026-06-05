@@ -19,6 +19,10 @@
     <span id="bal" style="font-size:36px;color:var(--gold);font-weight:700">…</span>
   </div>
 
+  <!-- Crypto wallet (USDC on Base). Rendered by crypto-wallet.js — stays
+       hidden/disabled unless CRYPTO_ENABLED=true on the server. -->
+  <div id="crypto-root" style="margin-bottom:18px;"></div>
+
   <div class="card">
     <h3 style="font-size:14px;letter-spacing:2px;color:var(--dim);margin-bottom:12px;">TRANSACTION HISTORY</h3>
     <table class="history" id="hist">
@@ -34,6 +38,7 @@
 <script src="/js/dollar-rain.js"></script>
 <script src="/js/music-player.js"></script>
 <script src="/js/notifications.js"></script>
+<script src="/js/crypto-wallet.js"></script>
 <script>
 (async () => {
   await renderTopbar();
