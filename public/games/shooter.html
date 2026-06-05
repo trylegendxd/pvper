@@ -308,6 +308,18 @@ input:focus { border-color:var(--accent); }
   position:absolute; left:-1px; top:-1px; width:2px; height:2px;
   background:#00ffff; border-radius:50%; display:none;
 }
+/* Tap-fire readiness pip — a tiny 4×4 dot 18 px above the crosshair.
+   Green + softly glowing when first-shot accuracy is armed, hidden
+   when mid-burst, moving, or airborne. The .ready class is toggled
+   per-frame in the engine's update loop. */
+#ch-readypip {
+  position:absolute; left:-2px; top:-22px; width:4px; height:4px;
+  background:#3dd96b; border-radius:50%;
+  box-shadow:0 0 5px rgba(61,217,107,0.85);
+  opacity:0; transition: opacity .12s ease;
+  pointer-events:none;
+}
+#ch-readypip.ready { opacity: 0.95; }
 
 /* Kill notify */
 #hud-kill-notify { top:50%;left:50%;transform:translate(-50%,-70px);background:rgba(0,0,0,.75);border:1px solid #4b9eff;padding:6px 20px;font-size:18px;font-weight:bold;color:#4b9eff;letter-spacing:2px;border-radius:2px;display:none; }
@@ -989,6 +1001,10 @@ input:focus { border-color:var(--accent); }
     <div class="ch-line" id="ch-left"></div>
     <div class="ch-line" id="ch-right"></div>
     <div id="ch-dot"></div>
+    <!-- Tap-fire readiness pip: green = first-shot accuracy is armed,
+         dim = mid-burst / moving / airborne. Sits just above the
+         crosshair. Toggled per-frame in _update. -->
+    <div id="ch-readypip" title="First-shot ready"></div>
   </div>
 
   <div class="hud-el" id="hud-hit-marker"></div>
@@ -1278,11 +1294,21 @@ function damageMultiplier(w, distance) {
 // `decay` is the rate at which the kick decays back to centre, and
 // `resetMs` is the idle window before the shot index resets so a new
 // burst starts from the easy part of the pattern.
+//
+// yawPattern shapes are tuned to mimic the actual AK / pistol curves:
+//   * Rifle: straight up for the first 4 shots, then a hard left
+//     ("T" left), then a longer swing right (the "T" right) before
+//     settling into small alternating motion. Memorising it lets a
+//     player pull DOWN-RIGHT-DOWN-LEFT to keep the camera level
+//     during a full spray.
+//   * Pistol: shorter pattern, smaller magnitude. First 2 shots are
+//     basically straight up so disciplined tap-fire stays accurate.
 const RECOIL = {
-  rifle:   { pitch: 0.020, pitchRamp: 0.004, yaw: 0.013, decay: 7.5, resetMs: 350,
-             yawPattern: [0, 0, 0, -1, -1, 1, 1, -1, 1, -1, 1, 0.6, -0.6, 0.4, -0.4] },
-  pistol:  { pitch: 0.014, pitchRamp: 0.002, yaw: 0.007, decay: 9.5, resetMs: 400,
-             yawPattern: [0, 0, -1, 1, -1, 1, -0.6, 0.6] },
+  rifle:   { pitch: 0.020, pitchRamp: 0.0042, yaw: 0.014, decay: 7.5, resetMs: 350,
+             yawPattern: [0, 0, 0, 0, -1.0, -1.2, -1.0, 1.0, 1.2, 0.8, 0.6,
+                          -0.4, 0.5, -0.3, 0.4, -0.3, 0.3] },
+  pistol:  { pitch: 0.014, pitchRamp: 0.002, yaw: 0.008, decay: 9.5, resetMs: 400,
+             yawPattern: [0, 0, -0.8, 1.0, -1.0, 0.8, -0.5, 0.5, -0.3, 0.3] },
   shotgun: { pitch: 0.050, pitchRamp: 0.000, yaw: 0.000, decay: 5.0, resetMs: 800,
              yawPattern: [0] },
   sniper:  { pitch: 0.060, pitchRamp: 0.000, yaw: 0.000, decay: 3.0, resetMs: 1500,
@@ -1290,6 +1316,14 @@ const RECOIL = {
   knife:   { pitch: 0.000, pitchRamp: 0.000, yaw: 0.000, decay: 0,    resetMs: 0,
              yawPattern: [0] },
 };
+
+// First-shot accuracy window: if it's been this long since the last
+// shot AND the player is stationary on the ground, the next shot has
+// 90 % of its spread + recoil kick stripped away. This is the CS-style
+// tap-fire bonus — disciplined trigger control gets rewarded.
+const FIRST_SHOT_THRESHOLD_MS = 350;
+const FIRST_SHOT_SPREAD_MULT  = 0.15;  // 85% spread reduction
+const FIRST_SHOT_KICK_MULT    = 0.20;  // 80% recoil-kick reduction
 
 // Movement-based spread multipliers — applied to the per-pellet jitter
 // in _shoot(). Matches CS muscle memory: standing still is best,
@@ -1302,6 +1336,23 @@ function movementSpreadMultiplier(engine) {
   if (moving && engine.silentWalking) return 1.5;
   if (moving)                          return 2.5;
   return 1.0;                                   // standing still
+}
+
+/**
+ * Returns true when the player's next shot qualifies as a "first shot"
+ * — i.e. it has been idle for >= FIRST_SHOT_THRESHOLD_MS AND the player
+ * is on the ground, not moving and not crouched (crouch already enjoys
+ * its own spread bonus). Snipers and shotguns get this bonus too, where
+ * it mostly amounts to "the very first shot is dead-on" which is exactly
+ * what tap-fire feel demands.
+ */
+function isFirstShotReady(engine) {
+  if (!engine._grounded) return false;
+  const now = performance.now();
+  if ((now - (engine._lastRecoilShotAt || 0)) < FIRST_SHOT_THRESHOLD_MS) return false;
+  const keys = engine._keys || {};
+  if (keys['KeyW'] || keys['KeyS'] || keys['KeyA'] || keys['KeyD']) return false;
+  return true;
 }
 const WEAPON_ORDER = ['rifle', 'pistol', 'shotgun', 'sniper', 'knife'];
 
@@ -3728,12 +3779,19 @@ const GameEngine = {
     // air sprays widely, and crouching/standing keeps shots tight.
     const moveMult = isMelee ? 1 : movementSpreadMultiplier(this);
 
+    // First-shot accuracy bonus — CS-style tap-fire reward. Computed
+    // BEFORE _applyRecoilKick stamps _lastRecoilShotAt so we read the
+    // pre-shot idle window.
+    const firstShot = !isMelee && isFirstShotReady(this);
+    const spreadMult = firstShot ? FIRST_SHOT_SPREAD_MULT : 1.0;
+    const kickMult   = firstShot ? FIRST_SHOT_KICK_MULT   : 1.0;
+
     // Generate pellets (1 for rifle/pistol, multiple for shotgun, no spread for melee)
     const pelletDirs = [];
     for (let i = 0; i < w.pellets; i++) {
       const d = baseDir.clone();
       const sp = isMelee ? 0
-        : ((w.pellets > 1 ? w.spread : w.spread + this._spread * 0.04) * moveMult);
+        : ((w.pellets > 1 ? w.spread : w.spread + this._spread * 0.04) * moveMult * spreadMult);
       d.x += (Math.random() - 0.5) * sp;
       d.y += (Math.random() - 0.5) * sp;
       d.normalize();
@@ -3746,9 +3804,11 @@ const GameEngine = {
       this._knifeSwing = 1.0;
     } else {
       this._gunRecoil = 1.0;
-      this._spread = Math.min(1, this._spread + w.spreadMove);
+      // First-shot also dampens the spread-bloom contribution so a clean
+      // tap stays clean on the very next shot if you wait again.
+      this._spread = Math.min(1, this._spread + w.spreadMove * (firstShot ? 0.35 : 1.0));
       UIManager.setCrosshairSpread(this._spread);
-      this._applyRecoilKick(this.currentWeapon);
+      this._applyRecoilKick(this.currentWeapon, kickMult);
     }
 
     // Bullet holes + tracers — guns only. The knife doesn't pierce walls.
@@ -4106,6 +4166,24 @@ const GameEngine = {
       // Clamp to avoid floating-point drift.
       if (Math.abs(this._pitchKick) < 0.0005) this._pitchKick = 0;
       if (Math.abs(this._yawKick)   < 0.0005) this._yawKick   = 0;
+    }
+
+    // Tap-fire readiness pip — green when the player's next shot will
+    // benefit from the first-shot accuracy bonus. Throttle to ~20 Hz so
+    // we don't thrash style on every frame.
+    {
+      const now = performance.now();
+      if (!this._lastReadyPipAt || now - this._lastReadyPipAt > 50) {
+        this._lastReadyPipAt = now;
+        const pip = document.getElementById('ch-readypip');
+        if (pip) {
+          const ready = (this.currentWeapon !== 'knife') && isFirstShotReady(this);
+          if (ready !== this._readyPipOn) {
+            this._readyPipOn = ready;
+            pip.classList.toggle('ready', ready);
+          }
+        }
+      }
     }
 
     // Killcam takes over the camera while it's playing the killer's POV.
@@ -4485,7 +4563,13 @@ const GameEngine = {
   // from RECOIL{} and pushes the camera up + sideways via _pitchKick
   // and _yawKick. The kick is decayed each frame in _update so the
   // recoil settles back as the player stops firing.
-  _applyRecoilKick(weaponKey) {
+  //
+  // `kickMult` lets the caller scale the kick — used by the first-shot
+  // accuracy bonus to drop the kick to ~20% of normal on a clean tap.
+  // We DON'T scale the burst-index advance (n still increments by 1)
+  // because the player's spray pattern position should match the bullets
+  // they've fired regardless of how soft the kick was.
+  _applyRecoilKick(weaponKey, kickMult = 1.0) {
     const r = RECOIL[weaponKey];
     if (!r) return;
     const now = performance.now();
@@ -4495,8 +4579,8 @@ const GameEngine = {
     const n = this._recoilShotCount;
     const pat = r.yawPattern || [0];
     const yawSign = pat[Math.min(n, pat.length - 1)] || 0;
-    this._pitchKick += r.pitch + (r.pitchRamp * n);
-    this._yawKick   += yawSign * r.yaw;
+    this._pitchKick += (r.pitch + (r.pitchRamp * n)) * kickMult;
+    this._yawKick   += (yawSign * r.yaw)             * kickMult;
     this._recoilShotCount++;
     // Also bias yaw + pitch back into the player's aim slowly via the
     // existing pitch/yaw mutation so the recoil "pulls" the aim a bit.
