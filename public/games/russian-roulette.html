@@ -5,785 +5,639 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <title>Russian Roulette · FPS Arena</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/styles.css">
 <style>
 /* ============================================================================
-   RUSSIAN ROULETTE — premium dark "cyber-casino" game UI.
-   Self-contained: theme tokens, layout grid, components, and the gameplay
-   stage with a spinning SVG revolver. All data is mock; the render functions
-   read from a single `state` object so a backend can be wired in later by
-   replacing the mock data + calling the same render*() functions.
+   RUSSIAN ROULETTE — a game on the FPS Arena site. Uses the shared site
+   topbar/credits; the page itself adopts a clean Stake-style navy palette.
+   Gameplay: each turn the targeted player is dealt a blackjack hand vs the
+   dealer; the result decides whether the revolver's trigger is pulled.
+   6 chambers, 1 bullet at a fixed random slot; the cylinder advances one
+   notch per pull (never re-spun) until the bullet fires. Client-side only.
    ============================================================================ */
 :root{
-  --bg-0:#070a10; --bg-1:#0c111b; --bg-2:#111826;
-  --panel:rgba(17,24,38,.72); --panel-2:rgba(23,31,48,.66);
-  --line:rgba(255,255,255,.08); --line-2:rgba(255,255,255,.05);
-  --txt:#cfd8e6; --dim:#7f8ca6; --white:#f2f6ff;
-  --red:#ff3b4e; --red-soft:rgba(255,59,78,.16);
-  --cyan:#33d6ff; --cyan-soft:rgba(51,214,255,.14);
-  --gold:#ffce4a; --green:#43e08a; --purple:#9a6bff;
-  --shadow:0 14px 40px rgba(0,0,0,.55);
-  --r:12px;
+  --rr-bg:#0d1b26; --rr-panel:#16313f; --rr-panel2:#1b3a4b; --rr-panel3:#21455a;
+  --rr-line:#2b4d60; --rr-line-2:rgba(255,255,255,.06);
+  --rr-txt:#dbe7f0; --rr-dim:#8aa4b5; --rr-white:#fff;
+  --rr-green:#1fd36b; --rr-green-d:#13a052;
+  --rr-red:#ff4d5e; --rr-red-soft:rgba(255,77,94,.14);
+  --rr-gold:#f7c948; --rr-cyan:#3fd1e6;
 }
-*{box-sizing:border-box}
-html,body{margin:0;height:100%}
-body{
-  font-family:'Rajdhani',system-ui,sans-serif; color:var(--txt);
-  background:
-    radial-gradient(1200px 700px at 70% -10%, rgba(255,59,78,.10), transparent 60%),
-    radial-gradient(900px 600px at 0% 110%, rgba(51,214,255,.08), transparent 60%),
-    linear-gradient(180deg,var(--bg-1),var(--bg-0));
-  min-height:100%;
-}
-.mono-num{font-variant-numeric:tabular-nums}
-.title-font{font-family:'Orbitron',sans-serif;letter-spacing:1px}
+body{font-family:'Rajdhani',system-ui,sans-serif;background:var(--rr-bg);color:var(--rr-txt);}
+.rr-wrap{max-width:1620px;margin:0 auto;padding:16px 18px 60px;}
+.rr-grid{display:grid;grid-template-columns:300px 1fr 320px;gap:16px;align-items:start;}
+.rp{background:var(--rr-panel);border:1px solid var(--rr-line);border-radius:12px;}
+.rp-pad{padding:15px;}
+.eyebrow{font-size:10px;letter-spacing:3px;color:var(--rr-dim);text-transform:uppercase;font-weight:600;}
+.mono{font-variant-numeric:tabular-nums;}
+.shead{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
+.shead h3{margin:0;font-size:15px;color:#fff;letter-spacing:1px;font-weight:700;}
 
-/* ── Top bar ─────────────────────────────────────────────────────────────── */
-.rr-topbar{
-  position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:18px;
-  padding:10px 20px;background:rgba(8,11,18,.82);backdrop-filter:blur(10px);
-  border-bottom:1px solid var(--line);
-}
-.rr-brand{display:flex;align-items:center;gap:10px;text-decoration:none}
-.rr-brand .logo{
-  width:34px;height:34px;border-radius:9px;display:grid;place-items:center;
-  background:linear-gradient(135deg,#ff3b4e,#7a1020);box-shadow:0 0 18px rgba(255,59,78,.5);
-  font-size:18px;
-}
-.rr-brand .name{font-family:'Orbitron',sans-serif;font-weight:900;color:#fff;font-size:16px;letter-spacing:1px}
-.rr-brand .name b{color:var(--red)}
-.rr-tabs{display:flex;gap:4px;margin-left:8px}
-.rr-tabs a{
-  color:var(--dim);text-decoration:none;font-weight:600;font-size:13px;letter-spacing:1px;
-  padding:8px 13px;border-radius:8px;text-transform:uppercase;
-}
-.rr-tabs a:hover{color:var(--white);background:rgba(255,255,255,.04)}
-.rr-tabs a.active{color:#fff;background:var(--red-soft);box-shadow:inset 0 0 0 1px rgba(255,59,78,.4)}
-.rr-top-right{margin-left:auto;display:flex;align-items:center;gap:12px}
-.rr-balance{
-  display:flex;align-items:center;gap:8px;background:rgba(67,224,138,.08);
-  border:1px solid rgba(67,224,138,.3);border-radius:9px;padding:7px 13px;
-}
-.rr-balance .coin{color:var(--gold)}
-.rr-balance b{color:var(--green);font-size:16px;letter-spacing:.5px}
-.rr-addfunds{
-  border:0;cursor:pointer;background:linear-gradient(180deg,#ffce4a,#f0a818);color:#221700;
-  font-weight:700;font-size:12px;letter-spacing:1px;padding:9px 14px;border-radius:9px;
-  font-family:inherit;text-transform:uppercase;text-decoration:none;display:inline-flex;align-items:center;gap:6px;
-}
-.rr-addfunds:hover{filter:brightness(1.08)}
-.rr-iconbtn{
-  position:relative;width:38px;height:38px;border-radius:10px;border:1px solid var(--line);
-  background:var(--panel);color:var(--txt);cursor:pointer;display:grid;place-items:center;font-size:16px;
-}
-.rr-iconbtn:hover{border-color:var(--cyan);color:var(--cyan)}
-.rr-iconbtn .dot{position:absolute;top:7px;right:8px;width:8px;height:8px;border-radius:50%;background:var(--red);box-shadow:0 0 8px var(--red)}
-.rr-profile{display:flex;align-items:center;gap:9px;padding:5px 6px 5px 5px;border:1px solid var(--line);border-radius:30px;background:var(--panel)}
-.rr-profile .pname{font-weight:600;font-size:13px;color:#fff;padding-right:6px}
+/* ── Lobby browser (left) ─────────────────────────────────────────────────── */
+.rr-lobby{display:flex;flex-direction:column;gap:14px;}
+.seg{display:flex;background:#0e2531;border:1px solid var(--rr-line);border-radius:9px;padding:3px;gap:3px;}
+.seg button{flex:1;border:0;cursor:pointer;background:transparent;color:var(--rr-dim);font-family:inherit;
+  font-weight:700;font-size:12px;letter-spacing:1px;padding:9px 6px;border-radius:7px;}
+.seg button.on{background:var(--rr-red);color:#fff;}
+.lobby-list{display:flex;flex-direction:column;gap:10px;margin-top:12px;}
+.lobby-card{border:1px solid var(--rr-line);border-radius:11px;padding:12px;background:var(--rr-panel2);transition:border-color .15s;}
+.lobby-card:hover{border-color:rgba(255,77,94,.5);}
+.lc-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px;}
+.lc-name{font-weight:700;color:#fff;font-size:14px;}
+.lc-tag{font-size:10px;letter-spacing:1px;color:var(--rr-cyan);border:1px solid rgba(63,209,230,.35);border-radius:20px;padding:2px 9px;text-transform:uppercase;}
+.lc-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:11px;}
+.lc-grid .k{font-size:10px;letter-spacing:1px;color:var(--rr-dim);text-transform:uppercase;}
+.lc-grid .v{font-weight:700;color:#fff;font-size:14px;}
+.lc-grid .v.pot{color:var(--rr-gold);}
+.lc-bottom{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.lc-players{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--rr-dim);}
+.lc-players .bar{width:60px;height:6px;border-radius:3px;background:rgba(255,255,255,.08);overflow:hidden;}
+.lc-players .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--rr-green),var(--rr-cyan));}
+.btn-join{border:0;cursor:pointer;font-family:inherit;font-weight:700;letter-spacing:1px;font-size:12px;
+  padding:8px 16px;border-radius:8px;background:var(--rr-green);color:#03210f;text-transform:uppercase;}
+.btn-join:hover{filter:brightness(1.08);}
+.btn-join.full{background:rgba(255,255,255,.08);color:var(--rr-dim);cursor:not-allowed;}
+.btn-ghost{width:100%;border:1px dashed rgba(255,77,94,.5);background:rgba(255,77,94,.05);color:#ff96a1;
+  cursor:pointer;font-family:inherit;font-weight:700;letter-spacing:1px;padding:11px;border-radius:10px;font-size:13px;margin-top:12px;}
+.btn-ghost:hover{background:rgba(255,77,94,.1);}
+.info-cards{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.info-mini{border:1px solid var(--rr-line);border-radius:10px;padding:12px;background:var(--rr-panel2);}
+.info-mini .ic{font-size:18px;}
+.info-mini h5{margin:6px 0 3px;font-size:13px;color:#fff;}
+.info-mini p{margin:0;font-size:11px;color:var(--rr-dim);line-height:1.4;}
 
-/* ── App grid ────────────────────────────────────────────────────────────── */
-.rr-main{
-  display:grid;grid-template-columns:212px 312px 1fr 330px;gap:16px;
-  padding:16px 20px 28px;max-width:1840px;margin:0 auto;align-items:start;
-}
-.panel{
-  background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
-  box-shadow:var(--shadow);backdrop-filter:blur(8px);
-}
-.panel-pad{padding:16px}
-.eyebrow{font-size:10px;letter-spacing:3px;color:var(--dim);text-transform:uppercase;font-weight:600}
+/* ── Center stage ─────────────────────────────────────────────────────────── */
+.rr-stage{display:flex;flex-direction:column;gap:14px;min-width:0;}
+.hud{display:grid;grid-template-columns:1fr 1.3fr 1fr;gap:12px;}
+.hud .rp{padding:13px 16px;text-align:center;}
+.hud .round-v{font-size:24px;color:#fff;font-weight:700;}
+.hud .pot-v{font-size:30px;color:var(--rr-gold);font-weight:700;}
+.hud .pot-sub{font-size:11px;color:var(--rr-dim);letter-spacing:1px;}
+.chambers{display:flex;gap:8px;justify-content:center;margin:6px 0 4px;}
+.chambers .ch{width:14px;height:14px;border-radius:50%;border:2px solid rgba(255,255,255,.2);background:rgba(0,0,0,.3);}
+.chambers .ch.spent{border-color:rgba(255,255,255,.1);background:rgba(255,255,255,.05);}
+.chambers .ch.live{border-color:var(--rr-red);background:var(--rr-red);box-shadow:0 0 12px var(--rr-red);}
+.ch-label{font-size:12px;color:var(--rr-dim);letter-spacing:1px;}
 
-/* ── Sidebar ─────────────────────────────────────────────────────────────── */
-.rr-sidebar{position:sticky;top:78px;display:flex;flex-direction:column;gap:14px}
-.rr-nav{display:flex;flex-direction:column;gap:3px;padding:10px}
-.rr-nav a{
-  display:flex;align-items:center;gap:11px;text-decoration:none;color:var(--dim);
-  font-weight:600;font-size:14px;padding:10px 12px;border-radius:9px;letter-spacing:.5px;
-}
-.rr-nav a .ic{width:20px;text-align:center;font-size:15px}
-.rr-nav a:hover{color:var(--white);background:rgba(255,255,255,.04)}
-.rr-nav a.active{
-  color:#fff;background:linear-gradient(90deg,var(--red-soft),transparent);
-  box-shadow:inset 2px 0 0 var(--red);
-}
-.rr-bonus{
-  margin:2px;padding:16px;border-radius:11px;position:relative;overflow:hidden;
-  background:linear-gradient(150deg,rgba(154,107,255,.22),rgba(51,214,255,.12));
-  border:1px solid rgba(154,107,255,.35);
-}
-.rr-bonus h4{margin:0 0 4px;font-family:'Orbitron';font-size:13px;color:#fff;letter-spacing:1px}
-.rr-bonus p{margin:0 0 12px;font-size:12px;color:#c9c2ec}
-.rr-bonus .claim{
-  width:100%;border:0;cursor:pointer;font-family:inherit;font-weight:700;letter-spacing:1px;
-  padding:9px;border-radius:8px;background:linear-gradient(180deg,#b58bff,#7a4fe0);color:#fff;font-size:12px;
-}
-.rr-bonus .spark{position:absolute;right:-18px;top:-18px;font-size:64px;opacity:.18}
+.arena-wrap{position:relative;background:var(--rr-panel);border:1px solid var(--rr-line);border-radius:14px;padding:14px;overflow:hidden;}
+.arena{position:relative;width:100%;aspect-ratio:1.18/1;max-height:540px;margin:0 auto;}
+.rr-table{position:absolute;inset:6% 16%;border-radius:50%;
+  background:radial-gradient(circle at 50% 42%,#1c3848,#102532 70%,#0b1a24 100%);
+  box-shadow:inset 0 0 60px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.04);}
+.rr-table::after{content:'';position:absolute;inset:18%;border-radius:50%;border:1px solid rgba(255,77,94,.18);box-shadow:0 0 30px rgba(255,77,94,.1) inset;}
+.rr-table .rim{position:absolute;inset:0;border-radius:50%;border:6px solid #102733;box-shadow:inset 0 0 0 2px rgba(255,255,255,.05);}
+.rr-beam{position:absolute;left:50%;top:50%;height:3px;width:26%;transform-origin:left center;
+  background:linear-gradient(90deg,rgba(255,77,94,.95),rgba(255,77,94,0));filter:drop-shadow(0 0 8px rgba(255,77,94,.8));
+  opacity:0;transition:opacity .2s;pointer-events:none;z-index:6;}
+.rr-beam.show{opacity:1;}
+.rr-revolver{position:absolute;left:50%;top:50%;width:38%;transform:translate(-50%,-50%) rotate(0deg);
+  transform-origin:center center;z-index:5;filter:drop-shadow(0 8px 14px rgba(0,0,0,.6));will-change:transform;}
+.rr-revolver.idle{animation:idleSpin 16s linear infinite;}
+@keyframes idleSpin{to{transform:translate(-50%,-50%) rotate(360deg);}}
+.rr-flash{position:absolute;left:50%;top:50%;width:0;height:0;border-radius:50%;background:radial-gradient(circle,#fff,rgba(255,206,74,.8) 40%,transparent 70%);
+  transform:translate(-50%,-50%);z-index:8;opacity:0;pointer-events:none;}
+.rr-flash.bang{animation:bang .45s ease-out;}
+@keyframes bang{0%{width:0;height:0;opacity:1;}100%{width:60%;height:60%;opacity:0;}}
 
-/* ── Lobby browser ───────────────────────────────────────────────────────── */
-.rr-lobby{display:flex;flex-direction:column;gap:14px}
-.section-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
-.section-h h3{margin:0;font-family:'Orbitron';font-size:15px;color:#fff;letter-spacing:1px}
-.seg{display:flex;background:rgba(0,0,0,.3);border:1px solid var(--line);border-radius:9px;padding:3px;gap:3px}
-.seg button{
-  flex:1;border:0;cursor:pointer;background:transparent;color:var(--dim);font-family:inherit;
-  font-weight:700;font-size:12px;letter-spacing:1px;padding:8px 6px;border-radius:7px;
-}
-.seg button.on{background:var(--red);color:#fff;box-shadow:0 4px 14px rgba(255,59,78,.4)}
-.lobby-list{display:flex;flex-direction:column;gap:10px;margin-top:12px}
-.lobby-card{
-  border:1px solid var(--line);border-radius:11px;padding:12px;background:var(--panel-2);
-  transition:border-color .15s,transform .1s;
-}
-.lobby-card:hover{border-color:rgba(255,59,78,.45);transform:translateY(-1px)}
-.lobby-card .lc-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px}
-.lobby-card .lc-name{font-weight:700;color:#fff;font-size:14px;letter-spacing:.5px}
-.lobby-card .lc-tag{font-size:10px;letter-spacing:1px;color:var(--cyan);border:1px solid rgba(51,214,255,.35);border-radius:20px;padding:2px 9px;text-transform:uppercase}
-.lobby-card .lc-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:11px}
-.lobby-card .lc-grid .k{font-size:10px;letter-spacing:1px;color:var(--dim);text-transform:uppercase}
-.lobby-card .lc-grid .v{font-weight:700;color:#fff;font-size:14px}
-.lobby-card .lc-grid .v.pot{color:var(--gold)}
-.lobby-card .lc-bottom{display:flex;align-items:center;justify-content:space-between;gap:10px}
-.lc-players{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--dim)}
-.lc-players .bar{width:64px;height:6px;border-radius:3px;background:rgba(255,255,255,.08);overflow:hidden}
-.lc-players .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--green),var(--cyan))}
-.btn-join{
-  border:0;cursor:pointer;font-family:inherit;font-weight:700;letter-spacing:1px;font-size:12px;
-  padding:8px 16px;border-radius:8px;background:linear-gradient(180deg,#43e08a,#1f9c5a);color:#04220e;text-transform:uppercase;
-}
-.btn-join:hover{filter:brightness(1.07)}
-.btn-join.full{background:rgba(255,255,255,.08);color:var(--dim);cursor:not-allowed}
-.btn-ghost{
-  width:100%;border:1px dashed rgba(255,59,78,.5);background:rgba(255,59,78,.05);color:#ff8a96;
-  cursor:pointer;font-family:inherit;font-weight:700;letter-spacing:1px;padding:11px;border-radius:10px;font-size:13px;
-}
-.btn-ghost:hover{background:rgba(255,59,78,.1)}
-.info-cards{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.info-mini{border:1px solid var(--line);border-radius:10px;padding:12px;background:var(--panel-2)}
-.info-mini .ic{font-size:20px}
-.info-mini h5{margin:6px 0 3px;font-size:13px;color:#fff;letter-spacing:.5px}
-.info-mini p{margin:0;font-size:11px;color:var(--dim);line-height:1.4}
+/* seat cards around table */
+.pslot{position:absolute;transform:translate(-50%,-50%);width:150px;z-index:7;}
+.pcard{border:1.5px solid var(--rr-line);border-radius:12px;padding:10px;background:#0e2531;position:relative;transition:.2s;}
+.pcard .num{position:absolute;left:-9px;top:-9px;width:24px;height:24px;border-radius:7px;background:#16313f;border:1px solid var(--rr-line);display:grid;place-items:center;font-size:12px;color:#fff;font-weight:700;}
+.pcard .head{display:flex;align-items:center;gap:9px;}
+.avatar{width:38px;height:38px;border-radius:10px;flex-shrink:0;display:grid;place-items:center;font-weight:700;color:#fff;font-size:15px;border:1px solid rgba(255,255,255,.18);}
+.pcard .uname{font-weight:700;color:#fff;font-size:14px;line-height:1.1;}
+.pcard .status{font-size:10px;letter-spacing:1px;color:var(--rr-green);text-transform:uppercase;font-weight:700;}
+.pcard .stake{display:flex;align-items:center;gap:5px;margin-top:8px;font-weight:700;color:#fff;font-size:13px;}
+.pcard .stake .coin{color:var(--rr-gold);}
+.pcard .hint{margin-top:7px;text-align:center;font-size:11px;letter-spacing:1px;font-weight:700;border-radius:7px;padding:4px;background:rgba(31,211,107,.12);color:var(--rr-green);text-transform:uppercase;}
+.pcard .hint.wait{background:rgba(247,201,72,.12);color:var(--rr-gold);}
+.pslot.active .pcard{border-color:var(--rr-red);box-shadow:0 0 0 2px var(--rr-red),0 0 30px rgba(255,77,94,.55);}
+.pslot.active .badge-aim{position:absolute;top:-15px;left:50%;transform:translateX(-50%);color:var(--rr-red);font-size:17px;text-shadow:0 0 10px var(--rr-red);}
+.pslot.dead .pcard{opacity:.42;filter:grayscale(.7);}
+.pslot.dead .status{color:var(--rr-red);}
+.pslot.dead .pcard::after{content:'OUT';position:absolute;inset:0;display:grid;place-items:center;font-size:15px;letter-spacing:3px;color:var(--rr-red);background:rgba(8,8,10,.4);border-radius:12px;font-weight:700;}
+.pslot.targetable .pcard{cursor:crosshair;border-color:var(--rr-gold);box-shadow:0 0 0 2px var(--rr-gold);}
+.pslot.targetable .pcard:hover{box-shadow:0 0 0 2px var(--rr-gold),0 0 26px rgba(247,201,72,.6);}
 
-/* ── Center stage ────────────────────────────────────────────────────────── */
-.rr-stage{display:flex;flex-direction:column;gap:14px;min-width:0}
-.hud{display:grid;grid-template-columns:1fr 1.3fr 1fr;gap:12px}
-.hud .card{padding:13px 16px;text-align:center;position:relative}
-.hud .card .eyebrow{margin-bottom:5px}
-.hud .round-v{font-family:'Orbitron';font-size:24px;color:#fff}
-.hud .pot-v{font-family:'Orbitron';font-size:30px;color:var(--gold);text-shadow:0 0 18px rgba(255,206,74,.35)}
-.hud .pot-sub{font-size:11px;color:var(--dim);letter-spacing:1px}
-.chambers{display:flex;gap:8px;justify-content:center;margin-top:4px}
-.chambers .ch{width:15px;height:15px;border-radius:50%;border:2px solid rgba(255,255,255,.18);background:rgba(0,0,0,.3)}
-.chambers .ch.spent{border-color:rgba(255,255,255,.1);background:rgba(255,255,255,.05)}
-.chambers .ch.live{border-color:var(--red);background:var(--red);box-shadow:0 0 12px var(--red)}
-.ch-label{font-size:12px;color:var(--dim);margin-top:4px;letter-spacing:1px}
+/* blackjack hand panel */
+.bj{display:none;gap:14px;align-items:stretch;}
+.bj.show{display:grid;grid-template-columns:1fr 1fr auto;}
+.bj-side{background:var(--rr-panel2);border:1px solid var(--rr-line);border-radius:11px;padding:12px;}
+.bj-lab{font-size:10px;letter-spacing:2px;color:var(--rr-dim);text-transform:uppercase;margin-bottom:8px;}
+.bj-cards{display:flex;gap:6px;min-height:62px;flex-wrap:wrap;}
+.bcard{width:42px;height:60px;border-radius:6px;background:#f5f7fb;color:#13202b;display:flex;flex-direction:column;justify-content:space-between;
+  padding:4px 5px;font-family:Georgia,serif;font-weight:700;font-size:15px;box-shadow:0 3px 8px rgba(0,0,0,.45);}
+.bcard.red{color:#d11f38;}
+.bcard.back{background:repeating-linear-gradient(45deg,#234,#345 6px,#234 12px);}
+.bcard .b{align-self:flex-end;transform:rotate(180deg);}
+.bj-val{margin-top:8px;font-weight:700;color:#fff;font-size:14px;}
+.bj-actions{display:flex;flex-direction:column;gap:8px;justify-content:center;min-width:120px;}
+.bj-actions button{border:0;cursor:pointer;font-family:inherit;font-weight:700;letter-spacing:1px;border-radius:9px;padding:12px;font-size:13px;text-transform:uppercase;}
+.bj-actions .hit{background:var(--rr-green);color:#03210f;} .bj-actions .stand{background:#34566a;color:#fff;}
+.bj-actions .double{background:var(--rr-gold);color:#241a00;}
+.bj-actions button:disabled{opacity:.4;cursor:not-allowed;}
+.bj-wait{align-self:center;color:var(--rr-dim);font-size:12px;letter-spacing:1px;}
 
-.arena-wrap{position:relative;background:
-   radial-gradient(60% 60% at 50% 45%, rgba(255,59,78,.06), transparent 70%), var(--panel);
-  border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);
-  padding:14px;overflow:hidden}
-.arena{position:relative;width:100%;aspect-ratio:1/1;max-height:560px;margin:0 auto}
-/* concentric platform */
-.rr-table{position:absolute;inset:8%;border-radius:50%;
-  background:
-    radial-gradient(circle at 50% 42%, #20262f, #11151c 70%, #0a0d12 100%);
-  box-shadow:inset 0 0 60px rgba(0,0,0,.7), 0 0 0 1px rgba(255,255,255,.04);
-}
-.rr-table::before,.rr-table::after{content:'';position:absolute;border-radius:50%;border:1px solid rgba(255,255,255,.06)}
-.rr-table::before{inset:9%}
-.rr-table::after{inset:20%;border-color:rgba(255,59,78,.18);box-shadow:0 0 30px rgba(255,59,78,.12) inset}
-.rr-table .rim{position:absolute;inset:0;border-radius:50%;
-  border:6px solid #14171e;box-shadow:inset 0 0 0 2px rgba(255,255,255,.05),0 10px 30px rgba(0,0,0,.5)}
+/* turn order + actions */
+.turn-order{display:flex;align-items:center;justify-content:center;gap:6px;}
+.turn-order .to .pip{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;border:1px solid var(--rr-line);background:var(--rr-panel2);font-size:12px;font-weight:700;}
+.turn-order .to.cur .pip{border-color:var(--rr-red);color:#fff;background:var(--rr-red-soft);}
+.turn-order .arrow{color:var(--rr-dim);}
+.actions{display:grid;grid-template-columns:1fr 2fr 1fr;gap:12px;}
+.act{border:0;cursor:pointer;font-family:inherit;font-weight:700;letter-spacing:1px;border-radius:11px;padding:14px;font-size:14px;text-transform:uppercase;display:flex;align-items:center;justify-content:center;gap:9px;}
+.act.leave{background:var(--rr-panel2);border:1px solid var(--rr-line);color:var(--rr-txt);}
+.act.leave:hover{border-color:var(--rr-red);color:#fff;}
+.act.start{background:var(--rr-green);color:#03210f;}
+.act.start:hover{filter:brightness(1.07);} .act.start:disabled{opacity:.5;cursor:not-allowed;}
+.act.start small{display:block;font-size:9px;letter-spacing:1px;opacity:.85;font-weight:600;}
+.act.cancel{background:var(--rr-panel2);border:1px solid var(--rr-line);color:var(--rr-dim);}
+.act.cancel:hover{color:#fff;border-color:var(--rr-cyan);}
+.status-line{text-align:center;color:var(--rr-dim);font-size:13px;}
+.status-line b{color:var(--rr-green);}
 
-/* targeting beam */
-.rr-beam{position:absolute;left:50%;top:50%;height:3px;width:34%;transform-origin:left center;
-  background:linear-gradient(90deg,rgba(255,59,78,.95),rgba(255,59,78,0));
-  filter:drop-shadow(0 0 8px rgba(255,59,78,.8));opacity:0;transition:opacity .2s;pointer-events:none;z-index:6}
-.rr-beam.show{opacity:1}
+/* right info panel */
+.rr-info{display:flex;flex-direction:column;gap:14px;position:sticky;top:14px;}
+.ginfo .row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--rr-line-2);font-size:13px;}
+.ginfo .row:last-child{border-bottom:0;}
+.ginfo .row .k{color:var(--rr-dim);} .ginfo .row .v{color:#fff;font-weight:700;} .ginfo .row .v.pot{color:var(--rr-gold);}
+.events{display:flex;flex-direction:column;gap:8px;max-height:360px;overflow:auto;padding-right:4px;}
+.events::-webkit-scrollbar{width:6px;}.events::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:3px;}
+.ev{display:flex;gap:9px;align-items:flex-start;font-size:13px;animation:evIn .25s ease;}
+@keyframes evIn{from{opacity:0;transform:translateX(8px);}to{opacity:1;}}
+.ev .dot{width:9px;height:9px;border-radius:50%;margin-top:5px;flex-shrink:0;background:var(--rr-dim);}
+.ev.deal .dot{background:var(--rr-cyan);}.ev.win .dot{background:var(--rr-green);}.ev.lose .dot{background:var(--rr-gold);}
+.ev.bang .dot{background:var(--rr-red);}.ev.safe .dot{background:var(--rr-green);}.ev.bj .dot{background:var(--rr-gold);}
+.ev .txt{line-height:1.3;} .ev .txt b{color:#fff;} .ev .time{margin-left:auto;color:var(--rr-dim);font-size:11px;flex-shrink:0;}
 
-/* revolver */
-.rr-revolver{position:absolute;left:50%;top:50%;width:46%;
-  transform:translate(-50%,-50%) rotate(0deg);transform-origin:center center;z-index:5;
-  filter:drop-shadow(0 8px 14px rgba(0,0,0,.6));will-change:transform}
-.rr-revolver.idle{animation:idleSpin 14s linear infinite}
-@keyframes idleSpin{to{transform:translate(-50%,-50%) rotate(360deg)}}
+.rr-title{font-size:24px;letter-spacing:3px;color:#fff;margin:0 0 2px;}
+.rr-sub{color:var(--rr-dim);font-size:13px;letter-spacing:1px;margin:0 0 14px;}
 
-/* player cards positioned around the table */
-.pslot{position:absolute;transform:translate(-50%,-50%);width:152px;z-index:7}
-.pcard{
-  border:1.5px solid var(--line);border-radius:13px;padding:11px;background:rgba(12,16,24,.92);
-  box-shadow:var(--shadow);transition:border-color .2s,box-shadow .2s,opacity .3s;position:relative;
-}
-.pcard .num{position:absolute;left:-9px;top:-9px;width:26px;height:26px;border-radius:7px;
-  background:#1a2030;border:1px solid var(--line);display:grid;place-items:center;font-family:'Orbitron';font-size:12px;color:#fff}
-.pcard .head{display:flex;align-items:center;gap:9px}
-.avatar{width:42px;height:42px;border-radius:11px;flex-shrink:0;display:grid;place-items:center;
-  font-family:'Orbitron';font-weight:700;color:#fff;font-size:16px;border:1px solid rgba(255,255,255,.18)}
-.pcard .uname{font-weight:700;color:#fff;font-size:14px;line-height:1.1}
-.pcard .status{font-size:10px;letter-spacing:1px;color:var(--green);text-transform:uppercase;font-weight:700}
-.pcard .stake{display:flex;align-items:center;gap:5px;margin-top:9px;font-weight:700;color:#fff;font-size:13px}
-.pcard .stake .coin{color:var(--gold)}
-.pcard .ready{margin-top:9px;text-align:center;font-size:11px;letter-spacing:1px;font-weight:700;
-  border-radius:7px;padding:5px;background:rgba(67,224,138,.12);color:var(--green);text-transform:uppercase}
-.pcard .ready.wait{background:rgba(255,206,74,.12);color:var(--gold)}
-/* states */
-.pslot.target .pcard{border-color:var(--red);box-shadow:0 0 0 2px var(--red),0 0 34px rgba(255,59,78,.6)}
-.pslot.target .badge-aim{position:absolute;top:-14px;left:50%;transform:translateX(-50%);
-  color:var(--red);font-size:18px;text-shadow:0 0 10px var(--red)}
-.pslot.dead .pcard{opacity:.45;filter:grayscale(.7)}
-.pslot.dead .status{color:var(--red)}
-.pslot.dead .avatar{filter:grayscale(1)}
-.pslot.dead .pcard::after{content:'ELIMINATED';position:absolute;inset:0;display:grid;place-items:center;
-  font-family:'Orbitron';font-size:13px;letter-spacing:2px;color:var(--red);background:rgba(8,8,10,.35);border-radius:13px}
-
-/* turn order */
-.turn-order{display:flex;align-items:center;justify-content:center;gap:6px;margin:2px 0}
-.turn-order .to{display:flex;align-items:center;gap:6px;color:var(--dim);font-weight:700;font-size:13px}
-.turn-order .to .pip{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;
-  border:1px solid var(--line);background:var(--panel-2);font-family:'Orbitron';font-size:12px}
-.turn-order .to.cur .pip{border-color:var(--red);color:#fff;background:var(--red-soft);box-shadow:0 0 12px rgba(255,59,78,.4)}
-.turn-order .arrow{color:var(--dim)}
-
-/* actions */
-.actions{display:grid;grid-template-columns:1fr 2fr 1fr;gap:12px}
-.act{border:0;cursor:pointer;font-family:inherit;font-weight:700;letter-spacing:1px;border-radius:11px;
-  padding:14px;font-size:14px;text-transform:uppercase;display:flex;align-items:center;justify-content:center;gap:9px}
-.act.leave{background:var(--panel-2);border:1px solid var(--line);color:var(--txt)}
-.act.leave:hover{border-color:var(--red);color:#fff}
-.act.start{background:linear-gradient(180deg,#ff4658,#c41728);color:#fff;box-shadow:0 8px 22px rgba(255,59,78,.4)}
-.act.start:hover{filter:brightness(1.08)}
-.act.start:disabled{opacity:.5;cursor:not-allowed;filter:grayscale(.3)}
-.act.start small{display:block;font-size:9px;letter-spacing:1px;opacity:.85;font-weight:600}
-.act.cancel{background:var(--panel-2);border:1px solid var(--line);color:var(--dim)}
-.act.cancel:hover{color:#fff;border-color:var(--cyan)}
-.status-line{text-align:center;color:var(--dim);font-size:13px;letter-spacing:.5px;margin-top:2px}
-.status-line b{color:var(--green)}
-
-/* ── Right info panel ────────────────────────────────────────────────────── */
-.rr-info{display:flex;flex-direction:column;gap:14px;position:sticky;top:78px}
-.ginfo .row{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line-2);font-size:13px}
-.ginfo .row:last-child{border-bottom:0}
-.ginfo .row .k{color:var(--dim);letter-spacing:.5px}
-.ginfo .row .v{color:#fff;font-weight:700}
-.ginfo .row .v.pot{color:var(--gold)}
-.events{display:flex;flex-direction:column;gap:8px;max-height:230px;overflow:auto;padding-right:4px}
-.events::-webkit-scrollbar{width:6px}.events::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:3px}
-.ev{display:flex;gap:9px;align-items:flex-start;font-size:13px;animation:evIn .25s ease}
-@keyframes evIn{from{opacity:0;transform:translateX(8px)}to{opacity:1}}
-.ev .dot{width:9px;height:9px;border-radius:50%;margin-top:5px;flex-shrink:0;background:var(--dim)}
-.ev.spin .dot{background:var(--cyan)} .ev.shot .dot{background:var(--gold)}
-.ev.elim .dot{background:var(--red)} .ev.safe .dot{background:var(--green)} .ev.sys .dot{background:var(--purple)}
-.ev .txt{color:var(--txt);line-height:1.3}
-.ev .txt b{color:#fff}
-.ev .time{margin-left:auto;color:var(--dim);font-size:11px;flex-shrink:0;padding-left:6px}
-.chat{display:flex;flex-direction:column;gap:8px;max-height:180px;overflow:auto;margin-bottom:11px;padding-right:4px}
-.chat .msg{font-size:13px;line-height:1.35}
-.chat .msg .who{font-weight:700;color:var(--cyan)}
-.chat .msg .who.me{color:var(--green)}
-.chat-input{display:flex;align-items:center;gap:8px;background:rgba(0,0,0,.3);border:1px solid var(--line);border-radius:10px;padding:6px 6px 6px 12px}
-.chat-input input{flex:1;background:transparent;border:0;outline:none;color:#fff;font-family:inherit;font-size:13px}
-.chat-input .emoji{cursor:pointer;color:var(--dim);font-size:16px}
-.chat-input .send{border:0;cursor:pointer;background:var(--cyan);color:#04222b;font-weight:700;border-radius:8px;padding:8px 13px;font-family:inherit;font-size:12px}
-
-/* toast */
-.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);z-index:90;
-  background:rgba(12,16,24,.96);border:1px solid var(--red);color:#fff;padding:12px 20px;border-radius:11px;
-  font-weight:600;letter-spacing:.5px;box-shadow:0 12px 30px rgba(0,0,0,.5);opacity:0;transition:.3s;pointer-events:none}
-.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
-
-/* ── Responsive ──────────────────────────────────────────────────────────── */
-@media(max-width:1500px){ .rr-main{grid-template-columns:200px 1fr 320px} .rr-lobby{display:none} }
-@media(max-width:1150px){ .rr-main{grid-template-columns:1fr 320px} .rr-sidebar{display:none} }
-@media(max-width:900px){
-  .rr-main{grid-template-columns:1fr} .rr-info{position:static}
-  .rr-tabs{display:none} .pslot{width:118px}
-  .hud{grid-template-columns:1fr 1fr} .hud .card.pot-card{grid-column:span 2}
-}
-@media(max-width:560px){ .rr-top-right .rr-balance{display:none} .actions{grid-template-columns:1fr} }
+@media(max-width:1240px){ .rr-grid{grid-template-columns:1fr 320px;} .rr-lobby{display:none;} }
+@media(max-width:980px){ .rr-grid{grid-template-columns:1fr;} .rr-info{position:static;} .pslot{width:120px;} }
+@media(max-width:560px){ .hud{grid-template-columns:1fr;} .bj.show{grid-template-columns:1fr;} .actions{grid-template-columns:1fr;} }
 </style>
 </head>
 <body>
+<div class="topbar" id="topbar"></div>
 
-<!-- ───────────────────────── TOP BAR ───────────────────────── -->
-<header class="rr-topbar">
-  <a class="rr-brand" href="/dashboard.html">
-    <span class="logo">🎯</span>
-    <span class="name">RUSSIAN<b>ROULETTE</b></span>
-  </a>
-  <nav class="rr-tabs">
-    <a href="#" class="active" data-tab>Lobby</a>
-    <a href="#" data-tab>Play</a>
-    <a href="#" data-tab>Leaderboards</a>
-    <a href="#" data-tab>History</a>
-    <a href="#" data-tab>Help</a>
-  </nav>
-  <div class="rr-top-right">
-    <div class="rr-balance"><span class="coin">🪙</span><b id="topBalance">$1,250.00</b></div>
-    <a class="rr-addfunds" href="/wallet.html">＋ Add Funds</a>
-    <button class="rr-iconbtn" id="notifBtn" title="Notifications">🔔<span class="dot"></span></button>
-    <div class="rr-profile">
-      <span class="pname">You</span>
-      <span class="avatar" style="width:30px;height:30px;font-size:13px;background:linear-gradient(135deg,#33d6ff,#2a7fd0)">Y</span>
-    </div>
+<div class="rr-wrap">
+  <h1 class="rr-title">RUSSIAN ROULETTE</h1>
+  <p class="rr-sub">Win your blackjack hand or pull the trigger. 6 chambers, 1 bullet. Last one standing takes the pot.</p>
+
+  <div class="rr-grid">
+    <!-- LOBBY BROWSER -->
+    <section class="rr-lobby">
+      <div class="rp rp-pad">
+        <div class="shead"><h3>Choose Players</h3><span class="eyebrow">Matchmaking</span></div>
+        <div class="seg" id="sizeSeg">
+          <button data-size="2">2 Players</button>
+          <button data-size="3">3 Players</button>
+          <button data-size="4" class="on">4 Players</button>
+        </div>
+        <div class="shead" style="margin:16px 0 0"><h3 style="font-size:13px">Available Lobbies</h3><span class="eyebrow" id="lobbyCount">3 open</span></div>
+        <div class="lobby-list" id="lobbyList"></div>
+        <button class="btn-ghost" id="createBtn">＋ Create Private Lobby</button>
+      </div>
+      <div class="rp rp-pad">
+        <div class="info-cards">
+          <div class="info-mini"><div class="ic">📖</div><h5>How to Play</h5><p>Ante up. On your turn you're dealt a blackjack hand — lose it and the trigger is pulled on you.</p></div>
+          <div class="info-mini"><div class="ic">🛡️</div><h5>Fair Play</h5><p>One bullet, six chambers, fixed slot. The cylinder never re-spins — only a matter of time.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CENTER STAGE -->
+    <main class="rr-stage">
+      <div class="hud">
+        <div class="rp"><div class="eyebrow">Round</div><div class="round-v mono" id="roundV">— / —</div></div>
+        <div class="rp"><div class="eyebrow">Total Pot</div><div class="pot-v mono" id="potV">0 cr</div><div class="pot-sub mono" id="perV">0 cr per player</div></div>
+        <div class="rp"><div class="eyebrow">Chamber</div><div class="chambers" id="chambers"></div><div class="ch-label mono" id="chLabel">— / 6</div></div>
+      </div>
+
+      <div class="arena-wrap">
+        <div class="arena" id="arena">
+          <div class="rr-table"><div class="rim"></div></div>
+          <div class="rr-beam" id="beam"></div>
+          <div class="rr-flash" id="flash"></div>
+          <svg class="rr-revolver idle" id="revolver" viewBox="0 0 360 170" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <defs>
+              <linearGradient id="steel" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e9eef5"/><stop offset=".5" stop-color="#9aa6b6"/><stop offset="1" stop-color="#4b5563"/></linearGradient>
+              <radialGradient id="cyl" cx="40%" cy="35%" r="75%"><stop offset="0" stop-color="#dfe6ef"/><stop offset=".6" stop-color="#828d9d"/><stop offset="1" stop-color="#3a424e"/></radialGradient>
+              <linearGradient id="wood" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8a5a30"/><stop offset="1" stop-color="#4e3018"/></linearGradient>
+            </defs>
+            <path d="M150 96 q-10 40 -34 64 q-14 -2 -20 -16 q16 -34 28 -58 z" fill="url(#wood)" stroke="#2c1a0c" stroke-width="2"/>
+            <path d="M150 104 q22 6 30 26 q-4 8 -14 8 q-12 -2 -22 -18 z" fill="#3a424e" stroke="#23282f" stroke-width="2"/>
+            <circle cx="176" cy="118" r="6" fill="#1b1f25"/>
+            <rect x="150" y="58" width="120" height="30" rx="8" fill="url(#steel)" stroke="#3a4250" stroke-width="2"/>
+            <rect x="248" y="62" width="92" height="22" rx="9" fill="url(#steel)" stroke="#3a4250" stroke-width="2"/>
+            <circle cx="338" cy="73" r="8" fill="#1b1f25" stroke="#6b7682" stroke-width="2"/>
+            <circle cx="178" cy="84" r="40" fill="url(#cyl)" stroke="#2f3742" stroke-width="3"/>
+            <g fill="#1b1f25"><circle cx="178" cy="60" r="6.5"/><circle cx="199" cy="72" r="6.5"/><circle cx="199" cy="96" r="6.5"/><circle cx="178" cy="108" r="6.5"/><circle cx="157" cy="96" r="6.5"/><circle cx="157" cy="72" r="6.5"/></g>
+            <circle cx="178" cy="84" r="7" fill="#2b333d" stroke="#0c0e12" stroke-width="2"/>
+            <path d="M138 70 q-14 -6 -16 -22 q8 -2 14 4 q6 8 8 18 z" fill="#3a424e" stroke="#23282f" stroke-width="2"/>
+          </svg>
+        </div>
+      </div>
+
+      <!-- blackjack hand for the active player -->
+      <div class="bj" id="bj">
+        <div class="bj-side"><div class="bj-lab">Dealer</div><div class="bj-cards" id="dealerCards"></div><div class="bj-val" id="dealerVal"></div></div>
+        <div class="bj-side"><div class="bj-lab" id="activeLab">Player</div><div class="bj-cards" id="activeCards"></div><div class="bj-val" id="activeVal"></div></div>
+        <div class="bj-actions" id="bjActions">
+          <button class="hit"    data-act="hit">Hit</button>
+          <button class="stand"  data-act="stand">Stand</button>
+          <button class="double" data-act="double">Double</button>
+          <div class="bj-wait" id="bjWait" style="display:none">opponent playing…</div>
+        </div>
+      </div>
+
+      <div class="turn-order" id="turnOrder"></div>
+
+      <div class="actions">
+        <button class="act leave" id="leaveBtn">🚪 Leave</button>
+        <button class="act start" id="startBtn">🎯 Start Game <small id="startSub">Deal the first hand</small></button>
+        <button class="act cancel" id="cancelBtn">✖ Reset</button>
+      </div>
+      <div class="status-line" id="statusLine">Press <b>Start Game</b> to ante up and deal.</div>
+    </main>
+
+    <!-- RIGHT INFO -->
+    <aside class="rr-info">
+      <div class="rp rp-pad ginfo">
+        <div class="shead"><h3 style="font-size:14px">Game Info</h3><span class="eyebrow">Live</span></div>
+        <div id="gameInfo"></div>
+      </div>
+      <div class="rp rp-pad">
+        <div class="shead"><h3 style="font-size:14px">Recent Events</h3><span class="eyebrow">Feed</span></div>
+        <div class="events" id="events"></div>
+      </div>
+    </aside>
   </div>
-</header>
-
-<div class="rr-main">
-
-  <!-- ───────────── SIDEBAR ───────────── -->
-  <aside class="rr-sidebar">
-    <div class="panel rr-nav">
-      <a href="#" class="active"><span class="ic">🎮</span> Play</a>
-      <a href="#"><span class="ic">🚪</span> Lobbies</a>
-      <a href="#"><span class="ic">🗂️</span> My Games</a>
-      <a href="#"><span class="ic">🏆</span> Leaderboards</a>
-      <a href="#"><span class="ic">🛒</span> Store</a>
-      <a href="#"><span class="ic">🎁</span> Rewards</a>
-      <a href="#"><span class="ic">⚙️</span> Settings</a>
-    </div>
-    <div class="panel"><div class="rr-bonus">
-      <span class="spark">🎁</span>
-      <h4>DAILY BONUS</h4>
-      <p>Claim 250 credits — resets in 6h 12m.</p>
-      <button class="claim" id="bonusBtn">CLAIM NOW</button>
-    </div></div>
-  </aside>
-
-  <!-- ───────────── LOBBY BROWSER ───────────── -->
-  <section class="rr-lobby">
-    <div class="panel panel-pad">
-      <div class="section-h"><h3>Choose Players</h3><span class="eyebrow">Matchmaking</span></div>
-      <div class="seg" id="sizeSeg">
-        <button data-size="2">2 PLAYERS</button>
-        <button data-size="3">3 PLAYERS</button>
-        <button data-size="4" class="on">4 PLAYERS</button>
-      </div>
-      <div class="section-h" style="margin:16px 0 0"><h3 style="font-size:13px">Available Lobbies</h3><span class="eyebrow" id="lobbyCount">3 open</span></div>
-      <div class="lobby-list" id="lobbyList"></div>
-      <button class="btn-ghost" id="createBtn" style="margin-top:12px">＋ Create Private Lobby</button>
-    </div>
-    <div class="panel panel-pad">
-      <div class="info-cards">
-        <div class="info-mini"><div class="ic">📖</div><h5>How to Play</h5><p>Ante up, take turns. Spin & pull — survive the chamber to win the pot.</p></div>
-        <div class="info-mini"><div class="ic">🛡️</div><h5>Fair Play</h5><p>Provably-fair RNG. Every spin is seeded & verifiable on-chain.</p></div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ───────────── CENTER STAGE ───────────── -->
-  <main class="rr-stage">
-    <div class="hud">
-      <div class="panel card"><div class="eyebrow">Round</div><div class="round-v mono-num" id="roundV">3 / 10</div></div>
-      <div class="panel card pot-card">
-        <div class="eyebrow">Total Pot</div>
-        <div class="pot-v mono-num" id="potV">$200.00</div>
-        <div class="pot-sub mono-num" id="perV">$50.00 per player</div>
-      </div>
-      <div class="panel card">
-        <div class="eyebrow">Chamber</div>
-        <div class="chambers" id="chambers"></div>
-        <div class="ch-label mono-num" id="chLabel">1 / 6</div>
-      </div>
-    </div>
-
-    <div class="arena-wrap">
-      <div class="arena" id="arena">
-        <div class="rr-table"><div class="rim"></div></div>
-        <div class="rr-beam" id="beam"></div>
-        <!-- Original stylized revolver (SVG) -->
-        <svg class="rr-revolver idle" id="revolver" viewBox="0 0 360 170" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-          <defs>
-            <linearGradient id="steel" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0" stop-color="#e9eef5"/><stop offset=".5" stop-color="#9aa6b6"/>
-              <stop offset="1" stop-color="#4b5563"/>
-            </linearGradient>
-            <radialGradient id="cyl" cx="40%" cy="35%" r="75%">
-              <stop offset="0" stop-color="#dfe6ef"/><stop offset=".6" stop-color="#828d9d"/><stop offset="1" stop-color="#3a424e"/>
-            </radialGradient>
-            <linearGradient id="wood" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stop-color="#8a5a30"/><stop offset="1" stop-color="#4e3018"/>
-            </linearGradient>
-          </defs>
-          <!-- grip (wood) -->
-          <path d="M150 96 q-10 40 -34 64 q-14 -2 -20 -16 q16 -34 28 -58 z" fill="url(#wood)" stroke="#2c1a0c" stroke-width="2"/>
-          <!-- trigger guard -->
-          <path d="M150 104 q22 6 30 26 q-4 8 -14 8 q-12 -2 -22 -18 z" fill="#3a424e" stroke="#23282f" stroke-width="2"/>
-          <circle cx="176" cy="118" r="6" fill="#1b1f25"/>
-          <!-- frame / top strap -->
-          <rect x="150" y="58" width="120" height="30" rx="8" fill="url(#steel)" stroke="#3a4250" stroke-width="2"/>
-          <!-- barrel -->
-          <rect x="248" y="62" width="92" height="22" rx="9" fill="url(#steel)" stroke="#3a4250" stroke-width="2"/>
-          <rect x="248" y="60" width="92" height="6" rx="3" fill="#cfd8e3" opacity=".8"/>
-          <!-- muzzle -->
-          <circle cx="338" cy="73" r="8" fill="#1b1f25" stroke="#6b7682" stroke-width="2"/>
-          <!-- cylinder (pivot ~ center) -->
-          <circle cx="178" cy="84" r="40" fill="url(#cyl)" stroke="#2f3742" stroke-width="3"/>
-          <circle cx="178" cy="84" r="40" fill="none" stroke="rgba(255,255,255,.25)" stroke-width="1"/>
-          <g fill="#1b1f25">
-            <circle cx="178" cy="60" r="6.5"/><circle cx="199" cy="72" r="6.5"/><circle cx="199" cy="96" r="6.5"/>
-            <circle cx="178" cy="108" r="6.5"/><circle cx="157" cy="96" r="6.5"/><circle cx="157" cy="72" r="6.5"/>
-          </g>
-          <circle cx="178" cy="84" r="7" fill="#2b333d" stroke="#0c0e12" stroke-width="2"/>
-          <!-- hammer -->
-          <path d="M138 70 q-14 -6 -16 -22 q8 -2 14 4 q6 8 8 18 z" fill="#3a424e" stroke="#23282f" stroke-width="2"/>
-        </svg>
-        <!-- player slots injected by JS -->
-      </div>
-    </div>
-
-    <div class="turn-order" id="turnOrder"></div>
-
-    <div class="actions">
-      <button class="act leave" id="leaveBtn">🚪 Leave</button>
-      <button class="act start" id="startBtn">🎯 Start Round <small id="startSub">All players must be ready</small></button>
-      <button class="act cancel" id="cancelBtn">✖ Cancel</button>
-    </div>
-    <div class="status-line" id="statusLine">Game will start automatically when all players are <b>READY</b>.</div>
-  </main>
-
-  <!-- ───────────── RIGHT INFO PANEL ───────────── -->
-  <aside class="rr-info">
-    <div class="panel panel-pad ginfo">
-      <div class="section-h"><h3 style="font-size:14px">Game Info</h3><span class="eyebrow">Live</span></div>
-      <div id="gameInfo"></div>
-    </div>
-    <div class="panel panel-pad">
-      <div class="section-h"><h3 style="font-size:14px">Recent Events</h3><span class="eyebrow">Feed</span></div>
-      <div class="events" id="events"></div>
-    </div>
-    <div class="panel panel-pad">
-      <div class="section-h"><h3 style="font-size:14px">Game Chat</h3><span class="eyebrow" id="chatCount">live</span></div>
-      <div class="chat" id="chat"></div>
-      <div class="chat-input">
-        <input id="chatInput" type="text" maxlength="160" placeholder="Say something…">
-        <span class="emoji" id="emojiBtn" title="Emoji">😀</span>
-        <button class="send" id="sendBtn">Send</button>
-      </div>
-    </div>
-  </aside>
 </div>
+<div class="legal-footer">Credits are fictional play-money credits only and have no real-world monetary value.</div>
 
-<div class="toast" id="toast"></div>
-
+<script src="/js/api.js"></script>
+<script src="/js/auth.js"></script>
+<script src="/js/dollar-rain.js"></script>
+<script src="/js/music-player.js"></script>
+<script src="/js/notifications.js"></script>
 <script>
 /* ============================================================================
-   GAME STATE + RENDERERS (mock data, no backend).
-   Swap MOCK.* for real API data later and call the same render*() functions.
+   CLIENT-SIDE GAME ENGINE (demo — not wired to the server wallet).
    ============================================================================ */
-const $  = (s, r=document) => r.querySelector(s);
-const $$ = (s, r=document) => [...r.querySelectorAll(s)];
+const $  = (s,r=document)=>r.querySelector(s);
+const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
 
-// Avatar palette (gradient + initial — original art, no external images).
-const AV = [
-  ['#ff6a3d','#b3210f'], ['#33d6ff','#1f5fae'], ['#43e08a','#159c5a'],
-  ['#b58bff','#6a35d8'], ['#ffce4a','#d98a13'], ['#ff5cb0','#b81e6e'],
-];
-let avI = 0;
-function avatar(name){ const [a,b] = AV[(avI++)%AV.length]; return {bg:`linear-gradient(135deg,${a},${b})`, ch:(name[0]||'?').toUpperCase()}; }
+// Seat angles (deg, clockwise from east). Drives card position + gun aim.
+const SLOTS = { 2:[180,0], 3:[270,30,150], 4:[225,315,45,135] };
+const AV = [['#3fd1e6','#1f7fae'],['#ff6a3d','#b3210f'],['#1fd36b','#13a052'],['#b58bff','#6a35d8']];
+const BOT_NAMES = ['ViperX','KingPin','Shadow7','NeonFox','GhostByte'];
 
-// Slot angles (deg, clockwise from east) per lobby size — drives both the card
-// position and the revolver's resting angle when it targets that player.
-const SLOTS = {
-  2:[180,0],
-  3:[270,30,150],
-  4:[225,315,45,135],   // TL, TR, BR, BL  (matches the reference layout)
-};
+const RANKS=['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
+const SUITS=['♠','♥','♦','♣'];
+const rnd = n => Math.floor(Math.random()*n);
+function drawCard(){ return { r:RANKS[rnd(13)], s:SUITS[rnd(4)] }; }
+function cardVal(c){ if(c.r==='A')return 11; if(['10','J','Q','K'].includes(c.r))return 10; return +c.r; }
+function handVal(cards){ let t=0,a=0; for(const c of cards){ if(c.hidden)continue; t+=cardVal(c); if(c.r==='A')a++; } while(t>21&&a){t-=10;a--;} return t; }
+function isBJ(cards){ return cards.length===2 && handVal(cards)===21; }
 
-// Mock player pools.
-const NAMES = ['AcePlayer','ViperX','KingPin','Shadow7','NeonFox','GhostByte','RazorJoe','LunaR'];
-function makePlayers(size, stake){
-  avI = 0;
-  return NAMES.slice(0,size).map((name,i)=>{
-    const a = avatar(name);
-    return { id:'p'+i, name, stake, alive:true, ready:true, angle:SLOTS[size][i], av:a, num:i+1 };
-  });
-}
-
-// Mock lobby lists per size.
 const MOCK_LOBBIES = {
-  2:[
-    {name:'Quick Duel',   tag:'2P · Casual', fee:10,  joined:1},
-    {name:'Sudden Death', tag:'2P · Ranked', fee:50,  joined:1},
-    {name:'Whale Duel',   tag:'2P · High',   fee:250, joined:0},
-  ],
-  3:[
-    {name:'Triple Threat',tag:'3P · Casual', fee:25,  joined:2},
-    {name:'Trio Standoff',tag:'3P · Ranked', fee:100, joined:1},
-    {name:'Lucky Three',  tag:'3P · Turbo',  fee:15,  joined:2},
-  ],
-  4:[
-    {name:'High Rollers', tag:'4P · Ranked', fee:50,  joined:3},
-    {name:'Midnight Four',tag:'4P · Casual', fee:25,  joined:2},
-    {name:'Death Circle', tag:'4P · High',   fee:100, joined:1},
-  ],
+  2:[{name:'Quick Duel',tag:'2P · Casual',fee:50,joined:1},{name:'Sudden Death',tag:'2P · Ranked',fee:250,joined:1},{name:'Whale Duel',tag:'2P · High',fee:1000,joined:0}],
+  3:[{name:'Triple Threat',tag:'3P · Casual',fee:100,joined:2},{name:'Trio Standoff',tag:'3P · Ranked',fee:500,joined:1},{name:'Lucky Three',tag:'3P · Turbo',fee:50,joined:2}],
+  4:[{name:'High Rollers',tag:'4P · Ranked',fee:50,joined:3},{name:'Midnight Four',tag:'4P · Casual',fee:25,joined:2},{name:'Death Circle',tag:'4P · High',fee:100,joined:1}],
 };
 
 const state = {
-  size: 4,
-  players: makePlayers(4, 50),
-  round: 3, maxRounds: 10,
-  chamber: 1, chamberSize: 6,
-  bullet: 1 + Math.floor(Math.random()*6),  // hidden "loaded" chamber
-  perPlayer: 50,
-  targetId: null,
-  spinning: false,
-  revAngle: 0,
-  events: [],
-  balance: 1250,
+  size:4, fee:50, players:[], dealer:[], dealerDone:false,
+  round:0, maxRounds:10, chamber:1, bullet:1+rnd(6),
+  active:-1, phase:'idle', // idle | player | bot | resolving | targeting | over
+  events:[], balance:0, busy:false,
 };
 
-/* ── Renderers ───────────────────────────────────────────────────────────── */
-function fmt(n){ return '$' + Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
-function pot(){ return state.players.length * state.perPlayer; }
+/* ── Setup ───────────────────────────────────────────────────────────────── */
+function buildPlayers(size,fee){
+  const arr=[];
+  for(let i=0;i<size;i++){
+    const human = i===0;
+    const name = human?'You':BOT_NAMES[i-1];
+    const [a,b]=AV[i%AV.length];
+    arr.push({id:'p'+i,num:i+1,name,human,alive:true,stake:fee,angle:SLOTS[size][i],
+      av:{bg:`linear-gradient(135deg,${a},${b})`,ch:name[0].toUpperCase()},cards:[]});
+  }
+  return arr;
+}
+function fmtCr(n){ return Number(n).toLocaleString()+' cr'; }
+function pot(){ return state.size*state.fee; }
 
+/* ── Renderers ───────────────────────────────────────────────────────────── */
 function renderLobbyList(){
-  const list = MOCK_LOBBIES[state.size];
-  $('#lobbyCount').textContent = list.length + ' open';
-  $('#lobbyList').innerHTML = list.map((l,i)=>{
-    const full = l.joined >= state.size;
+  const list=MOCK_LOBBIES[state.size];
+  $('#lobbyCount').textContent=list.length+' open';
+  $('#lobbyList').innerHTML=list.map((l,i)=>{
+    const full=l.joined>=state.size;
     return `<div class="lobby-card">
       <div class="lc-top"><span class="lc-name">${l.name}</span><span class="lc-tag">${l.tag}</span></div>
       <div class="lc-grid">
-        <div><div class="k">Entry</div><div class="v">${fmt(l.fee)}</div></div>
-        <div><div class="k">Pot</div><div class="v pot">${fmt(l.fee*state.size)}</div></div>
+        <div><div class="k">Entry</div><div class="v">${fmtCr(l.fee)}</div></div>
+        <div><div class="k">Pot</div><div class="v pot">${fmtCr(l.fee*state.size)}</div></div>
         <div><div class="k">Players</div><div class="v">${l.joined}/${state.size}</div></div>
       </div>
       <div class="lc-bottom">
         <div class="lc-players"><span class="bar"><i style="width:${l.joined/state.size*100}%"></i></span>${l.joined}/${state.size}</div>
         <button class="btn-join ${full?'full':''}" data-join="${i}" ${full?'disabled':''}>${full?'Full':'Join'}</button>
-      </div>
-    </div>`;
+      </div></div>`;
   }).join('');
-  $$('[data-join]').forEach(b=>b.addEventListener('click',()=>joinLobby(list[+b.dataset.join])));
+  $$('[data-join]').forEach(b=>b.addEventListener('click',()=>{ state.fee=list[+b.dataset.join].fee; toast(`Joined ${list[+b.dataset.join].name}`); renderHUD(); renderGameInfo(); }));
 }
-
 function renderPlayers(){
-  // Remove existing slots, keep table/beam/revolver.
-  $$('.pslot', $('#arena')).forEach(e=>e.remove());
-  const arena = $('#arena');
-  state.players.forEach(p=>{
-    const rad = state.size === 2 ? 0.66 : 0.60;              // distance from centre
-    const x = 50 + rad*50*Math.cos(p.angle*Math.PI/180);
-    const y = 50 + rad*50*Math.sin(p.angle*Math.PI/180);
-    const slot = document.createElement('div');
-    slot.className = 'pslot' + (p.alive?'':' dead') + (p.id===state.targetId?' target':'');
-    slot.style.left = x+'%'; slot.style.top = y+'%';
-    slot.innerHTML = `
-      ${p.id===state.targetId ? '<div class="badge-aim">▾</div>' : ''}
-      <div class="pcard">
+  $$('.pslot',$('#arena')).forEach(e=>e.remove());
+  const arena=$('#arena');
+  state.players.forEach((p,idx)=>{
+    const rad = state.size===2?0.64:0.58;
+    const x=50+rad*50*Math.cos(p.angle*Math.PI/180);
+    const y=50+rad*50*Math.sin(p.angle*Math.PI/180);
+    const isActive = idx===state.active && p.alive;
+    const targetable = state.phase==='targeting' && p.alive && idx!==state.active;
+    const slot=document.createElement('div');
+    slot.className='pslot'+(p.alive?'':' dead')+(isActive?' active':'')+(targetable?' targetable':'');
+    slot.style.left=x+'%'; slot.style.top=y+'%';
+    let hint = p.alive ? (isActive?'Your turn':'Alive') : 'Out';
+    let hintCls = isActive?'wait':'';
+    slot.innerHTML=`${isActive?'<div class="badge-aim">▾</div>':''}
+      <div class="pcard" ${targetable?`data-target="${idx}"`:''}>
         <div class="num">${p.num}</div>
-        <div class="head">
-          <div class="avatar" style="background:${p.av.bg}">${p.av.ch}</div>
-          <div><div class="uname">${p.name}</div><div class="status">${p.alive?'Alive':'Out'}</div></div>
-        </div>
-        <div class="stake"><span class="coin">🪙</span> ${fmt(p.stake)}</div>
-        <div class="ready ${p.ready?'':'wait'}">${p.alive?(p.ready?'Ready':'Waiting'):'—'}</div>
+        <div class="head"><div class="avatar" style="background:${p.av.bg}">${p.av.ch}</div>
+          <div><div class="uname">${p.name}</div><div class="status">${p.alive?'Alive':'Out'}</div></div></div>
+        <div class="stake"><span class="coin">🪙</span> ${fmtCr(p.stake)}</div>
+        <div class="hint ${hintCls}">${hint}</div>
       </div>`;
     arena.appendChild(slot);
   });
+  if(state.phase==='targeting'){
+    $$('[data-target]').forEach(el=>el.addEventListener('click',()=>chooseTarget(+el.dataset.target)));
+  }
 }
-
 function renderHUD(){
-  $('#roundV').textContent = `${state.round} / ${state.maxRounds}`;
-  $('#potV').textContent = fmt(pot());
-  $('#perV').textContent = fmt(state.perPlayer) + ' per player';
-  $('#topBalance').textContent = fmt(state.balance);
+  $('#roundV').textContent = state.round?`${state.round} / ${state.maxRounds}`:'— / —';
+  $('#potV').textContent = fmtCr(pot());
+  $('#perV').textContent = fmtCr(state.fee)+' per player';
 }
-
 function updateChamber(){
-  const dots = [];
-  for(let i=1;i<=state.chamberSize;i++){
-    const cls = i===state.chamber ? 'live' : (i<state.chamber ? 'spent':'');
-    dots.push(`<span class="ch ${cls}"></span>`);
-  }
-  $('#chambers').innerHTML = dots.join('');
-  $('#chLabel').textContent = `${state.chamber} / ${state.chamberSize}`;
+  let dots=''; for(let i=1;i<=6;i++){ const c=i===state.chamber?'live':(i<state.chamber?'spent':''); dots+=`<span class="ch ${c}"></span>`; }
+  $('#chambers').innerHTML=dots; $('#chLabel').textContent=`${state.chamber} / 6`;
 }
-
 function renderTurnOrder(){
-  const alive = state.players.filter(p=>p.alive);
-  $('#turnOrder').innerHTML = alive.map((p,i)=>`
-    <span class="to ${p.id===state.targetId?'cur':''}"><span class="pip">${p.num}</span></span>
-    ${i<alive.length-1?'<span class="arrow">▸</span>':''}`).join('');
+  const alive=state.players.filter(p=>p.alive);
+  $('#turnOrder').innerHTML=alive.map((p,i)=>`<span class="to ${state.players[state.active]&&p.id===state.players[state.active].id?'cur':''}"><span class="pip">${p.num}</span></span>${i<alive.length-1?'<span class="arrow">▸</span>':''}`).join('');
 }
-
 function renderGameInfo(){
-  const rows = [
-    ['Lobby Type', `${state.size}-Player Ranked`],
-    ['Players', `${state.players.filter(p=>p.alive).length}/${state.size} alive`],
-    ['Entry Fee', fmt(state.perPlayer)],
-    ['Total Pot', fmt(pot()), 'pot'],
-    ['Rounds', `${state.round} / ${state.maxRounds}`],
-    ['Game Mode', 'Last One Standing'],
-  ];
-  $('#gameInfo').innerHTML = rows.map(([k,v,c])=>`
-    <div class="row"><span class="k">${k}</span><span class="v ${c||''}">${v}</span></div>`).join('');
+  const rows=[['Lobby Type',`${state.size}-Player`],['Players',`${state.players.filter(p=>p.alive).length||state.size}/${state.size} alive`],
+    ['Entry Fee',fmtCr(state.fee)],['Total Pot',fmtCr(pot()),'pot'],['Rounds',state.round?`${state.round} / ${state.maxRounds}`:`0 / ${state.maxRounds}`],['Game Mode','Last One Standing']];
+  $('#gameInfo').innerHTML=rows.map(([k,v,c])=>`<div class="row"><span class="k">${k}</span><span class="v ${c||''}">${v}</span></div>`).join('');
 }
-
-function addEvent(text, kind='sys'){
-  const t = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
-  state.events.unshift({text, kind, t});
-  if(state.events.length>40) state.events.pop();
-  renderEvents();
+function cardHTML(c){ if(c.hidden)return `<div class="bcard back"></div>`; const red=(c.s==='♥'||c.s==='♦'); return `<div class="bcard ${red?'red':''}"><span>${c.r}${c.s}</span><span class="b">${c.r}${c.s}</span></div>`; }
+function renderHand(){
+  const p=state.players[state.active]; if(!p){ $('#bj').classList.remove('show'); return; }
+  $('#bj').classList.add('show');
+  $('#activeLab').textContent=p.name;
+  $('#dealerCards').innerHTML=state.dealer.map(cardHTML).join('');
+  $('#activeCards').innerHTML=p.cards.map(cardHTML).join('');
+  $('#dealerVal').textContent = state.dealerDone?('Total '+handVal(state.dealer)):('Showing '+handVal(state.dealer.filter(c=>!c.hidden)));
+  $('#activeVal').textContent = 'Total '+handVal(p.cards);
+  const showActions = p.human && state.phase==='player';
+  $('#bjActions').querySelectorAll('button').forEach(b=>b.style.display=showActions?'':'none');
+  $('#bjWait').style.display = (!p.human && (state.phase==='bot'))?'':'none';
+  $('#bjActions .double').disabled = p.cards.length!==2;
 }
-function renderEvents(){
-  $('#events').innerHTML = state.events.map(e=>`
-    <div class="ev ${e.kind}"><span class="dot"></span><span class="txt">${e.text}</span><span class="time">${e.t}</span></div>`).join('');
+function addEvent(text,kind='deal'){
+  const t=new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  state.events.unshift({text,kind,t}); if(state.events.length>50)state.events.pop();
+  $('#events').innerHTML=state.events.map(e=>`<div class="ev ${e.kind}"><span class="dot"></span><span class="txt">${e.text}</span><span class="time">${e.t}</span></div>`).join('');
 }
-
-/* ── Interactions ────────────────────────────────────────────────────────── */
-function setSize(size){
-  state.size = size;
-  state.players = makePlayers(size, state.perPlayer);
-  state.round = 1; state.chamber = 1; state.bullet = 1+Math.floor(Math.random()*6);
-  state.targetId = null;
-  $$('#sizeSeg button').forEach(b=>b.classList.toggle('on', +b.dataset.size===size));
-  resetRevolver();
-  renderLobbyList(); renderPlayers(); renderHUD(); updateChamber(); renderTurnOrder(); renderGameInfo();
-  addEvent(`Lobby set to <b>${size} players</b>`, 'sys');
-}
-
-function joinLobby(l){
-  toast(`Joined “${l.name}” — ${fmt(l.fee)} entry`);
-  addEvent(`You joined <b>${l.name}</b> (${fmt(l.fee)})`, 'sys');
-}
-
-function resetRevolver(){
-  const rev = $('#revolver');
-  rev.classList.add('idle');
-  rev.style.transition='none'; state.revAngle = 0;
-  rev.style.transform = 'translate(-50%,-50%) rotate(0deg)';
-  $('#beam').classList.remove('show');
-}
-
+function setStatus(html){ $('#statusLine').innerHTML=html; }
 function setActions(){
-  $('#startBtn').disabled = state.spinning || state.players.filter(p=>p.alive).length<2;
-  $('#startSub').textContent = state.spinning ? 'Spinning…' : 'All players ready';
-  $('#statusLine').innerHTML = state.spinning
-    ? 'Revolver spinning — hold your breath…'
-    : 'Game will start automatically when all players are <b>READY</b>.';
+  const started = state.phase!=='idle' && state.phase!=='over';
+  $('#startBtn').disabled = started || state.busy;
+  $('#startSub').textContent = started?'In progress…':'Deal the first hand';
 }
 
-function spinRevolver(){
-  if(state.spinning) return;
-  const alive = state.players.filter(p=>p.alive);
-  if(alive.length<2){ toast('Not enough players'); return; }
-  state.spinning = true; state.targetId = null;
-  renderPlayers(); renderTurnOrder(); setActions();
-  $('#beam').classList.remove('show');
-  addEvent('Revolver spun', 'spin');
+/* ── Gun ─────────────────────────────────────────────────────────────────── */
+let revAngle=0;
+function pointGun(angle, ms=2600){
+  const rev=$('#revolver'); rev.classList.remove('idle');
+  const cur=((revAngle%360)+360)%360; let delta=((angle-cur)+360)%360;
+  revAngle += 360*4 + delta;
+  rev.style.transition='none'; void rev.offsetWidth;
+  rev.style.transition=`transform ${ms}ms cubic-bezier(.16,.84,.24,1)`;
+  rev.style.transform=`translate(-50%,-50%) rotate(${revAngle}deg)`;
+}
+function showBeam(angle){ const b=$('#beam'); b.style.transform=`rotate(${angle}deg)`; b.classList.add('show'); }
+function hideBeam(){ $('#beam').classList.remove('show'); }
 
-  const target = alive[Math.floor(Math.random()*alive.length)];
-  const rev = $('#revolver');
-  rev.classList.remove('idle');
-  // Accumulate rotation: 5 full turns + delta to land on the target's angle.
-  const curMod = ((state.revAngle % 360)+360)%360;
-  let delta = ((target.angle - curMod)+360)%360;
-  state.revAngle += 360*5 + delta;
-  // force reflow so the transition applies from the current angle
-  rev.style.transition = 'none'; void rev.offsetWidth;
-  rev.style.transition = 'transform 3s cubic-bezier(.16,.84,.24,1)';
-  rev.style.transform = `translate(-50%,-50%) rotate(${state.revAngle}deg)`;
-
-  setTimeout(()=>resolveShot(target), 3150);
+// Pull the trigger on `victimIdx`. Returns true if it fired (death).
+async function pullTrigger(victimIdx){
+  const v=state.players[victimIdx];
+  showBeam(v.angle);
+  await sleep(500);
+  const fired = state.chamber===state.bullet;
+  if(fired){
+    $('#flash').classList.remove('bang'); void $('#flash').offsetWidth; $('#flash').classList.add('bang');
+    v.alive=false;
+    addEvent(`💥 BANG — <b>${v.name}</b> is eliminated!`,'bang');
+    toast(`${v.name} is OUT`);
+    // bullet spent → reload a fresh chamber if the game continues
+    state.bullet=1+rnd(6); state.chamber=1;
+  }else{
+    addEvent(`*click* — empty chamber. <b>${v.name}</b> survives.`,'safe');
+    state.chamber = state.chamber%6 + 1;
+  }
+  updateChamber(); renderPlayers();
+  await sleep(700); hideBeam();
+  return fired;
 }
 
-function resolveShot(target){
-  state.targetId = target.id;
-  // beam points at the target
-  const beam = $('#beam');
-  beam.style.transform = `rotate(${target.angle}deg)`;
-  beam.classList.add('show');
-  renderPlayers(); renderTurnOrder();
-  addEvent(`Revolver points at <b>${target.name}</b>`, 'sys');
-
-  setTimeout(()=>{
-    addEvent('Shot fired', 'shot');
-    const hit = state.chamber === state.bullet;
-    if(hit){
-      target.alive = false; target.ready = false;
-      addEvent(`💀 <b>${target.name}</b> was eliminated!`, 'elim');
-      toast(`${target.name} is OUT`);
-    }else{
-      addEvent(`Click — empty chamber. <b>${target.name}</b> survives.`, 'safe');
-    }
-    // advance chamber + round
-    state.chamber = state.chamber % state.chamberSize + 1;
-    if(state.chamber===1) state.bullet = 1+Math.floor(Math.random()*6); // re-load on wrap
-    state.round = Math.min(state.maxRounds, state.round+1);
-    state.spinning = false;
-    if(hit) state.targetId = null;
-
-    renderPlayers(); renderHUD(); updateChamber(); renderTurnOrder(); renderGameInfo(); setActions();
-    $('#revolver').classList.add('idle');
-    $('#beam').classList.remove('show');
-    checkWinner();
-  }, 950);
+/* ── Turn flow ───────────────────────────────────────────────────────────── */
+function aliveCount(){ return state.players.filter(p=>p.alive).length; }
+function nextAliveAfter(idx){
+  for(let k=1;k<=state.size;k++){ const j=(idx+k)%state.size; if(state.players[j].alive) return j; }
+  return idx;
 }
 
-function checkWinner(){
-  const alive = state.players.filter(p=>p.alive);
-  if(alive.length===1){
-    const w = alive[0];
-    addEvent(`🏆 <b>${w.name}</b> wins the pot ${fmt(pot())}!`, 'safe');
-    toast(`${w.name} wins ${fmt(pot())}!`);
-    $('#statusLine').innerHTML = `<b>${w.name}</b> is the last one standing — new game starting…`;
-    setTimeout(()=>setSize(state.size), 3000); // reset for a fresh demo round
+async function startGame(){
+  state.players=buildPlayers(state.size,state.fee);
+  state.round=1; state.chamber=1; state.bullet=1+rnd(6);
+  state.balance-=state.fee; updateBalance();
+  addEvent(`Game started — everyone antes <b>${fmtCr(state.fee)}</b>. Pot ${fmtCr(pot())}.`,'deal');
+  renderHUD(); updateChamber(); renderGameInfo();
+  state.active = rnd(state.size);   // random starting player
+  addEvent(`The revolver starts pointed at <b>${state.players[state.active].name}</b>.`,'deal');
+  await beginTurn(state.active);
+}
+
+async function beginTurn(idx){
+  state.active=idx;
+  const p=state.players[idx];
+  if(aliveCount()<=1){ return endGame(); }
+  if(!p.alive){ return beginTurn(nextAliveAfter(idx)); }
+  pointGun(p.angle);
+  renderPlayers(); renderTurnOrder(); renderGameInfo();
+  await sleep(2700);
+  // deal
+  state.dealer=[drawCard(),{...drawCard(),hidden:true}]; state.dealerDone=false;
+  p.cards=[drawCard(),drawCard()];
+  addEvent(`<b>${p.name}</b> is dealt a hand (${handVal(p.cards)}).`,'deal');
+  renderHand();
+  if(isBJ(p.cards)){ return blackjackPath(idx); }
+  if(p.human){ state.phase='player'; renderHand(); setStatus('Your hand — <b>Hit</b>, <b>Stand</b> or <b>Double</b>.'); }
+  else { state.phase='bot'; renderHand(); setStatus(`<b>${p.name}</b> is playing…`); botPlay(idx); }
+}
+
+async function botPlay(idx){
+  const p=state.players[idx];
+  while(handVal(p.cards)<17){ await sleep(750); p.cards.push(drawCard()); renderHand(); }
+  await sleep(700); finishHand(idx);
+}
+
+// human actions
+async function humanAct(act){
+  if(state.phase!=='player') return;
+  const p=state.players[state.active];
+  if(act==='hit'){ p.cards.push(drawCard()); renderHand(); if(handVal(p.cards)>21){ state.phase='resolving'; await sleep(600); finishHand(state.active); } }
+  else if(act==='stand'){ state.phase='resolving'; finishHand(state.active); }
+  else if(act==='double'){ p.cards.push(drawCard()); renderHand(); state.phase='resolving'; await sleep(700); finishHand(state.active); }
+}
+
+async function finishHand(idx){
+  const p=state.players[idx];
+  state.dealer[1].hidden=false; state.dealerDone=true; renderHand();
+  // dealer draws to 17 unless the player already busted
+  if(handVal(p.cards)<=21){
+    while(handVal(state.dealer)<17){ await sleep(600); state.dealer.push(drawCard()); renderHand(); }
+  }
+  await sleep(500);
+  const pv=handVal(p.cards), dv=handVal(state.dealer);
+  let outcome;
+  if(pv>21) outcome='lose';
+  else if(dv>21||pv>dv) outcome='win';
+  else if(pv<dv) outcome='lose';
+  else outcome='push';
+  await resolveOutcome(idx,outcome);
+}
+
+async function resolveOutcome(idx,outcome){
+  const p=state.players[idx];
+  if(outcome==='push'){
+    addEvent(`<b>${p.name}</b> pushes the dealer — a new hand is dealt.`,'deal');
+    setStatus(`Push — re-dealing <b>${p.name}</b>…`);
+    await sleep(900); return beginTurn(idx); // same player, fresh hand
+  }
+  if(outcome==='win'){
+    addEvent(`<b>${p.name}</b> beats the dealer — no trigger. Turn passes.`,'win');
+    setStatus(`<b>${p.name}</b> survives the hand.`);
+    state.phase='idle'; renderHand(); $('#bj').classList.remove('show');
+    advanceRound(); await sleep(1100); return beginTurn(nextAliveAfter(idx));
+  }
+  // lose → pull trigger on self
+  addEvent(`<b>${p.name}</b> loses to the dealer (${handVal(p.cards)} vs ${handVal(state.dealer)}).`,'lose');
+  setStatus(`<b>${p.name}</b> loses — pulling the trigger…`);
+  $('#bj').classList.remove('show');
+  state.phase='resolving';
+  const died = await pullTrigger(idx);
+  advanceRound();
+  if(aliveCount()<=1) return endGame();
+  await sleep(700);
+  return beginTurn(nextAliveAfter(idx));
+}
+
+/* Blackjack: the player picks a target and fires at them. Then the gun moves
+   to the player AFTER the one who got the blackjack. */
+async function blackjackPath(idx){
+  const p=state.players[idx];
+  addEvent(`🂡 <b>${p.name}</b> hits BLACKJACK and gets to take a shot!`,'bj');
+  state.dealer[1].hidden=false; state.dealerDone=true; renderHand();
+  await sleep(700);
+  $('#bj').classList.remove('show');
+  const opponents = state.players.map((x,i)=>i).filter(i=>i!==idx && state.players[i].alive);
+  if(!opponents.length){ advanceRound(); return beginTurn(nextAliveAfter(idx)); }
+  if(p.human){
+    state.phase='targeting'; renderPlayers();
+    setStatus('BLACKJACK! <b>Click a player</b> to point the gun and pull the trigger.');
+    state._bjShooter=idx; // wait for chooseTarget()
+  }else{
+    const tgt=opponents[rnd(opponents.length)];
+    setStatus(`<b>${p.name}</b> takes aim at <b>${state.players[tgt].name}</b>…`);
+    pointGun(state.players[tgt].angle,1600); await sleep(1700);
+    await pullTrigger(tgt);
+    advanceRound();
+    if(aliveCount()<=1) return endGame();
+    await sleep(700); return beginTurn(nextAliveAfter(idx));
   }
 }
-
-/* ── Chat ────────────────────────────────────────────────────────────────── */
-const CHAT_SEED = [
-  ['ViperX','good luck everyone 😈'],
-  ['KingPin','i got a feeling about this one'],
-  ['AcePlayer','spin it already'],
-];
-const chat = CHAT_SEED.slice();
-function renderChat(){
-  $('#chat').innerHTML = chat.map(([who,msg],i)=>`
-    <div class="msg"><span class="who ${who==='You'?'me':''}">${who}:</span> ${msg}</div>`).join('');
-  $('#chat').scrollTop = $('#chat').scrollHeight;
-}
-function sendChat(){
-  const v = $('#chatInput').value.trim(); if(!v) return;
-  chat.push(['You', v]); $('#chatInput').value=''; renderChat();
-  // a mock opponent reply
-  setTimeout(()=>{ chat.push([['ViperX','KingPin','Shadow7'][Math.floor(Math.random()*3)], ['nice','😂','no way','clutch','rip'][Math.floor(Math.random()*5)]]); renderChat(); }, 1200);
+async function chooseTarget(tgt){
+  if(state.phase!=='targeting') return;
+  const shooter=state._bjShooter;
+  state.phase='resolving'; renderPlayers();
+  setStatus(`Taking aim at <b>${state.players[tgt].name}</b>…`);
+  pointGun(state.players[tgt].angle,1600); await sleep(1700);
+  await pullTrigger(tgt);
+  advanceRound();
+  if(aliveCount()<=1) return endGame();
+  await sleep(700); return beginTurn(nextAliveAfter(shooter));
 }
 
-/* ── Toast ───────────────────────────────────────────────────────────────── */
-let toastT;
-function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'),2200); }
+function advanceRound(){ state.round=Math.min(state.maxRounds,state.round+1); renderHUD(); renderGameInfo(); }
+
+function endGame(){
+  state.phase='over';
+  const alive=state.players.filter(p=>p.alive);
+  const w=alive[0];
+  $('#bj').classList.remove('show'); hideBeam(); $('#revolver').classList.add('idle');
+  renderPlayers(); renderTurnOrder(); setActions();
+  if(w){
+    addEvent(`🏆 <b>${w.name}</b> is the last one standing — wins ${fmtCr(pot())}!`,'win');
+    if(w.human){ state.balance+=pot(); updateBalance(); setStatus(`You win <b>${fmtCr(pot())}</b>! 🏆`); toast(`You win ${fmtCr(pot())}!`); }
+    else setStatus(`<b>${w.name}</b> wins the pot. Better luck next time.`);
+  }
+  $('#startBtn').disabled=false; $('#startSub').textContent='Play again';
+}
+
+/* ── Misc ────────────────────────────────────────────────────────────────── */
+function setSize(n){
+  if(state.phase!=='idle'&&state.phase!=='over'){ toast('Finish the current game first'); return; }
+  state.size=n; state.fee=MOCK_LOBBIES[n][0].fee;
+  $$('#sizeSeg button').forEach(b=>b.classList.toggle('on',+b.dataset.size===n));
+  resetIdle();
+}
+function resetIdle(){
+  state.phase='idle'; state.active=-1; state.round=0; state.chamber=1; state.players=buildPlayers(state.size,state.fee);
+  revAngle=0; const rev=$('#revolver'); rev.classList.add('idle'); rev.style.transition='none'; rev.style.transform='translate(-50%,-50%) rotate(0deg)';
+  hideBeam(); $('#bj').classList.remove('show');
+  renderLobbyList(); renderPlayers(); renderHUD(); updateChamber(); renderTurnOrder(); renderGameInfo(); setActions();
+  setStatus('Press <b>Start Game</b> to ante up and deal.');
+}
+let _bal=0;
+function updateBalance(){ const tb=document.querySelector('.topbar .balance'); if(tb&&window.fmtCredits) tb.textContent=fmtCredits(state.balance); }
+let toastT; function toast(m){ let t=document.getElementById('rrToast'); if(!t){ t=document.createElement('div'); t.id='rrToast'; t.style.cssText='position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);z-index:9000;background:rgba(13,27,38,.97);border:1px solid var(--rr-red,#ff4d5e);color:#fff;padding:12px 20px;border-radius:11px;font-weight:600;letter-spacing:.5px;box-shadow:0 12px 30px rgba(0,0,0,.5);opacity:0;transition:.3s;font-family:Rajdhani,sans-serif;'; document.body.appendChild(t);} t.textContent=m; requestAnimationFrame(()=>{t.style.opacity='1';t.style.transform='translateX(-50%) translateY(0)';}); clearTimeout(toastT); toastT=setTimeout(()=>{t.style.opacity='0';t.style.transform='translateX(-50%) translateY(20px)';},2300); }
 
 /* ── Wiring ──────────────────────────────────────────────────────────────── */
 $$('#sizeSeg button').forEach(b=>b.addEventListener('click',()=>setSize(+b.dataset.size)));
-$('#startBtn').addEventListener('click', spinRevolver);
-$('#cancelBtn').addEventListener('click', ()=>{ if(!state.spinning){ toast('Start cancelled'); addEvent('Start cancelled', 'sys'); } });
-$('#leaveBtn').addEventListener('click', ()=>{ toast('Left the lobby'); location.href='/dashboard.html'; });
-$('#createBtn').addEventListener('click', ()=>toast('Private lobby created — share the code with friends'));
-$('#bonusBtn').addEventListener('click', e=>{ state.balance+=250; renderHUD(); e.target.textContent='CLAIMED ✓'; e.target.disabled=true; toast('+250 credits claimed'); });
-$('#notifBtn').addEventListener('click', ()=>{ $('#notifBtn').querySelector('.dot')?.remove(); toast('No new notifications'); });
-$('#sendBtn').addEventListener('click', sendChat);
-$('#chatInput').addEventListener('keydown', e=>{ if(e.key==='Enter') sendChat(); });
-$('#emojiBtn').addEventListener('click', ()=>{ $('#chatInput').value += '🔫'; $('#chatInput').focus(); });
-$$('.rr-tabs a, .rr-nav a').forEach(a=>a.addEventListener('click', e=>{
-  e.preventDefault();
-  const group = a.closest('.rr-tabs') ? '.rr-tabs a' : '.rr-nav a';
-  $$(group).forEach(x=>x.classList.remove('active')); a.classList.add('active');
-}));
+$('#startBtn').addEventListener('click',()=>{ if(state.phase==='idle'||state.phase==='over'){ if(state.balance<state.fee){ toast('Not enough credits for the ante'); return; } startGame(); }});
+$('#cancelBtn').addEventListener('click',()=>{ if(state.phase==='idle'||state.phase==='over') resetIdle(); else toast('Game in progress'); });
+$('#leaveBtn').addEventListener('click',()=>location.href='/dashboard.html');
+$('#createBtn').addEventListener('click',()=>toast('Private lobby created — share the code with friends'));
+$('#bjActions').addEventListener('click',e=>{ const a=e.target.closest('button')?.dataset.act; if(a) humanAct(a); });
 
 /* ── Boot ────────────────────────────────────────────────────────────────── */
-function boot(){
-  // seed event feed
-  state.events = [
-    {text:'Lobby <b>High Rollers</b> opened', kind:'sys', t:'—'},
-    {text:'<b>Shadow7</b> joined the table', kind:'sys', t:'—'},
-    {text:'All players are <b>READY</b>', kind:'safe', t:'—'},
-  ];
-  renderLobbyList(); renderPlayers(); renderHUD(); updateChamber();
-  renderTurnOrder(); renderGameInfo(); renderEvents(); renderChat();
-}
-boot();
+(async()=>{
+  const user=await renderTopbar();
+  if(!user) return;
+  state.balance=Number(user.balance)||0;
+  state.events=[{text:'Welcome — choose a lobby and press Start Game.',kind:'deal',t:'—'}];
+  resetIdle();
+  $('#events').innerHTML=state.events.map(e=>`<div class="ev ${e.kind}"><span class="dot"></span><span class="txt">${e.text}</span><span class="time">${e.t}</span></div>`).join('');
+})();
 </script>
 </body>
 </html>
