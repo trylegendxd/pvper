@@ -1,0 +1,789 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<title>Russian Roulette · FPS Arena</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ============================================================================
+   RUSSIAN ROULETTE — premium dark "cyber-casino" game UI.
+   Self-contained: theme tokens, layout grid, components, and the gameplay
+   stage with a spinning SVG revolver. All data is mock; the render functions
+   read from a single `state` object so a backend can be wired in later by
+   replacing the mock data + calling the same render*() functions.
+   ============================================================================ */
+:root{
+  --bg-0:#070a10; --bg-1:#0c111b; --bg-2:#111826;
+  --panel:rgba(17,24,38,.72); --panel-2:rgba(23,31,48,.66);
+  --line:rgba(255,255,255,.08); --line-2:rgba(255,255,255,.05);
+  --txt:#cfd8e6; --dim:#7f8ca6; --white:#f2f6ff;
+  --red:#ff3b4e; --red-soft:rgba(255,59,78,.16);
+  --cyan:#33d6ff; --cyan-soft:rgba(51,214,255,.14);
+  --gold:#ffce4a; --green:#43e08a; --purple:#9a6bff;
+  --shadow:0 14px 40px rgba(0,0,0,.55);
+  --r:12px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{
+  font-family:'Rajdhani',system-ui,sans-serif; color:var(--txt);
+  background:
+    radial-gradient(1200px 700px at 70% -10%, rgba(255,59,78,.10), transparent 60%),
+    radial-gradient(900px 600px at 0% 110%, rgba(51,214,255,.08), transparent 60%),
+    linear-gradient(180deg,var(--bg-1),var(--bg-0));
+  min-height:100%;
+}
+.mono-num{font-variant-numeric:tabular-nums}
+.title-font{font-family:'Orbitron',sans-serif;letter-spacing:1px}
+
+/* ── Top bar ─────────────────────────────────────────────────────────────── */
+.rr-topbar{
+  position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:18px;
+  padding:10px 20px;background:rgba(8,11,18,.82);backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--line);
+}
+.rr-brand{display:flex;align-items:center;gap:10px;text-decoration:none}
+.rr-brand .logo{
+  width:34px;height:34px;border-radius:9px;display:grid;place-items:center;
+  background:linear-gradient(135deg,#ff3b4e,#7a1020);box-shadow:0 0 18px rgba(255,59,78,.5);
+  font-size:18px;
+}
+.rr-brand .name{font-family:'Orbitron',sans-serif;font-weight:900;color:#fff;font-size:16px;letter-spacing:1px}
+.rr-brand .name b{color:var(--red)}
+.rr-tabs{display:flex;gap:4px;margin-left:8px}
+.rr-tabs a{
+  color:var(--dim);text-decoration:none;font-weight:600;font-size:13px;letter-spacing:1px;
+  padding:8px 13px;border-radius:8px;text-transform:uppercase;
+}
+.rr-tabs a:hover{color:var(--white);background:rgba(255,255,255,.04)}
+.rr-tabs a.active{color:#fff;background:var(--red-soft);box-shadow:inset 0 0 0 1px rgba(255,59,78,.4)}
+.rr-top-right{margin-left:auto;display:flex;align-items:center;gap:12px}
+.rr-balance{
+  display:flex;align-items:center;gap:8px;background:rgba(67,224,138,.08);
+  border:1px solid rgba(67,224,138,.3);border-radius:9px;padding:7px 13px;
+}
+.rr-balance .coin{color:var(--gold)}
+.rr-balance b{color:var(--green);font-size:16px;letter-spacing:.5px}
+.rr-addfunds{
+  border:0;cursor:pointer;background:linear-gradient(180deg,#ffce4a,#f0a818);color:#221700;
+  font-weight:700;font-size:12px;letter-spacing:1px;padding:9px 14px;border-radius:9px;
+  font-family:inherit;text-transform:uppercase;text-decoration:none;display:inline-flex;align-items:center;gap:6px;
+}
+.rr-addfunds:hover{filter:brightness(1.08)}
+.rr-iconbtn{
+  position:relative;width:38px;height:38px;border-radius:10px;border:1px solid var(--line);
+  background:var(--panel);color:var(--txt);cursor:pointer;display:grid;place-items:center;font-size:16px;
+}
+.rr-iconbtn:hover{border-color:var(--cyan);color:var(--cyan)}
+.rr-iconbtn .dot{position:absolute;top:7px;right:8px;width:8px;height:8px;border-radius:50%;background:var(--red);box-shadow:0 0 8px var(--red)}
+.rr-profile{display:flex;align-items:center;gap:9px;padding:5px 6px 5px 5px;border:1px solid var(--line);border-radius:30px;background:var(--panel)}
+.rr-profile .pname{font-weight:600;font-size:13px;color:#fff;padding-right:6px}
+
+/* ── App grid ────────────────────────────────────────────────────────────── */
+.rr-main{
+  display:grid;grid-template-columns:212px 312px 1fr 330px;gap:16px;
+  padding:16px 20px 28px;max-width:1840px;margin:0 auto;align-items:start;
+}
+.panel{
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
+  box-shadow:var(--shadow);backdrop-filter:blur(8px);
+}
+.panel-pad{padding:16px}
+.eyebrow{font-size:10px;letter-spacing:3px;color:var(--dim);text-transform:uppercase;font-weight:600}
+
+/* ── Sidebar ─────────────────────────────────────────────────────────────── */
+.rr-sidebar{position:sticky;top:78px;display:flex;flex-direction:column;gap:14px}
+.rr-nav{display:flex;flex-direction:column;gap:3px;padding:10px}
+.rr-nav a{
+  display:flex;align-items:center;gap:11px;text-decoration:none;color:var(--dim);
+  font-weight:600;font-size:14px;padding:10px 12px;border-radius:9px;letter-spacing:.5px;
+}
+.rr-nav a .ic{width:20px;text-align:center;font-size:15px}
+.rr-nav a:hover{color:var(--white);background:rgba(255,255,255,.04)}
+.rr-nav a.active{
+  color:#fff;background:linear-gradient(90deg,var(--red-soft),transparent);
+  box-shadow:inset 2px 0 0 var(--red);
+}
+.rr-bonus{
+  margin:2px;padding:16px;border-radius:11px;position:relative;overflow:hidden;
+  background:linear-gradient(150deg,rgba(154,107,255,.22),rgba(51,214,255,.12));
+  border:1px solid rgba(154,107,255,.35);
+}
+.rr-bonus h4{margin:0 0 4px;font-family:'Orbitron';font-size:13px;color:#fff;letter-spacing:1px}
+.rr-bonus p{margin:0 0 12px;font-size:12px;color:#c9c2ec}
+.rr-bonus .claim{
+  width:100%;border:0;cursor:pointer;font-family:inherit;font-weight:700;letter-spacing:1px;
+  padding:9px;border-radius:8px;background:linear-gradient(180deg,#b58bff,#7a4fe0);color:#fff;font-size:12px;
+}
+.rr-bonus .spark{position:absolute;right:-18px;top:-18px;font-size:64px;opacity:.18}
+
+/* ── Lobby browser ───────────────────────────────────────────────────────── */
+.rr-lobby{display:flex;flex-direction:column;gap:14px}
+.section-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.section-h h3{margin:0;font-family:'Orbitron';font-size:15px;color:#fff;letter-spacing:1px}
+.seg{display:flex;background:rgba(0,0,0,.3);border:1px solid var(--line);border-radius:9px;padding:3px;gap:3px}
+.seg button{
+  flex:1;border:0;cursor:pointer;background:transparent;color:var(--dim);font-family:inherit;
+  font-weight:700;font-size:12px;letter-spacing:1px;padding:8px 6px;border-radius:7px;
+}
+.seg button.on{background:var(--red);color:#fff;box-shadow:0 4px 14px rgba(255,59,78,.4)}
+.lobby-list{display:flex;flex-direction:column;gap:10px;margin-top:12px}
+.lobby-card{
+  border:1px solid var(--line);border-radius:11px;padding:12px;background:var(--panel-2);
+  transition:border-color .15s,transform .1s;
+}
+.lobby-card:hover{border-color:rgba(255,59,78,.45);transform:translateY(-1px)}
+.lobby-card .lc-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px}
+.lobby-card .lc-name{font-weight:700;color:#fff;font-size:14px;letter-spacing:.5px}
+.lobby-card .lc-tag{font-size:10px;letter-spacing:1px;color:var(--cyan);border:1px solid rgba(51,214,255,.35);border-radius:20px;padding:2px 9px;text-transform:uppercase}
+.lobby-card .lc-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:11px}
+.lobby-card .lc-grid .k{font-size:10px;letter-spacing:1px;color:var(--dim);text-transform:uppercase}
+.lobby-card .lc-grid .v{font-weight:700;color:#fff;font-size:14px}
+.lobby-card .lc-grid .v.pot{color:var(--gold)}
+.lobby-card .lc-bottom{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.lc-players{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--dim)}
+.lc-players .bar{width:64px;height:6px;border-radius:3px;background:rgba(255,255,255,.08);overflow:hidden}
+.lc-players .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--green),var(--cyan))}
+.btn-join{
+  border:0;cursor:pointer;font-family:inherit;font-weight:700;letter-spacing:1px;font-size:12px;
+  padding:8px 16px;border-radius:8px;background:linear-gradient(180deg,#43e08a,#1f9c5a);color:#04220e;text-transform:uppercase;
+}
+.btn-join:hover{filter:brightness(1.07)}
+.btn-join.full{background:rgba(255,255,255,.08);color:var(--dim);cursor:not-allowed}
+.btn-ghost{
+  width:100%;border:1px dashed rgba(255,59,78,.5);background:rgba(255,59,78,.05);color:#ff8a96;
+  cursor:pointer;font-family:inherit;font-weight:700;letter-spacing:1px;padding:11px;border-radius:10px;font-size:13px;
+}
+.btn-ghost:hover{background:rgba(255,59,78,.1)}
+.info-cards{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.info-mini{border:1px solid var(--line);border-radius:10px;padding:12px;background:var(--panel-2)}
+.info-mini .ic{font-size:20px}
+.info-mini h5{margin:6px 0 3px;font-size:13px;color:#fff;letter-spacing:.5px}
+.info-mini p{margin:0;font-size:11px;color:var(--dim);line-height:1.4}
+
+/* ── Center stage ────────────────────────────────────────────────────────── */
+.rr-stage{display:flex;flex-direction:column;gap:14px;min-width:0}
+.hud{display:grid;grid-template-columns:1fr 1.3fr 1fr;gap:12px}
+.hud .card{padding:13px 16px;text-align:center;position:relative}
+.hud .card .eyebrow{margin-bottom:5px}
+.hud .round-v{font-family:'Orbitron';font-size:24px;color:#fff}
+.hud .pot-v{font-family:'Orbitron';font-size:30px;color:var(--gold);text-shadow:0 0 18px rgba(255,206,74,.35)}
+.hud .pot-sub{font-size:11px;color:var(--dim);letter-spacing:1px}
+.chambers{display:flex;gap:8px;justify-content:center;margin-top:4px}
+.chambers .ch{width:15px;height:15px;border-radius:50%;border:2px solid rgba(255,255,255,.18);background:rgba(0,0,0,.3)}
+.chambers .ch.spent{border-color:rgba(255,255,255,.1);background:rgba(255,255,255,.05)}
+.chambers .ch.live{border-color:var(--red);background:var(--red);box-shadow:0 0 12px var(--red)}
+.ch-label{font-size:12px;color:var(--dim);margin-top:4px;letter-spacing:1px}
+
+.arena-wrap{position:relative;background:
+   radial-gradient(60% 60% at 50% 45%, rgba(255,59,78,.06), transparent 70%), var(--panel);
+  border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);
+  padding:14px;overflow:hidden}
+.arena{position:relative;width:100%;aspect-ratio:1/1;max-height:560px;margin:0 auto}
+/* concentric platform */
+.rr-table{position:absolute;inset:8%;border-radius:50%;
+  background:
+    radial-gradient(circle at 50% 42%, #20262f, #11151c 70%, #0a0d12 100%);
+  box-shadow:inset 0 0 60px rgba(0,0,0,.7), 0 0 0 1px rgba(255,255,255,.04);
+}
+.rr-table::before,.rr-table::after{content:'';position:absolute;border-radius:50%;border:1px solid rgba(255,255,255,.06)}
+.rr-table::before{inset:9%}
+.rr-table::after{inset:20%;border-color:rgba(255,59,78,.18);box-shadow:0 0 30px rgba(255,59,78,.12) inset}
+.rr-table .rim{position:absolute;inset:0;border-radius:50%;
+  border:6px solid #14171e;box-shadow:inset 0 0 0 2px rgba(255,255,255,.05),0 10px 30px rgba(0,0,0,.5)}
+
+/* targeting beam */
+.rr-beam{position:absolute;left:50%;top:50%;height:3px;width:34%;transform-origin:left center;
+  background:linear-gradient(90deg,rgba(255,59,78,.95),rgba(255,59,78,0));
+  filter:drop-shadow(0 0 8px rgba(255,59,78,.8));opacity:0;transition:opacity .2s;pointer-events:none;z-index:6}
+.rr-beam.show{opacity:1}
+
+/* revolver */
+.rr-revolver{position:absolute;left:50%;top:50%;width:46%;
+  transform:translate(-50%,-50%) rotate(0deg);transform-origin:center center;z-index:5;
+  filter:drop-shadow(0 8px 14px rgba(0,0,0,.6));will-change:transform}
+.rr-revolver.idle{animation:idleSpin 14s linear infinite}
+@keyframes idleSpin{to{transform:translate(-50%,-50%) rotate(360deg)}}
+
+/* player cards positioned around the table */
+.pslot{position:absolute;transform:translate(-50%,-50%);width:152px;z-index:7}
+.pcard{
+  border:1.5px solid var(--line);border-radius:13px;padding:11px;background:rgba(12,16,24,.92);
+  box-shadow:var(--shadow);transition:border-color .2s,box-shadow .2s,opacity .3s;position:relative;
+}
+.pcard .num{position:absolute;left:-9px;top:-9px;width:26px;height:26px;border-radius:7px;
+  background:#1a2030;border:1px solid var(--line);display:grid;place-items:center;font-family:'Orbitron';font-size:12px;color:#fff}
+.pcard .head{display:flex;align-items:center;gap:9px}
+.avatar{width:42px;height:42px;border-radius:11px;flex-shrink:0;display:grid;place-items:center;
+  font-family:'Orbitron';font-weight:700;color:#fff;font-size:16px;border:1px solid rgba(255,255,255,.18)}
+.pcard .uname{font-weight:700;color:#fff;font-size:14px;line-height:1.1}
+.pcard .status{font-size:10px;letter-spacing:1px;color:var(--green);text-transform:uppercase;font-weight:700}
+.pcard .stake{display:flex;align-items:center;gap:5px;margin-top:9px;font-weight:700;color:#fff;font-size:13px}
+.pcard .stake .coin{color:var(--gold)}
+.pcard .ready{margin-top:9px;text-align:center;font-size:11px;letter-spacing:1px;font-weight:700;
+  border-radius:7px;padding:5px;background:rgba(67,224,138,.12);color:var(--green);text-transform:uppercase}
+.pcard .ready.wait{background:rgba(255,206,74,.12);color:var(--gold)}
+/* states */
+.pslot.target .pcard{border-color:var(--red);box-shadow:0 0 0 2px var(--red),0 0 34px rgba(255,59,78,.6)}
+.pslot.target .badge-aim{position:absolute;top:-14px;left:50%;transform:translateX(-50%);
+  color:var(--red);font-size:18px;text-shadow:0 0 10px var(--red)}
+.pslot.dead .pcard{opacity:.45;filter:grayscale(.7)}
+.pslot.dead .status{color:var(--red)}
+.pslot.dead .avatar{filter:grayscale(1)}
+.pslot.dead .pcard::after{content:'ELIMINATED';position:absolute;inset:0;display:grid;place-items:center;
+  font-family:'Orbitron';font-size:13px;letter-spacing:2px;color:var(--red);background:rgba(8,8,10,.35);border-radius:13px}
+
+/* turn order */
+.turn-order{display:flex;align-items:center;justify-content:center;gap:6px;margin:2px 0}
+.turn-order .to{display:flex;align-items:center;gap:6px;color:var(--dim);font-weight:700;font-size:13px}
+.turn-order .to .pip{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;
+  border:1px solid var(--line);background:var(--panel-2);font-family:'Orbitron';font-size:12px}
+.turn-order .to.cur .pip{border-color:var(--red);color:#fff;background:var(--red-soft);box-shadow:0 0 12px rgba(255,59,78,.4)}
+.turn-order .arrow{color:var(--dim)}
+
+/* actions */
+.actions{display:grid;grid-template-columns:1fr 2fr 1fr;gap:12px}
+.act{border:0;cursor:pointer;font-family:inherit;font-weight:700;letter-spacing:1px;border-radius:11px;
+  padding:14px;font-size:14px;text-transform:uppercase;display:flex;align-items:center;justify-content:center;gap:9px}
+.act.leave{background:var(--panel-2);border:1px solid var(--line);color:var(--txt)}
+.act.leave:hover{border-color:var(--red);color:#fff}
+.act.start{background:linear-gradient(180deg,#ff4658,#c41728);color:#fff;box-shadow:0 8px 22px rgba(255,59,78,.4)}
+.act.start:hover{filter:brightness(1.08)}
+.act.start:disabled{opacity:.5;cursor:not-allowed;filter:grayscale(.3)}
+.act.start small{display:block;font-size:9px;letter-spacing:1px;opacity:.85;font-weight:600}
+.act.cancel{background:var(--panel-2);border:1px solid var(--line);color:var(--dim)}
+.act.cancel:hover{color:#fff;border-color:var(--cyan)}
+.status-line{text-align:center;color:var(--dim);font-size:13px;letter-spacing:.5px;margin-top:2px}
+.status-line b{color:var(--green)}
+
+/* ── Right info panel ────────────────────────────────────────────────────── */
+.rr-info{display:flex;flex-direction:column;gap:14px;position:sticky;top:78px}
+.ginfo .row{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line-2);font-size:13px}
+.ginfo .row:last-child{border-bottom:0}
+.ginfo .row .k{color:var(--dim);letter-spacing:.5px}
+.ginfo .row .v{color:#fff;font-weight:700}
+.ginfo .row .v.pot{color:var(--gold)}
+.events{display:flex;flex-direction:column;gap:8px;max-height:230px;overflow:auto;padding-right:4px}
+.events::-webkit-scrollbar{width:6px}.events::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:3px}
+.ev{display:flex;gap:9px;align-items:flex-start;font-size:13px;animation:evIn .25s ease}
+@keyframes evIn{from{opacity:0;transform:translateX(8px)}to{opacity:1}}
+.ev .dot{width:9px;height:9px;border-radius:50%;margin-top:5px;flex-shrink:0;background:var(--dim)}
+.ev.spin .dot{background:var(--cyan)} .ev.shot .dot{background:var(--gold)}
+.ev.elim .dot{background:var(--red)} .ev.safe .dot{background:var(--green)} .ev.sys .dot{background:var(--purple)}
+.ev .txt{color:var(--txt);line-height:1.3}
+.ev .txt b{color:#fff}
+.ev .time{margin-left:auto;color:var(--dim);font-size:11px;flex-shrink:0;padding-left:6px}
+.chat{display:flex;flex-direction:column;gap:8px;max-height:180px;overflow:auto;margin-bottom:11px;padding-right:4px}
+.chat .msg{font-size:13px;line-height:1.35}
+.chat .msg .who{font-weight:700;color:var(--cyan)}
+.chat .msg .who.me{color:var(--green)}
+.chat-input{display:flex;align-items:center;gap:8px;background:rgba(0,0,0,.3);border:1px solid var(--line);border-radius:10px;padding:6px 6px 6px 12px}
+.chat-input input{flex:1;background:transparent;border:0;outline:none;color:#fff;font-family:inherit;font-size:13px}
+.chat-input .emoji{cursor:pointer;color:var(--dim);font-size:16px}
+.chat-input .send{border:0;cursor:pointer;background:var(--cyan);color:#04222b;font-weight:700;border-radius:8px;padding:8px 13px;font-family:inherit;font-size:12px}
+
+/* toast */
+.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);z-index:90;
+  background:rgba(12,16,24,.96);border:1px solid var(--red);color:#fff;padding:12px 20px;border-radius:11px;
+  font-weight:600;letter-spacing:.5px;box-shadow:0 12px 30px rgba(0,0,0,.5);opacity:0;transition:.3s;pointer-events:none}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+@media(max-width:1500px){ .rr-main{grid-template-columns:200px 1fr 320px} .rr-lobby{display:none} }
+@media(max-width:1150px){ .rr-main{grid-template-columns:1fr 320px} .rr-sidebar{display:none} }
+@media(max-width:900px){
+  .rr-main{grid-template-columns:1fr} .rr-info{position:static}
+  .rr-tabs{display:none} .pslot{width:118px}
+  .hud{grid-template-columns:1fr 1fr} .hud .card.pot-card{grid-column:span 2}
+}
+@media(max-width:560px){ .rr-top-right .rr-balance{display:none} .actions{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+
+<!-- ───────────────────────── TOP BAR ───────────────────────── -->
+<header class="rr-topbar">
+  <a class="rr-brand" href="/dashboard.html">
+    <span class="logo">🎯</span>
+    <span class="name">RUSSIAN<b>ROULETTE</b></span>
+  </a>
+  <nav class="rr-tabs">
+    <a href="#" class="active" data-tab>Lobby</a>
+    <a href="#" data-tab>Play</a>
+    <a href="#" data-tab>Leaderboards</a>
+    <a href="#" data-tab>History</a>
+    <a href="#" data-tab>Help</a>
+  </nav>
+  <div class="rr-top-right">
+    <div class="rr-balance"><span class="coin">🪙</span><b id="topBalance">$1,250.00</b></div>
+    <a class="rr-addfunds" href="/wallet.html">＋ Add Funds</a>
+    <button class="rr-iconbtn" id="notifBtn" title="Notifications">🔔<span class="dot"></span></button>
+    <div class="rr-profile">
+      <span class="pname">You</span>
+      <span class="avatar" style="width:30px;height:30px;font-size:13px;background:linear-gradient(135deg,#33d6ff,#2a7fd0)">Y</span>
+    </div>
+  </div>
+</header>
+
+<div class="rr-main">
+
+  <!-- ───────────── SIDEBAR ───────────── -->
+  <aside class="rr-sidebar">
+    <div class="panel rr-nav">
+      <a href="#" class="active"><span class="ic">🎮</span> Play</a>
+      <a href="#"><span class="ic">🚪</span> Lobbies</a>
+      <a href="#"><span class="ic">🗂️</span> My Games</a>
+      <a href="#"><span class="ic">🏆</span> Leaderboards</a>
+      <a href="#"><span class="ic">🛒</span> Store</a>
+      <a href="#"><span class="ic">🎁</span> Rewards</a>
+      <a href="#"><span class="ic">⚙️</span> Settings</a>
+    </div>
+    <div class="panel"><div class="rr-bonus">
+      <span class="spark">🎁</span>
+      <h4>DAILY BONUS</h4>
+      <p>Claim 250 credits — resets in 6h 12m.</p>
+      <button class="claim" id="bonusBtn">CLAIM NOW</button>
+    </div></div>
+  </aside>
+
+  <!-- ───────────── LOBBY BROWSER ───────────── -->
+  <section class="rr-lobby">
+    <div class="panel panel-pad">
+      <div class="section-h"><h3>Choose Players</h3><span class="eyebrow">Matchmaking</span></div>
+      <div class="seg" id="sizeSeg">
+        <button data-size="2">2 PLAYERS</button>
+        <button data-size="3">3 PLAYERS</button>
+        <button data-size="4" class="on">4 PLAYERS</button>
+      </div>
+      <div class="section-h" style="margin:16px 0 0"><h3 style="font-size:13px">Available Lobbies</h3><span class="eyebrow" id="lobbyCount">3 open</span></div>
+      <div class="lobby-list" id="lobbyList"></div>
+      <button class="btn-ghost" id="createBtn" style="margin-top:12px">＋ Create Private Lobby</button>
+    </div>
+    <div class="panel panel-pad">
+      <div class="info-cards">
+        <div class="info-mini"><div class="ic">📖</div><h5>How to Play</h5><p>Ante up, take turns. Spin & pull — survive the chamber to win the pot.</p></div>
+        <div class="info-mini"><div class="ic">🛡️</div><h5>Fair Play</h5><p>Provably-fair RNG. Every spin is seeded & verifiable on-chain.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────── CENTER STAGE ───────────── -->
+  <main class="rr-stage">
+    <div class="hud">
+      <div class="panel card"><div class="eyebrow">Round</div><div class="round-v mono-num" id="roundV">3 / 10</div></div>
+      <div class="panel card pot-card">
+        <div class="eyebrow">Total Pot</div>
+        <div class="pot-v mono-num" id="potV">$200.00</div>
+        <div class="pot-sub mono-num" id="perV">$50.00 per player</div>
+      </div>
+      <div class="panel card">
+        <div class="eyebrow">Chamber</div>
+        <div class="chambers" id="chambers"></div>
+        <div class="ch-label mono-num" id="chLabel">1 / 6</div>
+      </div>
+    </div>
+
+    <div class="arena-wrap">
+      <div class="arena" id="arena">
+        <div class="rr-table"><div class="rim"></div></div>
+        <div class="rr-beam" id="beam"></div>
+        <!-- Original stylized revolver (SVG) -->
+        <svg class="rr-revolver idle" id="revolver" viewBox="0 0 360 170" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <defs>
+            <linearGradient id="steel" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#e9eef5"/><stop offset=".5" stop-color="#9aa6b6"/>
+              <stop offset="1" stop-color="#4b5563"/>
+            </linearGradient>
+            <radialGradient id="cyl" cx="40%" cy="35%" r="75%">
+              <stop offset="0" stop-color="#dfe6ef"/><stop offset=".6" stop-color="#828d9d"/><stop offset="1" stop-color="#3a424e"/>
+            </radialGradient>
+            <linearGradient id="wood" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#8a5a30"/><stop offset="1" stop-color="#4e3018"/>
+            </linearGradient>
+          </defs>
+          <!-- grip (wood) -->
+          <path d="M150 96 q-10 40 -34 64 q-14 -2 -20 -16 q16 -34 28 -58 z" fill="url(#wood)" stroke="#2c1a0c" stroke-width="2"/>
+          <!-- trigger guard -->
+          <path d="M150 104 q22 6 30 26 q-4 8 -14 8 q-12 -2 -22 -18 z" fill="#3a424e" stroke="#23282f" stroke-width="2"/>
+          <circle cx="176" cy="118" r="6" fill="#1b1f25"/>
+          <!-- frame / top strap -->
+          <rect x="150" y="58" width="120" height="30" rx="8" fill="url(#steel)" stroke="#3a4250" stroke-width="2"/>
+          <!-- barrel -->
+          <rect x="248" y="62" width="92" height="22" rx="9" fill="url(#steel)" stroke="#3a4250" stroke-width="2"/>
+          <rect x="248" y="60" width="92" height="6" rx="3" fill="#cfd8e3" opacity=".8"/>
+          <!-- muzzle -->
+          <circle cx="338" cy="73" r="8" fill="#1b1f25" stroke="#6b7682" stroke-width="2"/>
+          <!-- cylinder (pivot ~ center) -->
+          <circle cx="178" cy="84" r="40" fill="url(#cyl)" stroke="#2f3742" stroke-width="3"/>
+          <circle cx="178" cy="84" r="40" fill="none" stroke="rgba(255,255,255,.25)" stroke-width="1"/>
+          <g fill="#1b1f25">
+            <circle cx="178" cy="60" r="6.5"/><circle cx="199" cy="72" r="6.5"/><circle cx="199" cy="96" r="6.5"/>
+            <circle cx="178" cy="108" r="6.5"/><circle cx="157" cy="96" r="6.5"/><circle cx="157" cy="72" r="6.5"/>
+          </g>
+          <circle cx="178" cy="84" r="7" fill="#2b333d" stroke="#0c0e12" stroke-width="2"/>
+          <!-- hammer -->
+          <path d="M138 70 q-14 -6 -16 -22 q8 -2 14 4 q6 8 8 18 z" fill="#3a424e" stroke="#23282f" stroke-width="2"/>
+        </svg>
+        <!-- player slots injected by JS -->
+      </div>
+    </div>
+
+    <div class="turn-order" id="turnOrder"></div>
+
+    <div class="actions">
+      <button class="act leave" id="leaveBtn">🚪 Leave</button>
+      <button class="act start" id="startBtn">🎯 Start Round <small id="startSub">All players must be ready</small></button>
+      <button class="act cancel" id="cancelBtn">✖ Cancel</button>
+    </div>
+    <div class="status-line" id="statusLine">Game will start automatically when all players are <b>READY</b>.</div>
+  </main>
+
+  <!-- ───────────── RIGHT INFO PANEL ───────────── -->
+  <aside class="rr-info">
+    <div class="panel panel-pad ginfo">
+      <div class="section-h"><h3 style="font-size:14px">Game Info</h3><span class="eyebrow">Live</span></div>
+      <div id="gameInfo"></div>
+    </div>
+    <div class="panel panel-pad">
+      <div class="section-h"><h3 style="font-size:14px">Recent Events</h3><span class="eyebrow">Feed</span></div>
+      <div class="events" id="events"></div>
+    </div>
+    <div class="panel panel-pad">
+      <div class="section-h"><h3 style="font-size:14px">Game Chat</h3><span class="eyebrow" id="chatCount">live</span></div>
+      <div class="chat" id="chat"></div>
+      <div class="chat-input">
+        <input id="chatInput" type="text" maxlength="160" placeholder="Say something…">
+        <span class="emoji" id="emojiBtn" title="Emoji">😀</span>
+        <button class="send" id="sendBtn">Send</button>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================================================================
+   GAME STATE + RENDERERS (mock data, no backend).
+   Swap MOCK.* for real API data later and call the same render*() functions.
+   ============================================================================ */
+const $  = (s, r=document) => r.querySelector(s);
+const $$ = (s, r=document) => [...r.querySelectorAll(s)];
+
+// Avatar palette (gradient + initial — original art, no external images).
+const AV = [
+  ['#ff6a3d','#b3210f'], ['#33d6ff','#1f5fae'], ['#43e08a','#159c5a'],
+  ['#b58bff','#6a35d8'], ['#ffce4a','#d98a13'], ['#ff5cb0','#b81e6e'],
+];
+let avI = 0;
+function avatar(name){ const [a,b] = AV[(avI++)%AV.length]; return {bg:`linear-gradient(135deg,${a},${b})`, ch:(name[0]||'?').toUpperCase()}; }
+
+// Slot angles (deg, clockwise from east) per lobby size — drives both the card
+// position and the revolver's resting angle when it targets that player.
+const SLOTS = {
+  2:[180,0],
+  3:[270,30,150],
+  4:[225,315,45,135],   // TL, TR, BR, BL  (matches the reference layout)
+};
+
+// Mock player pools.
+const NAMES = ['AcePlayer','ViperX','KingPin','Shadow7','NeonFox','GhostByte','RazorJoe','LunaR'];
+function makePlayers(size, stake){
+  avI = 0;
+  return NAMES.slice(0,size).map((name,i)=>{
+    const a = avatar(name);
+    return { id:'p'+i, name, stake, alive:true, ready:true, angle:SLOTS[size][i], av:a, num:i+1 };
+  });
+}
+
+// Mock lobby lists per size.
+const MOCK_LOBBIES = {
+  2:[
+    {name:'Quick Duel',   tag:'2P · Casual', fee:10,  joined:1},
+    {name:'Sudden Death', tag:'2P · Ranked', fee:50,  joined:1},
+    {name:'Whale Duel',   tag:'2P · High',   fee:250, joined:0},
+  ],
+  3:[
+    {name:'Triple Threat',tag:'3P · Casual', fee:25,  joined:2},
+    {name:'Trio Standoff',tag:'3P · Ranked', fee:100, joined:1},
+    {name:'Lucky Three',  tag:'3P · Turbo',  fee:15,  joined:2},
+  ],
+  4:[
+    {name:'High Rollers', tag:'4P · Ranked', fee:50,  joined:3},
+    {name:'Midnight Four',tag:'4P · Casual', fee:25,  joined:2},
+    {name:'Death Circle', tag:'4P · High',   fee:100, joined:1},
+  ],
+};
+
+const state = {
+  size: 4,
+  players: makePlayers(4, 50),
+  round: 3, maxRounds: 10,
+  chamber: 1, chamberSize: 6,
+  bullet: 1 + Math.floor(Math.random()*6),  // hidden "loaded" chamber
+  perPlayer: 50,
+  targetId: null,
+  spinning: false,
+  revAngle: 0,
+  events: [],
+  balance: 1250,
+};
+
+/* ── Renderers ───────────────────────────────────────────────────────────── */
+function fmt(n){ return '$' + Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function pot(){ return state.players.length * state.perPlayer; }
+
+function renderLobbyList(){
+  const list = MOCK_LOBBIES[state.size];
+  $('#lobbyCount').textContent = list.length + ' open';
+  $('#lobbyList').innerHTML = list.map((l,i)=>{
+    const full = l.joined >= state.size;
+    return `<div class="lobby-card">
+      <div class="lc-top"><span class="lc-name">${l.name}</span><span class="lc-tag">${l.tag}</span></div>
+      <div class="lc-grid">
+        <div><div class="k">Entry</div><div class="v">${fmt(l.fee)}</div></div>
+        <div><div class="k">Pot</div><div class="v pot">${fmt(l.fee*state.size)}</div></div>
+        <div><div class="k">Players</div><div class="v">${l.joined}/${state.size}</div></div>
+      </div>
+      <div class="lc-bottom">
+        <div class="lc-players"><span class="bar"><i style="width:${l.joined/state.size*100}%"></i></span>${l.joined}/${state.size}</div>
+        <button class="btn-join ${full?'full':''}" data-join="${i}" ${full?'disabled':''}>${full?'Full':'Join'}</button>
+      </div>
+    </div>`;
+  }).join('');
+  $$('[data-join]').forEach(b=>b.addEventListener('click',()=>joinLobby(list[+b.dataset.join])));
+}
+
+function renderPlayers(){
+  // Remove existing slots, keep table/beam/revolver.
+  $$('.pslot', $('#arena')).forEach(e=>e.remove());
+  const arena = $('#arena');
+  state.players.forEach(p=>{
+    const rad = state.size === 2 ? 0.66 : 0.60;              // distance from centre
+    const x = 50 + rad*50*Math.cos(p.angle*Math.PI/180);
+    const y = 50 + rad*50*Math.sin(p.angle*Math.PI/180);
+    const slot = document.createElement('div');
+    slot.className = 'pslot' + (p.alive?'':' dead') + (p.id===state.targetId?' target':'');
+    slot.style.left = x+'%'; slot.style.top = y+'%';
+    slot.innerHTML = `
+      ${p.id===state.targetId ? '<div class="badge-aim">▾</div>' : ''}
+      <div class="pcard">
+        <div class="num">${p.num}</div>
+        <div class="head">
+          <div class="avatar" style="background:${p.av.bg}">${p.av.ch}</div>
+          <div><div class="uname">${p.name}</div><div class="status">${p.alive?'Alive':'Out'}</div></div>
+        </div>
+        <div class="stake"><span class="coin">🪙</span> ${fmt(p.stake)}</div>
+        <div class="ready ${p.ready?'':'wait'}">${p.alive?(p.ready?'Ready':'Waiting'):'—'}</div>
+      </div>`;
+    arena.appendChild(slot);
+  });
+}
+
+function renderHUD(){
+  $('#roundV').textContent = `${state.round} / ${state.maxRounds}`;
+  $('#potV').textContent = fmt(pot());
+  $('#perV').textContent = fmt(state.perPlayer) + ' per player';
+  $('#topBalance').textContent = fmt(state.balance);
+}
+
+function updateChamber(){
+  const dots = [];
+  for(let i=1;i<=state.chamberSize;i++){
+    const cls = i===state.chamber ? 'live' : (i<state.chamber ? 'spent':'');
+    dots.push(`<span class="ch ${cls}"></span>`);
+  }
+  $('#chambers').innerHTML = dots.join('');
+  $('#chLabel').textContent = `${state.chamber} / ${state.chamberSize}`;
+}
+
+function renderTurnOrder(){
+  const alive = state.players.filter(p=>p.alive);
+  $('#turnOrder').innerHTML = alive.map((p,i)=>`
+    <span class="to ${p.id===state.targetId?'cur':''}"><span class="pip">${p.num}</span></span>
+    ${i<alive.length-1?'<span class="arrow">▸</span>':''}`).join('');
+}
+
+function renderGameInfo(){
+  const rows = [
+    ['Lobby Type', `${state.size}-Player Ranked`],
+    ['Players', `${state.players.filter(p=>p.alive).length}/${state.size} alive`],
+    ['Entry Fee', fmt(state.perPlayer)],
+    ['Total Pot', fmt(pot()), 'pot'],
+    ['Rounds', `${state.round} / ${state.maxRounds}`],
+    ['Game Mode', 'Last One Standing'],
+  ];
+  $('#gameInfo').innerHTML = rows.map(([k,v,c])=>`
+    <div class="row"><span class="k">${k}</span><span class="v ${c||''}">${v}</span></div>`).join('');
+}
+
+function addEvent(text, kind='sys'){
+  const t = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  state.events.unshift({text, kind, t});
+  if(state.events.length>40) state.events.pop();
+  renderEvents();
+}
+function renderEvents(){
+  $('#events').innerHTML = state.events.map(e=>`
+    <div class="ev ${e.kind}"><span class="dot"></span><span class="txt">${e.text}</span><span class="time">${e.t}</span></div>`).join('');
+}
+
+/* ── Interactions ────────────────────────────────────────────────────────── */
+function setSize(size){
+  state.size = size;
+  state.players = makePlayers(size, state.perPlayer);
+  state.round = 1; state.chamber = 1; state.bullet = 1+Math.floor(Math.random()*6);
+  state.targetId = null;
+  $$('#sizeSeg button').forEach(b=>b.classList.toggle('on', +b.dataset.size===size));
+  resetRevolver();
+  renderLobbyList(); renderPlayers(); renderHUD(); updateChamber(); renderTurnOrder(); renderGameInfo();
+  addEvent(`Lobby set to <b>${size} players</b>`, 'sys');
+}
+
+function joinLobby(l){
+  toast(`Joined “${l.name}” — ${fmt(l.fee)} entry`);
+  addEvent(`You joined <b>${l.name}</b> (${fmt(l.fee)})`, 'sys');
+}
+
+function resetRevolver(){
+  const rev = $('#revolver');
+  rev.classList.add('idle');
+  rev.style.transition='none'; state.revAngle = 0;
+  rev.style.transform = 'translate(-50%,-50%) rotate(0deg)';
+  $('#beam').classList.remove('show');
+}
+
+function setActions(){
+  $('#startBtn').disabled = state.spinning || state.players.filter(p=>p.alive).length<2;
+  $('#startSub').textContent = state.spinning ? 'Spinning…' : 'All players ready';
+  $('#statusLine').innerHTML = state.spinning
+    ? 'Revolver spinning — hold your breath…'
+    : 'Game will start automatically when all players are <b>READY</b>.';
+}
+
+function spinRevolver(){
+  if(state.spinning) return;
+  const alive = state.players.filter(p=>p.alive);
+  if(alive.length<2){ toast('Not enough players'); return; }
+  state.spinning = true; state.targetId = null;
+  renderPlayers(); renderTurnOrder(); setActions();
+  $('#beam').classList.remove('show');
+  addEvent('Revolver spun', 'spin');
+
+  const target = alive[Math.floor(Math.random()*alive.length)];
+  const rev = $('#revolver');
+  rev.classList.remove('idle');
+  // Accumulate rotation: 5 full turns + delta to land on the target's angle.
+  const curMod = ((state.revAngle % 360)+360)%360;
+  let delta = ((target.angle - curMod)+360)%360;
+  state.revAngle += 360*5 + delta;
+  // force reflow so the transition applies from the current angle
+  rev.style.transition = 'none'; void rev.offsetWidth;
+  rev.style.transition = 'transform 3s cubic-bezier(.16,.84,.24,1)';
+  rev.style.transform = `translate(-50%,-50%) rotate(${state.revAngle}deg)`;
+
+  setTimeout(()=>resolveShot(target), 3150);
+}
+
+function resolveShot(target){
+  state.targetId = target.id;
+  // beam points at the target
+  const beam = $('#beam');
+  beam.style.transform = `rotate(${target.angle}deg)`;
+  beam.classList.add('show');
+  renderPlayers(); renderTurnOrder();
+  addEvent(`Revolver points at <b>${target.name}</b>`, 'sys');
+
+  setTimeout(()=>{
+    addEvent('Shot fired', 'shot');
+    const hit = state.chamber === state.bullet;
+    if(hit){
+      target.alive = false; target.ready = false;
+      addEvent(`💀 <b>${target.name}</b> was eliminated!`, 'elim');
+      toast(`${target.name} is OUT`);
+    }else{
+      addEvent(`Click — empty chamber. <b>${target.name}</b> survives.`, 'safe');
+    }
+    // advance chamber + round
+    state.chamber = state.chamber % state.chamberSize + 1;
+    if(state.chamber===1) state.bullet = 1+Math.floor(Math.random()*6); // re-load on wrap
+    state.round = Math.min(state.maxRounds, state.round+1);
+    state.spinning = false;
+    if(hit) state.targetId = null;
+
+    renderPlayers(); renderHUD(); updateChamber(); renderTurnOrder(); renderGameInfo(); setActions();
+    $('#revolver').classList.add('idle');
+    $('#beam').classList.remove('show');
+    checkWinner();
+  }, 950);
+}
+
+function checkWinner(){
+  const alive = state.players.filter(p=>p.alive);
+  if(alive.length===1){
+    const w = alive[0];
+    addEvent(`🏆 <b>${w.name}</b> wins the pot ${fmt(pot())}!`, 'safe');
+    toast(`${w.name} wins ${fmt(pot())}!`);
+    $('#statusLine').innerHTML = `<b>${w.name}</b> is the last one standing — new game starting…`;
+    setTimeout(()=>setSize(state.size), 3000); // reset for a fresh demo round
+  }
+}
+
+/* ── Chat ────────────────────────────────────────────────────────────────── */
+const CHAT_SEED = [
+  ['ViperX','good luck everyone 😈'],
+  ['KingPin','i got a feeling about this one'],
+  ['AcePlayer','spin it already'],
+];
+const chat = CHAT_SEED.slice();
+function renderChat(){
+  $('#chat').innerHTML = chat.map(([who,msg],i)=>`
+    <div class="msg"><span class="who ${who==='You'?'me':''}">${who}:</span> ${msg}</div>`).join('');
+  $('#chat').scrollTop = $('#chat').scrollHeight;
+}
+function sendChat(){
+  const v = $('#chatInput').value.trim(); if(!v) return;
+  chat.push(['You', v]); $('#chatInput').value=''; renderChat();
+  // a mock opponent reply
+  setTimeout(()=>{ chat.push([['ViperX','KingPin','Shadow7'][Math.floor(Math.random()*3)], ['nice','😂','no way','clutch','rip'][Math.floor(Math.random()*5)]]); renderChat(); }, 1200);
+}
+
+/* ── Toast ───────────────────────────────────────────────────────────────── */
+let toastT;
+function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'),2200); }
+
+/* ── Wiring ──────────────────────────────────────────────────────────────── */
+$$('#sizeSeg button').forEach(b=>b.addEventListener('click',()=>setSize(+b.dataset.size)));
+$('#startBtn').addEventListener('click', spinRevolver);
+$('#cancelBtn').addEventListener('click', ()=>{ if(!state.spinning){ toast('Start cancelled'); addEvent('Start cancelled', 'sys'); } });
+$('#leaveBtn').addEventListener('click', ()=>{ toast('Left the lobby'); location.href='/dashboard.html'; });
+$('#createBtn').addEventListener('click', ()=>toast('Private lobby created — share the code with friends'));
+$('#bonusBtn').addEventListener('click', e=>{ state.balance+=250; renderHUD(); e.target.textContent='CLAIMED ✓'; e.target.disabled=true; toast('+250 credits claimed'); });
+$('#notifBtn').addEventListener('click', ()=>{ $('#notifBtn').querySelector('.dot')?.remove(); toast('No new notifications'); });
+$('#sendBtn').addEventListener('click', sendChat);
+$('#chatInput').addEventListener('keydown', e=>{ if(e.key==='Enter') sendChat(); });
+$('#emojiBtn').addEventListener('click', ()=>{ $('#chatInput').value += '🔫'; $('#chatInput').focus(); });
+$$('.rr-tabs a, .rr-nav a').forEach(a=>a.addEventListener('click', e=>{
+  e.preventDefault();
+  const group = a.closest('.rr-tabs') ? '.rr-tabs a' : '.rr-nav a';
+  $$(group).forEach(x=>x.classList.remove('active')); a.classList.add('active');
+}));
+
+/* ── Boot ────────────────────────────────────────────────────────────────── */
+function boot(){
+  // seed event feed
+  state.events = [
+    {text:'Lobby <b>High Rollers</b> opened', kind:'sys', t:'—'},
+    {text:'<b>Shadow7</b> joined the table', kind:'sys', t:'—'},
+    {text:'All players are <b>READY</b>', kind:'safe', t:'—'},
+  ];
+  renderLobbyList(); renderPlayers(); renderHUD(); updateChamber();
+  renderTurnOrder(); renderGameInfo(); renderEvents(); renderChat();
+}
+boot();
+</script>
+</body>
+</html>

@@ -26,6 +26,7 @@ async function renderTopbar({ requireUser = true } = {}) {
       <a href="/games/blackjack.html">Blackjack</a>
       <a href="/games/mines.html">Mines</a>
       <a href="/games/wheel.html">Wheel</a>
+      <a href="/games/russian-roulette.html">Russian RL</a>
       <a href="/leaderboard.html">Leaderboard</a>
       <a href="/friends.html">Friends</a>
       <a href="/achievements.html">Achievements</a>
@@ -41,6 +42,11 @@ async function renderTopbar({ requireUser = true } = {}) {
           <span class="username">${escapeHtml(user.display_name || user.username)}</span>
         </a>
         <span class="balance">${fmtCredits(user.balance)}</span>
+        <a href="/wallet.html" id="deposit-btn" title="Add funds / deposit"
+           style="display:inline-flex;align-items:center;gap:5px;text-decoration:none;
+                  background:linear-gradient(180deg,#1fcf5b,#169c46);color:#04220e;
+                  font-weight:700;font-size:12px;letter-spacing:1px;padding:6px 13px;
+                  border-radius:4px;">＋ DEPOSIT</a>
         <button id="logout-btn">Logout</button>
       ` : `<a href="/login.html">Login</a>`}
     </div>

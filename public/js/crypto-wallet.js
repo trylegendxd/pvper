@@ -19,6 +19,7 @@
   let ethers = null;
   let cfg = null;
   let provider = null, signer = null, account = null;
+  let _busy = false;  // true during connect/deposit — suppresses auto-reload on chain/account events
 
   const $ = (sel, el = root) => el.querySelector(sel);
   const fmt = (n) => Number(n || 0).toLocaleString();
@@ -192,18 +193,30 @@
 
   async function connect() {
     if (!window.ethereum) { depStatus('No EVM wallet found. Install MetaMask or Coinbase Wallet.', 'err'); return; }
+    const btn = $('#cw-connect');
+    if (btn) btn.disabled = true;
+    _busy = true;  // suppress the chain/account auto-reload while we connect
     try {
+      depStatus('Opening your wallet…', 'wait');
       provider = new ethers.BrowserProvider(window.ethereum);
       await provider.send('eth_requestAccounts', []);
       await ensureChain();
+      // ensureChain may have switched networks — rebuild the provider so the
+      // signer is bound to the (now correct) chain.
+      provider = new ethers.BrowserProvider(window.ethereum);
       signer = await provider.getSigner();
       account = await signer.getAddress();
       $('#cw-account').textContent = short(account) + ' connected';
+      $('#cw-connect').textContent = 'Wallet Connected';
       $('#cw-link-row').style.display = '';
       $('#cw-deposit').disabled = false;
+      depStatus('Wallet connected. Enter an amount to deposit.', 'ok');
       await refreshLinkedHint();
     } catch (e) {
-      depStatus(e?.info?.error?.message || e.message || 'Connect failed.', 'err');
+      depStatus(e?.info?.error?.message || e?.shortMessage || e.message || 'Connect failed.', 'err');
+    } finally {
+      _busy = false;
+      if (btn) btn.disabled = false;
     }
   }
 
@@ -268,6 +281,7 @@
     const amt = Number($('#cw-dep-amt').value);
     if (!Number.isFinite(amt) || amt < cfg.minDepositUsdc) { depStatus(`Minimum deposit is ${cfg.minDepositUsdc} USDC.`, 'err'); return; }
     const btn = $('#cw-deposit'); btn.disabled = true;
+    _busy = true;
     try {
       await ensureChain();
       // Auto-link the wallet if it isn't linked yet — one fewer manual step.
@@ -305,7 +319,7 @@
       refreshAll();
     } catch (e) {
       depStatus(friendly(e.message) || (e?.shortMessage) || e.message || 'Deposit failed.', 'err');
-    } finally { btn.disabled = false; }
+    } finally { btn.disabled = false; _busy = false; }
   }
 
   // ── Withdraw ─────────────────────────────────────────────────────────────
@@ -382,8 +396,11 @@
       $('#cw-wd-conv').textContent = 'costs ' + fmt(c) + ' credits';
     });
     if (window.ethereum && window.ethereum.on) {
-      window.ethereum.on('accountsChanged', () => location.reload());
-      window.ethereum.on('chainChanged', () => location.reload());
+      // Only reload on a real user-driven change — NOT while we're mid-connect
+      // or mid-deposit (ensureChain switching networks fires chainChanged and
+      // would otherwise reload the page before the flow finishes).
+      window.ethereum.on('accountsChanged', () => { if (!_busy) location.reload(); });
+      window.ethereum.on('chainChanged',    () => { if (!_busy) location.reload(); });
     }
   }
 
