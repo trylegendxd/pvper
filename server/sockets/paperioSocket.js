@@ -160,8 +160,16 @@ function attach(io) {
       if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
       const nc = ny * W + nx;
       const tOwn = m.trail[nc];
+      if (tOwn === p.idx) {
+        // Crossing your OWN trail closes the loop and CAPTURES the enclosed
+        // area — this is the deliberate way to carve out / steal territory.
+        // It is NOT lethal. (Only a rival's trail or a head-on ram kills you.)
+        p.x = nx; p.y = ny;
+        capture(m, p);
+        continue;
+      }
       if (tOwn !== -1) {
-        if (tOwn === p.idx) { killPlayer(m, p, 'crossed their own trail'); continue; }
+        // Crossing another player's trail cuts them down.
         killPlayer(m, m.players[tOwn], `cut by ${p.username}`);
       }
       // body collision: stepping onto another live player's head
