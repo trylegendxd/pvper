@@ -9,65 +9,51 @@
 <link rel="stylesheet" href="/css/styles.css">
 <style>
 /* ============================================================================
-   RUSSIAN ROULETTE — a game on the FPS Arena site. Uses the shared site
-   topbar/credits; the page itself adopts a clean Stake-style navy palette.
-   Gameplay: each turn the targeted player is dealt a blackjack hand vs the
-   dealer; the result decides whether the revolver's trigger is pulled.
-   6 chambers, 1 bullet at a fixed random slot; the cylinder advances one
-   notch per pull (never re-spun) until the bullet fires. Client-side only.
+   RUSSIAN ROULETTE — real player-vs-player game on the FPS Arena site.
+   Uses the shared site topbar / background; the panels adopt a Stake-style
+   navy. All money + randomness is server-authoritative (see rrSocket.js); this
+   page only renders state and sends the player's action choices.
    ============================================================================ */
 :root{
-  --rr-bg:#0d1b26; --rr-panel:#16313f; --rr-panel2:#1b3a4b; --rr-panel3:#21455a;
-  --rr-line:#2b4d60; --rr-line-2:rgba(255,255,255,.06);
-  --rr-txt:#dbe7f0; --rr-dim:#8aa4b5; --rr-white:#fff;
-  --rr-green:#1fd36b; --rr-green-d:#13a052;
-  --rr-red:#ff4d5e; --rr-red-soft:rgba(255,77,94,.14);
-  --rr-gold:#f7c948; --rr-cyan:#3fd1e6;
+  --rr-panel:#16313f; --rr-panel2:#1b3a4b; --rr-line:#2b4d60; --rr-line2:rgba(255,255,255,.06);
+  --rr-txt:#dbe7f0; --rr-dim:#8aa4b5; --rr-green:#1fd36b; --rr-red:#ff4d5e;
+  --rr-red-soft:rgba(255,77,94,.14); --rr-gold:#f7c948; --rr-cyan:#3fd1e6;
 }
-body{font-family:'Rajdhani',system-ui,sans-serif;background:var(--rr-bg);color:var(--rr-txt);}
-.rr-wrap{max-width:1620px;margin:0 auto;padding:16px 18px 60px;}
+/* NOTE: no body{background} override — the page keeps the site background
+   (styles.css + the dollar-rain canvas) so it matches every other page. */
+body{font-family:'Rajdhani',system-ui,sans-serif;}
+.rr-wrap{max-width:1620px;margin:0 auto;padding:16px 18px 60px;position:relative;z-index:1;}
+.rr-title{font-size:24px;letter-spacing:3px;color:#fff;margin:0 0 2px;}
+.rr-sub{color:var(--rr-dim);font-size:13px;letter-spacing:1px;margin:0 0 14px;}
 .rr-grid{display:grid;grid-template-columns:300px 1fr 320px;gap:16px;align-items:start;}
 .rp{background:var(--rr-panel);border:1px solid var(--rr-line);border-radius:12px;}
 .rp-pad{padding:15px;}
 .eyebrow{font-size:10px;letter-spacing:3px;color:var(--rr-dim);text-transform:uppercase;font-weight:600;}
-.mono{font-variant-numeric:tabular-nums;}
 .shead{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
 .shead h3{margin:0;font-size:15px;color:#fff;letter-spacing:1px;font-weight:700;}
 
-/* ── Lobby browser (left) ─────────────────────────────────────────────────── */
+/* lobby browser */
 .rr-lobby{display:flex;flex-direction:column;gap:14px;}
 .seg{display:flex;background:#0e2531;border:1px solid var(--rr-line);border-radius:9px;padding:3px;gap:3px;}
-.seg button{flex:1;border:0;cursor:pointer;background:transparent;color:var(--rr-dim);font-family:inherit;
-  font-weight:700;font-size:12px;letter-spacing:1px;padding:9px 6px;border-radius:7px;}
+.seg button{flex:1;border:0;cursor:pointer;background:transparent;color:var(--rr-dim);font-family:inherit;font-weight:700;font-size:12px;letter-spacing:1px;padding:9px 6px;border-radius:7px;}
 .seg button.on{background:var(--rr-red);color:#fff;}
 .lobby-list{display:flex;flex-direction:column;gap:10px;margin-top:12px;}
 .lobby-card{border:1px solid var(--rr-line);border-radius:11px;padding:12px;background:var(--rr-panel2);transition:border-color .15s;}
 .lobby-card:hover{border-color:rgba(255,77,94,.5);}
+.lobby-card.sel{border-color:var(--rr-gold);}
 .lc-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px;}
 .lc-name{font-weight:700;color:#fff;font-size:14px;}
 .lc-tag{font-size:10px;letter-spacing:1px;color:var(--rr-cyan);border:1px solid rgba(63,209,230,.35);border-radius:20px;padding:2px 9px;text-transform:uppercase;}
 .lc-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:11px;}
 .lc-grid .k{font-size:10px;letter-spacing:1px;color:var(--rr-dim);text-transform:uppercase;}
-.lc-grid .v{font-weight:700;color:#fff;font-size:14px;}
-.lc-grid .v.pot{color:var(--rr-gold);}
-.lc-bottom{display:flex;align-items:center;justify-content:space-between;gap:10px;}
-.lc-players{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--rr-dim);}
-.lc-players .bar{width:60px;height:6px;border-radius:3px;background:rgba(255,255,255,.08);overflow:hidden;}
-.lc-players .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--rr-green),var(--rr-cyan));}
-.btn-join{border:0;cursor:pointer;font-family:inherit;font-weight:700;letter-spacing:1px;font-size:12px;
-  padding:8px 16px;border-radius:8px;background:var(--rr-green);color:#03210f;text-transform:uppercase;}
-.btn-join:hover{filter:brightness(1.08);}
-.btn-join.full{background:rgba(255,255,255,.08);color:var(--rr-dim);cursor:not-allowed;}
-.btn-ghost{width:100%;border:1px dashed rgba(255,77,94,.5);background:rgba(255,77,94,.05);color:#ff96a1;
-  cursor:pointer;font-family:inherit;font-weight:700;letter-spacing:1px;padding:11px;border-radius:10px;font-size:13px;margin-top:12px;}
-.btn-ghost:hover{background:rgba(255,77,94,.1);}
+.lc-grid .v{font-weight:700;color:#fff;font-size:14px;} .lc-grid .v.pot{color:var(--rr-gold);}
+.btn-join{border:0;cursor:pointer;font-family:inherit;font-weight:700;letter-spacing:1px;font-size:12px;padding:8px 16px;border-radius:8px;background:var(--rr-green);color:#03210f;text-transform:uppercase;width:100%;}
+.btn-join:hover{filter:brightness(1.08);} .btn-join:disabled{opacity:.5;cursor:not-allowed;}
 .info-cards{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
 .info-mini{border:1px solid var(--rr-line);border-radius:10px;padding:12px;background:var(--rr-panel2);}
-.info-mini .ic{font-size:18px;}
-.info-mini h5{margin:6px 0 3px;font-size:13px;color:#fff;}
-.info-mini p{margin:0;font-size:11px;color:var(--rr-dim);line-height:1.4;}
+.info-mini .ic{font-size:18px;} .info-mini h5{margin:6px 0 3px;font-size:13px;color:#fff;} .info-mini p{margin:0;font-size:11px;color:var(--rr-dim);line-height:1.4;}
 
-/* ── Center stage ─────────────────────────────────────────────────────────── */
+/* stage */
 .rr-stage{display:flex;flex-direction:column;gap:14px;min-width:0;}
 .hud{display:grid;grid-template-columns:1fr 1.3fr 1fr;gap:12px;}
 .hud .rp{padding:13px 16px;text-align:center;}
@@ -82,34 +68,26 @@ body{font-family:'Rajdhani',system-ui,sans-serif;background:var(--rr-bg);color:v
 
 .arena-wrap{position:relative;background:var(--rr-panel);border:1px solid var(--rr-line);border-radius:14px;padding:14px;overflow:hidden;}
 .arena{position:relative;width:100%;aspect-ratio:1.18/1;max-height:540px;margin:0 auto;}
-.rr-table{position:absolute;inset:6% 16%;border-radius:50%;
-  background:radial-gradient(circle at 50% 42%,#1c3848,#102532 70%,#0b1a24 100%);
-  box-shadow:inset 0 0 60px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.04);}
+.rr-table{position:absolute;inset:6% 16%;border-radius:50%;background:radial-gradient(circle at 50% 42%,#1c3848,#102532 70%,#0b1a24 100%);box-shadow:inset 0 0 60px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.04);}
 .rr-table::after{content:'';position:absolute;inset:18%;border-radius:50%;border:1px solid rgba(255,77,94,.18);box-shadow:0 0 30px rgba(255,77,94,.1) inset;}
 .rr-table .rim{position:absolute;inset:0;border-radius:50%;border:6px solid #102733;box-shadow:inset 0 0 0 2px rgba(255,255,255,.05);}
-.rr-beam{position:absolute;left:50%;top:50%;height:3px;width:26%;transform-origin:left center;
-  background:linear-gradient(90deg,rgba(255,77,94,.95),rgba(255,77,94,0));filter:drop-shadow(0 0 8px rgba(255,77,94,.8));
-  opacity:0;transition:opacity .2s;pointer-events:none;z-index:6;}
+.rr-beam{position:absolute;left:50%;top:50%;height:3px;width:26%;transform-origin:left center;background:linear-gradient(90deg,rgba(255,77,94,.95),rgba(255,77,94,0));filter:drop-shadow(0 0 8px rgba(255,77,94,.8));opacity:0;transition:opacity .2s;pointer-events:none;z-index:6;}
 .rr-beam.show{opacity:1;}
-.rr-revolver{position:absolute;left:50%;top:50%;width:38%;transform:translate(-50%,-50%) rotate(0deg);
-  transform-origin:center center;z-index:5;filter:drop-shadow(0 8px 14px rgba(0,0,0,.6));will-change:transform;}
+.rr-revolver{position:absolute;left:50%;top:50%;width:38%;transform:translate(-50%,-50%) rotate(0deg);transform-origin:center center;z-index:5;filter:drop-shadow(0 8px 14px rgba(0,0,0,.6));will-change:transform;}
 .rr-revolver.idle{animation:idleSpin 16s linear infinite;}
 @keyframes idleSpin{to{transform:translate(-50%,-50%) rotate(360deg);}}
-.rr-flash{position:absolute;left:50%;top:50%;width:0;height:0;border-radius:50%;background:radial-gradient(circle,#fff,rgba(255,206,74,.8) 40%,transparent 70%);
-  transform:translate(-50%,-50%);z-index:8;opacity:0;pointer-events:none;}
+.rr-flash{position:absolute;left:50%;top:50%;width:0;height:0;border-radius:50%;background:radial-gradient(circle,#fff,rgba(255,206,74,.8) 40%,transparent 70%);transform:translate(-50%,-50%);z-index:8;opacity:0;pointer-events:none;}
 .rr-flash.bang{animation:bang .45s ease-out;}
 @keyframes bang{0%{width:0;height:0;opacity:1;}100%{width:60%;height:60%;opacity:0;}}
 
-/* seat cards around table */
 .pslot{position:absolute;transform:translate(-50%,-50%);width:150px;z-index:7;}
 .pcard{border:1.5px solid var(--rr-line);border-radius:12px;padding:10px;background:#0e2531;position:relative;transition:.2s;}
 .pcard .num{position:absolute;left:-9px;top:-9px;width:24px;height:24px;border-radius:7px;background:#16313f;border:1px solid var(--rr-line);display:grid;place-items:center;font-size:12px;color:#fff;font-weight:700;}
+.pcard .you{position:absolute;right:-7px;top:-9px;font-size:9px;letter-spacing:1px;background:var(--rr-cyan);color:#04222b;border-radius:5px;padding:2px 6px;font-weight:700;}
 .pcard .head{display:flex;align-items:center;gap:9px;}
 .avatar{width:38px;height:38px;border-radius:10px;flex-shrink:0;display:grid;place-items:center;font-weight:700;color:#fff;font-size:15px;border:1px solid rgba(255,255,255,.18);}
 .pcard .uname{font-weight:700;color:#fff;font-size:14px;line-height:1.1;}
 .pcard .status{font-size:10px;letter-spacing:1px;color:var(--rr-green);text-transform:uppercase;font-weight:700;}
-.pcard .stake{display:flex;align-items:center;gap:5px;margin-top:8px;font-weight:700;color:#fff;font-size:13px;}
-.pcard .stake .coin{color:var(--rr-gold);}
 .pcard .hint{margin-top:7px;text-align:center;font-size:11px;letter-spacing:1px;font-weight:700;border-radius:7px;padding:4px;background:rgba(31,211,107,.12);color:var(--rr-green);text-transform:uppercase;}
 .pcard .hint.wait{background:rgba(247,201,72,.12);color:var(--rr-gold);}
 .pslot.active .pcard{border-color:var(--rr-red);box-shadow:0 0 0 2px var(--rr-red),0 0 30px rgba(255,77,94,.55);}
@@ -120,47 +98,41 @@ body{font-family:'Rajdhani',system-ui,sans-serif;background:var(--rr-bg);color:v
 .pslot.targetable .pcard{cursor:crosshair;border-color:var(--rr-gold);box-shadow:0 0 0 2px var(--rr-gold);}
 .pslot.targetable .pcard:hover{box-shadow:0 0 0 2px var(--rr-gold),0 0 26px rgba(247,201,72,.6);}
 
-/* blackjack hand panel */
+/* blackjack hand for the active player */
 .bj{display:none;gap:14px;align-items:stretch;}
 .bj.show{display:grid;grid-template-columns:1fr 1fr auto;}
 .bj-side{background:var(--rr-panel2);border:1px solid var(--rr-line);border-radius:11px;padding:12px;}
 .bj-lab{font-size:10px;letter-spacing:2px;color:var(--rr-dim);text-transform:uppercase;margin-bottom:8px;}
-.bj-cards{display:flex;gap:6px;min-height:62px;flex-wrap:wrap;}
-.bcard{width:42px;height:60px;border-radius:6px;background:#f5f7fb;color:#13202b;display:flex;flex-direction:column;justify-content:space-between;
-  padding:4px 5px;font-family:Georgia,serif;font-weight:700;font-size:15px;box-shadow:0 3px 8px rgba(0,0,0,.45);}
-.bcard.red{color:#d11f38;}
-.bcard.back{background:repeating-linear-gradient(45deg,#234,#345 6px,#234 12px);}
+.bj-cards{display:flex;gap:6px;min-height:62px;flex-wrap:wrap;perspective:700px;}
+.bcard{width:42px;height:60px;border-radius:6px;background:#f5f7fb;color:#13202b;display:flex;flex-direction:column;justify-content:space-between;padding:4px 5px;font-family:Georgia,serif;font-weight:700;font-size:15px;box-shadow:0 3px 8px rgba(0,0,0,.45);backface-visibility:hidden;}
+.bcard.red{color:#d11f38;} .bcard.back{background:repeating-linear-gradient(45deg,#234,#345 6px,#234 12px);}
 .bcard .b{align-self:flex-end;transform:rotate(180deg);}
+.bcard.fresh{animation:bjDeal .5s cubic-bezier(.22,1.15,.34,1) backwards;}
+@keyframes bjDeal{0%{transform:translate(120px,-90px) rotate(-16deg) scale(.85);opacity:0;}60%{opacity:1;}100%{transform:translate(0,0) rotate(0) scale(1);opacity:1;}}
+.bcard.flip{animation:bjFlip .45s ease backwards;}
+@keyframes bjFlip{0%{transform:rotateY(90deg);opacity:0;}100%{transform:rotateY(0);opacity:1;}}
 .bj-val{margin-top:8px;font-weight:700;color:#fff;font-size:14px;}
 .bj-actions{display:flex;flex-direction:column;gap:8px;justify-content:center;min-width:120px;}
 .bj-actions button{border:0;cursor:pointer;font-family:inherit;font-weight:700;letter-spacing:1px;border-radius:9px;padding:12px;font-size:13px;text-transform:uppercase;}
-.bj-actions .hit{background:var(--rr-green);color:#03210f;} .bj-actions .stand{background:#34566a;color:#fff;}
-.bj-actions .double{background:var(--rr-gold);color:#241a00;}
+.bj-actions .hit{background:var(--rr-green);color:#03210f;} .bj-actions .stand{background:#34566a;color:#fff;} .bj-actions .double{background:var(--rr-gold);color:#241a00;}
 .bj-actions button:disabled{opacity:.4;cursor:not-allowed;}
-.bj-wait{align-self:center;color:var(--rr-dim);font-size:12px;letter-spacing:1px;}
+.bj-wait{align-self:center;color:var(--rr-dim);font-size:12px;letter-spacing:1px;text-align:center;}
 
-/* turn order + actions */
-.turn-order{display:flex;align-items:center;justify-content:center;gap:6px;}
+.turn-order{display:flex;align-items:center;justify-content:center;gap:6px;min-height:28px;}
 .turn-order .to .pip{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;border:1px solid var(--rr-line);background:var(--rr-panel2);font-size:12px;font-weight:700;}
 .turn-order .to.cur .pip{border-color:var(--rr-red);color:#fff;background:var(--rr-red-soft);}
 .turn-order .arrow{color:var(--rr-dim);}
 .actions{display:grid;grid-template-columns:1fr 2fr 1fr;gap:12px;}
 .act{border:0;cursor:pointer;font-family:inherit;font-weight:700;letter-spacing:1px;border-radius:11px;padding:14px;font-size:14px;text-transform:uppercase;display:flex;align-items:center;justify-content:center;gap:9px;}
-.act.leave{background:var(--rr-panel2);border:1px solid var(--rr-line);color:var(--rr-txt);}
-.act.leave:hover{border-color:var(--rr-red);color:#fff;}
-.act.start{background:var(--rr-green);color:#03210f;}
-.act.start:hover{filter:brightness(1.07);} .act.start:disabled{opacity:.5;cursor:not-allowed;}
+.act.leave{background:var(--rr-panel2);border:1px solid var(--rr-line);color:var(--rr-txt);} .act.leave:hover{border-color:var(--rr-red);color:#fff;}
+.act.start{background:var(--rr-green);color:#03210f;} .act.start:hover{filter:brightness(1.07);} .act.start:disabled{opacity:.55;cursor:not-allowed;}
 .act.start small{display:block;font-size:9px;letter-spacing:1px;opacity:.85;font-weight:600;}
-.act.cancel{background:var(--rr-panel2);border:1px solid var(--rr-line);color:var(--rr-dim);}
-.act.cancel:hover{color:#fff;border-color:var(--rr-cyan);}
-.status-line{text-align:center;color:var(--rr-dim);font-size:13px;}
-.status-line b{color:var(--rr-green);}
+.act.cancel{background:var(--rr-panel2);border:1px solid var(--rr-line);color:var(--rr-dim);} .act.cancel:hover{color:#fff;border-color:var(--rr-cyan);}
+.status-line{text-align:center;color:var(--rr-dim);font-size:13px;} .status-line b{color:var(--rr-green);}
 
-/* right info panel */
 .rr-info{display:flex;flex-direction:column;gap:14px;position:sticky;top:14px;}
-.ginfo .row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--rr-line-2);font-size:13px;}
-.ginfo .row:last-child{border-bottom:0;}
-.ginfo .row .k{color:var(--rr-dim);} .ginfo .row .v{color:#fff;font-weight:700;} .ginfo .row .v.pot{color:var(--rr-gold);}
+.ginfo .row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--rr-line2);font-size:13px;}
+.ginfo .row:last-child{border-bottom:0;} .ginfo .row .k{color:var(--rr-dim);} .ginfo .row .v{color:#fff;font-weight:700;} .ginfo .row .v.pot{color:var(--rr-gold);}
 .events{display:flex;flex-direction:column;gap:8px;max-height:360px;overflow:auto;padding-right:4px;}
 .events::-webkit-scrollbar{width:6px;}.events::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:3px;}
 .ev{display:flex;gap:9px;align-items:flex-start;font-size:13px;animation:evIn .25s ease;}
@@ -168,10 +140,7 @@ body{font-family:'Rajdhani',system-ui,sans-serif;background:var(--rr-bg);color:v
 .ev .dot{width:9px;height:9px;border-radius:50%;margin-top:5px;flex-shrink:0;background:var(--rr-dim);}
 .ev.deal .dot{background:var(--rr-cyan);}.ev.win .dot{background:var(--rr-green);}.ev.lose .dot{background:var(--rr-gold);}
 .ev.bang .dot{background:var(--rr-red);}.ev.safe .dot{background:var(--rr-green);}.ev.bj .dot{background:var(--rr-gold);}
-.ev .txt{line-height:1.3;} .ev .txt b{color:#fff;} .ev .time{margin-left:auto;color:var(--rr-dim);font-size:11px;flex-shrink:0;}
-
-.rr-title{font-size:24px;letter-spacing:3px;color:#fff;margin:0 0 2px;}
-.rr-sub{color:var(--rr-dim);font-size:13px;letter-spacing:1px;margin:0 0 14px;}
+.ev .txt{line-height:1.3;color:var(--rr-txt);} .ev .txt b{color:#fff;} .ev .time{margin-left:auto;color:var(--rr-dim);font-size:11px;flex-shrink:0;}
 
 @media(max-width:1240px){ .rr-grid{grid-template-columns:1fr 320px;} .rr-lobby{display:none;} }
 @media(max-width:980px){ .rr-grid{grid-template-columns:1fr;} .rr-info{position:static;} .pslot{width:120px;} }
@@ -183,7 +152,7 @@ body{font-family:'Rajdhani',system-ui,sans-serif;background:var(--rr-bg);color:v
 
 <div class="rr-wrap">
   <h1 class="rr-title">RUSSIAN ROULETTE</h1>
-  <p class="rr-sub">Win your blackjack hand or pull the trigger. 6 chambers, 1 bullet. Last one standing takes the pot.</p>
+  <p class="rr-sub">Real players only. Win your blackjack hand or pull the trigger. 6 chambers, 1 bullet — last one standing takes the pot.</p>
 
   <div class="rr-grid">
     <!-- LOBBY BROWSER -->
@@ -195,13 +164,12 @@ body{font-family:'Rajdhani',system-ui,sans-serif;background:var(--rr-bg);color:v
           <button data-size="3">3 Players</button>
           <button data-size="4" class="on">4 Players</button>
         </div>
-        <div class="shead" style="margin:16px 0 0"><h3 style="font-size:13px">Available Lobbies</h3><span class="eyebrow" id="lobbyCount">3 open</span></div>
+        <div class="shead" style="margin:16px 0 0"><h3 style="font-size:13px">Buy-ins</h3><span class="eyebrow">Credits</span></div>
         <div class="lobby-list" id="lobbyList"></div>
-        <button class="btn-ghost" id="createBtn">＋ Create Private Lobby</button>
       </div>
       <div class="rp rp-pad">
         <div class="info-cards">
-          <div class="info-mini"><div class="ic">📖</div><h5>How to Play</h5><p>Ante up. On your turn you're dealt a blackjack hand — lose it and the trigger is pulled on you.</p></div>
+          <div class="info-mini"><div class="ic">📖</div><h5>How to Play</h5><p>On your turn you're dealt a blackjack hand vs the dealer. Lose it and the trigger is pulled on you.</p></div>
           <div class="info-mini"><div class="ic">🛡️</div><h5>Fair Play</h5><p>One bullet, six chambers, fixed slot. The cylinder never re-spins — only a matter of time.</p></div>
         </div>
       </div>
@@ -240,7 +208,6 @@ body{font-family:'Rajdhani',system-ui,sans-serif;background:var(--rr-bg);color:v
         </div>
       </div>
 
-      <!-- blackjack hand for the active player -->
       <div class="bj" id="bj">
         <div class="bj-side"><div class="bj-lab">Dealer</div><div class="bj-cards" id="dealerCards"></div><div class="bj-val" id="dealerVal"></div></div>
         <div class="bj-side"><div class="bj-lab" id="activeLab">Player</div><div class="bj-cards" id="activeCards"></div><div class="bj-val" id="activeVal"></div></div>
@@ -248,7 +215,7 @@ body{font-family:'Rajdhani',system-ui,sans-serif;background:var(--rr-bg);color:v
           <button class="hit"    data-act="hit">Hit</button>
           <button class="stand"  data-act="stand">Stand</button>
           <button class="double" data-act="double">Double</button>
-          <div class="bj-wait" id="bjWait" style="display:none">opponent playing…</div>
+          <div class="bj-wait" id="bjWait" style="display:none">waiting…</div>
         </div>
       </div>
 
@@ -256,10 +223,10 @@ body{font-family:'Rajdhani',system-ui,sans-serif;background:var(--rr-bg);color:v
 
       <div class="actions">
         <button class="act leave" id="leaveBtn">🚪 Leave</button>
-        <button class="act start" id="startBtn">🎯 Start Game <small id="startSub">Deal the first hand</small></button>
-        <button class="act cancel" id="cancelBtn">✖ Reset</button>
+        <button class="act start" id="startBtn">🎯 Find Match <small id="startSub">Pick a buy-in</small></button>
+        <button class="act cancel" id="cancelBtn" style="display:none">✖ Cancel</button>
       </div>
-      <div class="status-line" id="statusLine">Press <b>Start Game</b> to ante up and deal.</div>
+      <div class="status-line" id="statusLine">Pick a buy-in and press <b>Find Match</b> to queue against real players.</div>
     </main>
 
     <!-- RIGHT INFO -->
@@ -277,6 +244,7 @@ body{font-family:'Rajdhani',system-ui,sans-serif;background:var(--rr-bg);color:v
 </div>
 <div class="legal-footer">Credits are fictional play-money credits only and have no real-world monetary value.</div>
 
+<script src="/socket.io/socket.io.js"></script>
 <script src="/js/api.js"></script>
 <script src="/js/auth.js"></script>
 <script src="/js/dollar-rain.js"></script>
@@ -284,359 +252,238 @@ body{font-family:'Rajdhani',system-ui,sans-serif;background:var(--rr-bg);color:v
 <script src="/js/notifications.js"></script>
 <script>
 /* ============================================================================
-   CLIENT-SIDE GAME ENGINE (demo — not wired to the server wallet).
+   CLIENT — renders server state from the /rr namespace and sends actions.
    ============================================================================ */
-const $  = (s,r=document)=>r.querySelector(s);
-const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
-const sleep = ms => new Promise(r=>setTimeout(r,ms));
+const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
+const SLOTS={2:[180,0],3:[270,30,150],4:[225,315,45,135]};
+const AV=[['#3fd1e6','#1f7fae'],['#ff6a3d','#b3210f'],['#1fd36b','#13a052'],['#b58bff','#6a35d8']];
+// Buy-in brackets per size (server validates the actual bet/balance).
+const BUYINS={2:[{name:'Quick Duel',fee:50},{name:'Sudden Death',fee:250},{name:'Whale Duel',fee:1000}],
+              3:[{name:'Triple Threat',fee:100},{name:'Trio Standoff',fee:500},{name:'Lucky Three',fee:50}],
+              4:[{name:'High Rollers',fee:50},{name:'Midnight Four',fee:25},{name:'Death Circle',fee:100}]};
 
-// Seat angles (deg, clockwise from east). Drives card position + gun aim.
-const SLOTS = { 2:[180,0], 3:[270,30,150], 4:[225,315,45,135] };
-const AV = [['#3fd1e6','#1f7fae'],['#ff6a3d','#b3210f'],['#1fd36b','#13a052'],['#b58bff','#6a35d8']];
-const BOT_NAMES = ['ViperX','KingPin','Shadow7','NeonFox','GhostByte'];
+const C={ size:4, bet:50, socket:null, inMatch:false, searching:false, yourSeat:null,
+  st:null, events:[], lastGunSeat:null, prevActive:0, prevDealer:0, prevActiveName:'' };
 
-const RANKS=['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
-const SUITS=['♠','♥','♦','♣'];
-const rnd = n => Math.floor(Math.random()*n);
-function drawCard(){ return { r:RANKS[rnd(13)], s:SUITS[rnd(4)] }; }
-function cardVal(c){ if(c.r==='A')return 11; if(['10','J','Q','K'].includes(c.r))return 10; return +c.r; }
-function handVal(cards){ let t=0,a=0; for(const c of cards){ if(c.hidden)continue; t+=cardVal(c); if(c.r==='A')a++; } while(t>21&&a){t-=10;a--;} return t; }
-function isBJ(cards){ return cards.length===2 && handVal(cards)===21; }
+function fmtCr(n){ return Number(n||0).toLocaleString()+' cr'; }
+function avFor(seat,name){ const [a,b]=AV[seat%AV.length]; return {bg:`linear-gradient(135deg,${a},${b})`,ch:(name||'?')[0].toUpperCase()}; }
 
-const MOCK_LOBBIES = {
-  2:[{name:'Quick Duel',tag:'2P · Casual',fee:50,joined:1},{name:'Sudden Death',tag:'2P · Ranked',fee:250,joined:1},{name:'Whale Duel',tag:'2P · High',fee:1000,joined:0}],
-  3:[{name:'Triple Threat',tag:'3P · Casual',fee:100,joined:2},{name:'Trio Standoff',tag:'3P · Ranked',fee:500,joined:1},{name:'Lucky Three',tag:'3P · Turbo',fee:50,joined:2}],
-  4:[{name:'High Rollers',tag:'4P · Ranked',fee:50,joined:3},{name:'Midnight Four',tag:'4P · Casual',fee:25,joined:2},{name:'Death Circle',tag:'4P · High',fee:100,joined:1}],
-};
-
-const state = {
-  size:4, fee:50, players:[], dealer:[], dealerDone:false,
-  round:0, maxRounds:10, chamber:1, bullet:1+rnd(6),
-  active:-1, phase:'idle', // idle | player | bot | resolving | targeting | over
-  events:[], balance:0, busy:false,
-};
-
-/* ── Setup ───────────────────────────────────────────────────────────────── */
-function buildPlayers(size,fee){
-  const arr=[];
-  for(let i=0;i<size;i++){
-    const human = i===0;
-    const name = human?'You':BOT_NAMES[i-1];
-    const [a,b]=AV[i%AV.length];
-    arr.push({id:'p'+i,num:i+1,name,human,alive:true,stake:fee,angle:SLOTS[size][i],
-      av:{bg:`linear-gradient(135deg,${a},${b})`,ch:name[0].toUpperCase()},cards:[]});
-  }
-  return arr;
-}
-function fmtCr(n){ return Number(n).toLocaleString()+' cr'; }
-function pot(){ return state.size*state.fee; }
-
-/* ── Renderers ───────────────────────────────────────────────────────────── */
-function renderLobbyList(){
-  const list=MOCK_LOBBIES[state.size];
-  $('#lobbyCount').textContent=list.length+' open';
-  $('#lobbyList').innerHTML=list.map((l,i)=>{
-    const full=l.joined>=state.size;
-    return `<div class="lobby-card">
-      <div class="lc-top"><span class="lc-name">${l.name}</span><span class="lc-tag">${l.tag}</span></div>
+/* ── Lobby ───────────────────────────────────────────────────────────────── */
+function renderLobby(){
+  $('#lobbyList').innerHTML=BUYINS[C.size].map((l,i)=>`
+    <div class="lobby-card ${l.fee===C.bet?'sel':''}" data-bet="${l.fee}">
+      <div class="lc-top"><span class="lc-name">${l.name}</span><span class="lc-tag">${C.size}P</span></div>
       <div class="lc-grid">
-        <div><div class="k">Entry</div><div class="v">${fmtCr(l.fee)}</div></div>
-        <div><div class="k">Pot</div><div class="v pot">${fmtCr(l.fee*state.size)}</div></div>
-        <div><div class="k">Players</div><div class="v">${l.joined}/${state.size}</div></div>
+        <div><div class="k">Buy-in</div><div class="v">${fmtCr(l.fee)}</div></div>
+        <div><div class="k">Pot</div><div class="v pot">${fmtCr(l.fee*C.size)}</div></div>
+        <div><div class="k">Players</div><div class="v">${C.size}</div></div>
       </div>
-      <div class="lc-bottom">
-        <div class="lc-players"><span class="bar"><i style="width:${l.joined/state.size*100}%"></i></span>${l.joined}/${state.size}</div>
-        <button class="btn-join ${full?'full':''}" data-join="${i}" ${full?'disabled':''}>${full?'Full':'Join'}</button>
-      </div></div>`;
-  }).join('');
-  $$('[data-join]').forEach(b=>b.addEventListener('click',()=>{ state.fee=list[+b.dataset.join].fee; toast(`Joined ${list[+b.dataset.join].name}`); renderHUD(); renderGameInfo(); }));
+      <button class="btn-join" data-join="${l.fee}">Find Match</button>
+    </div>`).join('');
+  $$('[data-join]').forEach(b=>b.addEventListener('click',()=>{ C.bet=+b.dataset.join; renderLobby(); renderHUD(); findMatch(); }));
+  $$('.lobby-card').forEach(c=>c.addEventListener('click',e=>{ if(e.target.closest('[data-join]'))return; C.bet=+c.dataset.bet; renderLobby(); renderHUD(); }));
 }
-function renderPlayers(){
-  $$('.pslot',$('#arena')).forEach(e=>e.remove());
-  const arena=$('#arena');
-  state.players.forEach((p,idx)=>{
-    const rad = state.size===2?0.64:0.58;
-    const x=50+rad*50*Math.cos(p.angle*Math.PI/180);
-    const y=50+rad*50*Math.sin(p.angle*Math.PI/180);
-    const isActive = idx===state.active && p.alive;
-    const targetable = state.phase==='targeting' && p.alive && idx!==state.active;
-    const slot=document.createElement('div');
-    slot.className='pslot'+(p.alive?'':' dead')+(isActive?' active':'')+(targetable?' targetable':'');
-    slot.style.left=x+'%'; slot.style.top=y+'%';
-    let hint = p.alive ? (isActive?'Your turn':'Alive') : 'Out';
-    let hintCls = isActive?'wait':'';
-    slot.innerHTML=`${isActive?'<div class="badge-aim">▾</div>':''}
-      <div class="pcard" ${targetable?`data-target="${idx}"`:''}>
-        <div class="num">${p.num}</div>
-        <div class="head"><div class="avatar" style="background:${p.av.bg}">${p.av.ch}</div>
-          <div><div class="uname">${p.name}</div><div class="status">${p.alive?'Alive':'Out'}</div></div></div>
-        <div class="stake"><span class="coin">🪙</span> ${fmtCr(p.stake)}</div>
-        <div class="hint ${hintCls}">${hint}</div>
-      </div>`;
-    arena.appendChild(slot);
-  });
-  if(state.phase==='targeting'){
-    $$('[data-target]').forEach(el=>el.addEventListener('click',()=>chooseTarget(+el.dataset.target)));
-  }
-}
+function setSize(n){ if(C.inMatch||C.searching){ toast('Finish / cancel first'); return; } C.size=n; C.bet=BUYINS[n][0].fee;
+  $$('#sizeSeg button').forEach(b=>b.classList.toggle('on',+b.dataset.size===n)); renderLobby(); renderHUD(); renderSeatsIdle(); renderGameInfo(); }
+
+/* ── HUD / info ──────────────────────────────────────────────────────────── */
 function renderHUD(){
-  $('#roundV').textContent = state.round?`${state.round} / ${state.maxRounds}`:'— / —';
-  $('#potV').textContent = fmtCr(pot());
-  $('#perV').textContent = fmtCr(state.fee)+' per player';
-}
-function updateChamber(){
-  let dots=''; for(let i=1;i<=6;i++){ const c=i===state.chamber?'live':(i<state.chamber?'spent':''); dots+=`<span class="ch ${c}"></span>`; }
-  $('#chambers').innerHTML=dots; $('#chLabel').textContent=`${state.chamber} / 6`;
-}
-function renderTurnOrder(){
-  const alive=state.players.filter(p=>p.alive);
-  $('#turnOrder').innerHTML=alive.map((p,i)=>`<span class="to ${state.players[state.active]&&p.id===state.players[state.active].id?'cur':''}"><span class="pip">${p.num}</span></span>${i<alive.length-1?'<span class="arrow">▸</span>':''}`).join('');
+  const st=C.st;
+  $('#roundV').textContent = st?`${st.round} / ${st.maxRounds}`:'— / —';
+  $('#potV').textContent = fmtCr(st?st.pot:C.bet*C.size);
+  $('#perV').textContent = fmtCr(st?st.bet:C.bet)+' per player';
+  $('#chLabel').textContent = st?`${st.chamber} / 6`:'— / 6';
+  let dots=''; for(let i=1;i<=6;i++){ const c=st?(i===st.chamber?'live':(i<st.chamber?'spent':'')):''; dots+=`<span class="ch ${c}"></span>`; }
+  $('#chambers').innerHTML=dots;
 }
 function renderGameInfo(){
-  const rows=[['Lobby Type',`${state.size}-Player`],['Players',`${state.players.filter(p=>p.alive).length||state.size}/${state.size} alive`],
-    ['Entry Fee',fmtCr(state.fee)],['Total Pot',fmtCr(pot()),'pot'],['Rounds',state.round?`${state.round} / ${state.maxRounds}`:`0 / ${state.maxRounds}`],['Game Mode','Last One Standing']];
+  const st=C.st, size=st?st.size:C.size, fee=st?st.bet:C.bet, pot=st?st.pot:fee*size;
+  const alive=st?st.players.filter(p=>p.alive).length:size;
+  const rows=[['Lobby Type',`${size}-Player`],['Players',`${alive}/${size} alive`],['Buy-in',fmtCr(fee)],
+    ['Total Pot',fmtCr(pot),'pot'],['Round',st?`${st.round} / ${st.maxRounds}`:`0`],['Game Mode','Last One Standing']];
   $('#gameInfo').innerHTML=rows.map(([k,v,c])=>`<div class="row"><span class="k">${k}</span><span class="v ${c||''}">${v}</span></div>`).join('');
 }
-function cardHTML(c){ if(c.hidden)return `<div class="bcard back"></div>`; const red=(c.s==='♥'||c.s==='♦'); return `<div class="bcard ${red?'red':''}"><span>${c.r}${c.s}</span><span class="b">${c.r}${c.s}</span></div>`; }
-function renderHand(){
-  const p=state.players[state.active]; if(!p){ $('#bj').classList.remove('show'); return; }
-  $('#bj').classList.add('show');
-  $('#activeLab').textContent=p.name;
-  $('#dealerCards').innerHTML=state.dealer.map(cardHTML).join('');
-  $('#activeCards').innerHTML=p.cards.map(cardHTML).join('');
-  $('#dealerVal').textContent = state.dealerDone?('Total '+handVal(state.dealer)):('Showing '+handVal(state.dealer.filter(c=>!c.hidden)));
-  $('#activeVal').textContent = 'Total '+handVal(p.cards);
-  const showActions = p.human && state.phase==='player';
-  $('#bjActions').querySelectorAll('button').forEach(b=>b.style.display=showActions?'':'none');
-  $('#bjWait').style.display = (!p.human && (state.phase==='bot'))?'':'none';
-  $('#bjActions .double').disabled = p.cards.length!==2;
+
+/* ── Seats around the table ──────────────────────────────────────────────── */
+function placeSeat(seat,size,html){
+  const ang=SLOTS[size][seat], rad=size===2?0.64:0.58;
+  const x=50+rad*50*Math.cos(ang*Math.PI/180), y=50+rad*50*Math.sin(ang*Math.PI/180);
+  const el=document.createElement('div'); el.dataset.seatwrap=seat;
+  el.style.cssText=`position:absolute;left:${x}%;top:${y}%;transform:translate(-50%,-50%);width:150px;z-index:7;`;
+  el.innerHTML=html; return el;
 }
-function addEvent(text,kind='deal'){
-  const t=new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-  state.events.unshift({text,kind,t}); if(state.events.length>50)state.events.pop();
-  $('#events').innerHTML=state.events.map(e=>`<div class="ev ${e.kind}"><span class="dot"></span><span class="txt">${e.text}</span><span class="time">${e.t}</span></div>`).join('');
+function renderSeatsIdle(){
+  $$('.pslot',$('#arena')).forEach(e=>e.closest('[data-seatwrap]')?.remove());
+  $$('[data-seatwrap]',$('#arena')).forEach(e=>e.remove());
+  const arena=$('#arena');
+  for(let s=0;s<C.size;s++){
+    const me=s===0; const name=me?'You':'Waiting…'; const av=avFor(s,me?'You':'W');
+    arena.appendChild(placeSeat(s,C.size,`<div class="pslot"><div class="pcard">
+      <div class="num">${s+1}</div>${me?'<div class="you">YOU</div>':''}
+      <div class="head"><div class="avatar" style="background:${av.bg}">${av.ch}</div>
+        <div><div class="uname">${name}</div><div class="status">${me?'Ready':'Open'}</div></div></div>
+      <div class="hint wait">${me?'Ready':'Empty seat'}</div></div></div>`));
+  }
 }
-function setStatus(html){ $('#statusLine').innerHTML=html; }
-function setActions(){
-  const started = state.phase!=='idle' && state.phase!=='over';
-  $('#startBtn').disabled = started || state.busy;
-  $('#startSub').textContent = started?'In progress…':'Deal the first hand';
+function renderSeats(){
+  const st=C.st; if(!st)return;
+  $$('[data-seatwrap]',$('#arena')).forEach(e=>e.remove());
+  const arena=$('#arena');
+  st.players.forEach(p=>{
+    const av=avFor(p.seat,p.name);
+    const isActive=p.seat===st.active && p.alive;
+    const targetable=st.canTarget && (st.targets||[]).includes(p.seat);
+    const you=p.seat===st.yourSeat;
+    let hint = !p.alive?'Out':(isActive?(you?'Your turn':'Playing'):'Alive');
+    arena.appendChild(placeSeat(p.seat,st.size,
+      `<div class="pslot ${p.alive?'':'dead'} ${isActive?'active':''} ${targetable?'targetable':''}">
+        ${isActive?'<div class="badge-aim">▾</div>':''}
+        <div class="pcard" ${targetable?`data-target="${p.seat}"`:''}>
+          <div class="num">${p.seat+1}</div>${you?'<div class="you">YOU</div>':''}
+          <div class="head"><div class="avatar" style="background:${av.bg}">${av.ch}</div>
+            <div><div class="uname">${p.name}</div><div class="status">${p.alive?'Alive':'Out'}</div></div></div>
+          <div class="hint ${isActive?'wait':''}">${hint}</div>
+        </div></div>`));
+  });
+  if(st.canTarget){ $$('[data-target]',arena).forEach(el=>el.addEventListener('click',()=>{ C.socket.emit('rr_target',{seat:+el.dataset.target}); toast('Firing…'); })); }
 }
 
-/* ── Gun ─────────────────────────────────────────────────────────────────── */
+/* ── Blackjack hand panel (smooth deal-in) ───────────────────────────────── */
+function cardHTML(c,cls){ if(c.hidden)return `<div class="bcard back ${cls}"></div>`; const red=(c.s==='♥'||c.s==='♦'); return `<div class="bcard ${red?'red':''} ${cls}"><span>${c.r}${c.s}</span><span class="b">${c.r}${c.s}</span></div>`; }
+function renderHand(){
+  const st=C.st;
+  const inHand = st && (st.activeCards.length>0) && st.phase!=='over';
+  $('#bj').classList.toggle('show', !!inHand);
+  if(!inHand){ return; }
+  // detect a new hand (active player changed or fewer cards) → animate all
+  const newHand = (st.activeName!==C.prevActiveName) || (st.activeCards.length<C.prevActive);
+  const aPrev = newHand?0:C.prevActive;
+  const dPrev = newHand?0:C.prevDealer;
+  $('#activeLab').textContent = st.activeName + (st.activeName && st.yourSeat===st.active?' (You)':'');
+  $('#activeCards').innerHTML = st.activeCards.map((c,i)=>cardHTML(c, i>=aPrev?'fresh':'')).join('');
+  $('#dealerCards').innerHTML = st.dealer.map((c,i)=>{
+    const fresh = i>=dPrev && !c.hidden && (newHand||i>=dPrev);
+    const flip = (i===1 && !c.hidden && dPrev>=2);  // hole-card reveal
+    return cardHTML(c, flip?'flip':(fresh?'fresh':''));
+  }).join('');
+  $('#activeVal').textContent = 'Total '+st.activeValue;
+  $('#dealerVal').textContent = st.dealerDone?('Total '+st.dealerValue):('Showing '+st.dealerValue);
+  // action buttons
+  const canAct = !!st.canAct;
+  $('#bjActions').querySelectorAll('button').forEach(b=>b.style.display=canAct?'':'none');
+  $('#bjActions .double').disabled = st.activeCards.length!==2;
+  const youWatching = !canAct && !st.canTarget && st.yourSeat!==st.active && st.activeCards.length>0;
+  $('#bjWait').style.display = youWatching?'':'none';
+  $('#bjWait').textContent = `${st.activeName} is playing…`;
+  C.prevActive = st.activeCards.length; C.prevDealer = st.dealer.length; C.prevActiveName = st.activeName;
+}
+
+/* ── Turn order + gun + events ───────────────────────────────────────────── */
+function renderTurnOrder(){
+  const st=C.st; if(!st){ $('#turnOrder').innerHTML=''; return; }
+  const alive=st.players.filter(p=>p.alive);
+  $('#turnOrder').innerHTML=alive.map((p,i)=>`<span class="to ${p.seat===st.active?'cur':''}"><span class="pip">${p.seat+1}</span></span>${i<alive.length-1?'<span class="arrow">▸</span>':''}`).join('');
+}
 let revAngle=0;
-function pointGun(angle, ms=2600){
+function pointGun(seat,ms=2400){
+  if(seat==null)return; const st=C.st; const ang=SLOTS[st.size][seat];
   const rev=$('#revolver'); rev.classList.remove('idle');
-  const cur=((revAngle%360)+360)%360; let delta=((angle-cur)+360)%360;
-  revAngle += 360*4 + delta;
-  rev.style.transition='none'; void rev.offsetWidth;
-  rev.style.transition=`transform ${ms}ms cubic-bezier(.16,.84,.24,1)`;
+  const cur=((revAngle%360)+360)%360; let d=((ang-cur)+360)%360; revAngle+=360*3+d;
+  rev.style.transition='none'; void rev.offsetWidth; rev.style.transition=`transform ${ms}ms cubic-bezier(.16,.84,.24,1)`;
   rev.style.transform=`translate(-50%,-50%) rotate(${revAngle}deg)`;
 }
-function showBeam(angle){ const b=$('#beam'); b.style.transform=`rotate(${angle}deg)`; b.classList.add('show'); }
+function showBeam(seat){ const st=C.st; const b=$('#beam'); b.style.transform=`rotate(${SLOTS[st.size][seat]}deg)`; b.classList.add('show'); }
 function hideBeam(){ $('#beam').classList.remove('show'); }
+function bang(){ const f=$('#flash'); f.classList.remove('bang'); void f.offsetWidth; f.classList.add('bang'); }
+function addEvent(ev){ if(!ev)return; const t=new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  C.events.unshift({...ev,t}); if(C.events.length>60)C.events.pop();
+  $('#events').innerHTML=C.events.map(e=>`<div class="ev ${e.kind}"><span class="dot"></span><span class="txt">${e.text}</span><span class="time">${e.t}</span></div>`).join(''); }
 
-// Pull the trigger on `victimIdx`. Returns true if it fired (death).
-async function pullTrigger(victimIdx){
-  const v=state.players[victimIdx];
-  showBeam(v.angle);
-  await sleep(500);
-  const fired = state.chamber===state.bullet;
-  if(fired){
-    $('#flash').classList.remove('bang'); void $('#flash').offsetWidth; $('#flash').classList.add('bang');
-    v.alive=false;
-    addEvent(`💥 BANG — <b>${v.name}</b> is eliminated!`,'bang');
-    toast(`${v.name} is OUT`);
-    // bullet spent → reload a fresh chamber if the game continues
-    state.bullet=1+rnd(6); state.chamber=1;
+/* ── Apply a server state snapshot ───────────────────────────────────────── */
+function applyState(st){
+  C.st=st; C.yourSeat=st.yourSeat;
+  if(st.event) addEvent(st.event);
+  renderHUD(); renderGameInfo(); renderSeats(); renderTurnOrder(); renderHand();
+  // gun: point at the shot victim when firing, else the active seat
+  if(st.shot){
+    pointGun(st.shot.seat,900); showBeam(st.shot.seat);
+    if(st.shot.fired){ setTimeout(bang,500); }
+    setTimeout(hideBeam,1400);
   }else{
-    addEvent(`*click* — empty chamber. <b>${v.name}</b> survives.`,'safe');
-    state.chamber = state.chamber%6 + 1;
+    hideBeam();
+    if(st.active!=null && st.active!==C.lastGunSeat){ pointGun(st.active); C.lastGunSeat=st.active; }
   }
-  updateChamber(); renderPlayers();
-  await sleep(700); hideBeam();
-  return fired;
+  setStatus(st);
+}
+function setStatus(st){
+  let s;
+  if(st.phase==='over') s='Game over.';
+  else if(st.canAct) s='<b>Your hand</b> — Hit, Stand or Double.';
+  else if(st.canTarget) s='<b>BLACKJACK!</b> Click a player to fire at them.';
+  else if(st.yourSeat===st.active) s='Your turn…';
+  else s=`<b>${st.activeName}</b> is up.`;
+  $('#statusLine').innerHTML=s;
 }
 
-/* ── Turn flow ───────────────────────────────────────────────────────────── */
-function aliveCount(){ return state.players.filter(p=>p.alive).length; }
-function nextAliveAfter(idx){
-  for(let k=1;k<=state.size;k++){ const j=(idx+k)%state.size; if(state.players[j].alive) return j; }
-  return idx;
+/* ── Matchmaking + socket ────────────────────────────────────────────────── */
+function findMatch(){
+  if(C.inMatch||C.searching)return;
+  C.searching=true; setSearchUI(true);
+  $('#statusLine').innerHTML=`Searching for <b>${C.size} players</b> at ${fmtCr(C.bet)}…`;
+  C.socket.emit('find_match',{size:C.size,bet:C.bet},(r)=>{
+    if(r?.error){ C.searching=false; setSearchUI(false); toast(friendly(r.error)); $('#statusLine').textContent='Could not queue: '+friendly(r.error); return; }
+    $('#startSub').textContent=`${r.waiting||1}/${r.needed} waiting`;
+  });
 }
-
-async function startGame(){
-  state.players=buildPlayers(state.size,state.fee);
-  state.round=1; state.chamber=1; state.bullet=1+rnd(6);
-  state.balance-=state.fee; updateBalance();
-  addEvent(`Game started — everyone antes <b>${fmtCr(state.fee)}</b>. Pot ${fmtCr(pot())}.`,'deal');
-  renderHUD(); updateChamber(); renderGameInfo();
-  state.active = rnd(state.size);   // random starting player
-  addEvent(`The revolver starts pointed at <b>${state.players[state.active].name}</b>.`,'deal');
-  await beginTurn(state.active);
+function cancelSearch(){ if(!C.searching)return; C.socket.emit('cancel_find'); C.searching=false; setSearchUI(false); $('#statusLine').innerHTML='Search cancelled.'; }
+function setSearchUI(on){
+  $('#startBtn').disabled=on; $('#cancelBtn').style.display=on?'':'none';
+  $('#startBtn').firstChild.textContent = on?'🔎 Searching ':'🎯 Find Match ';
+  if(!on)$('#startSub').textContent='Pick a buy-in';
 }
+function friendly(c){ return ({invalid_size:'Pick 2–4 players.',invalid_bet:'Bad buy-in.',insufficient_balance:'Not enough credits for that buy-in.',already_in_match:'You are already in a match.',match_failed:'Match failed to start.'})[c]||c; }
 
-async function beginTurn(idx){
-  state.active=idx;
-  const p=state.players[idx];
-  if(aliveCount()<=1){ return endGame(); }
-  if(!p.alive){ return beginTurn(nextAliveAfter(idx)); }
-  pointGun(p.angle);
-  renderPlayers(); renderTurnOrder(); renderGameInfo();
-  await sleep(2700);
-  // deal
-  state.dealer=[drawCard(),{...drawCard(),hidden:true}]; state.dealerDone=false;
-  p.cards=[drawCard(),drawCard()];
-  addEvent(`<b>${p.name}</b> is dealt a hand (${handVal(p.cards)}).`,'deal');
-  renderHand();
-  if(isBJ(p.cards)){ return blackjackPath(idx); }
-  if(p.human){ state.phase='player'; renderHand(); setStatus('Your hand — <b>Hit</b>, <b>Stand</b> or <b>Double</b>.'); }
-  else { state.phase='bot'; renderHand(); setStatus(`<b>${p.name}</b> is playing…`); botPlay(idx); }
-}
-
-async function botPlay(idx){
-  const p=state.players[idx];
-  while(handVal(p.cards)<17){ await sleep(750); p.cards.push(drawCard()); renderHand(); }
-  await sleep(700); finishHand(idx);
-}
-
-// human actions
-async function humanAct(act){
-  if(state.phase!=='player') return;
-  const p=state.players[state.active];
-  if(act==='hit'){ p.cards.push(drawCard()); renderHand(); if(handVal(p.cards)>21){ state.phase='resolving'; await sleep(600); finishHand(state.active); } }
-  else if(act==='stand'){ state.phase='resolving'; finishHand(state.active); }
-  else if(act==='double'){ p.cards.push(drawCard()); renderHand(); state.phase='resolving'; await sleep(700); finishHand(state.active); }
-}
-
-async function finishHand(idx){
-  const p=state.players[idx];
-  state.dealer[1].hidden=false; state.dealerDone=true; renderHand();
-  // dealer draws to 17 unless the player already busted
-  if(handVal(p.cards)<=21){
-    while(handVal(state.dealer)<17){ await sleep(600); state.dealer.push(drawCard()); renderHand(); }
-  }
-  await sleep(500);
-  const pv=handVal(p.cards), dv=handVal(state.dealer);
-  let outcome;
-  if(pv>21) outcome='lose';
-  else if(dv>21||pv>dv) outcome='win';
-  else if(pv<dv) outcome='lose';
-  else outcome='push';
-  await resolveOutcome(idx,outcome);
-}
-
-async function resolveOutcome(idx,outcome){
-  const p=state.players[idx];
-  if(outcome==='push'){
-    addEvent(`<b>${p.name}</b> pushes the dealer — a new hand is dealt.`,'deal');
-    setStatus(`Push — re-dealing <b>${p.name}</b>…`);
-    await sleep(900); return beginTurn(idx); // same player, fresh hand
-  }
-  if(outcome==='win'){
-    addEvent(`<b>${p.name}</b> beats the dealer — no trigger. Turn passes.`,'win');
-    setStatus(`<b>${p.name}</b> survives the hand.`);
-    state.phase='idle'; renderHand(); $('#bj').classList.remove('show');
-    advanceRound(); await sleep(1100); return beginTurn(nextAliveAfter(idx));
-  }
-  // lose → pull trigger on self
-  addEvent(`<b>${p.name}</b> loses to the dealer (${handVal(p.cards)} vs ${handVal(state.dealer)}).`,'lose');
-  setStatus(`<b>${p.name}</b> loses — pulling the trigger…`);
-  $('#bj').classList.remove('show');
-  state.phase='resolving';
-  const died = await pullTrigger(idx);
-  advanceRound();
-  if(aliveCount()<=1) return endGame();
-  await sleep(700);
-  return beginTurn(nextAliveAfter(idx));
-}
-
-/* Blackjack: the player picks a target and fires at them. Then the gun moves
-   to the player AFTER the one who got the blackjack. */
-async function blackjackPath(idx){
-  const p=state.players[idx];
-  addEvent(`🂡 <b>${p.name}</b> hits BLACKJACK and gets to take a shot!`,'bj');
-  state.dealer[1].hidden=false; state.dealerDone=true; renderHand();
-  await sleep(700);
-  $('#bj').classList.remove('show');
-  const opponents = state.players.map((x,i)=>i).filter(i=>i!==idx && state.players[i].alive);
-  if(!opponents.length){ advanceRound(); return beginTurn(nextAliveAfter(idx)); }
-  if(p.human){
-    state.phase='targeting'; renderPlayers();
-    setStatus('BLACKJACK! <b>Click a player</b> to point the gun and pull the trigger.');
-    state._bjShooter=idx; // wait for chooseTarget()
-  }else{
-    const tgt=opponents[rnd(opponents.length)];
-    setStatus(`<b>${p.name}</b> takes aim at <b>${state.players[tgt].name}</b>…`);
-    pointGun(state.players[tgt].angle,1600); await sleep(1700);
-    await pullTrigger(tgt);
-    advanceRound();
-    if(aliveCount()<=1) return endGame();
-    await sleep(700); return beginTurn(nextAliveAfter(idx));
-  }
-}
-async function chooseTarget(tgt){
-  if(state.phase!=='targeting') return;
-  const shooter=state._bjShooter;
-  state.phase='resolving'; renderPlayers();
-  setStatus(`Taking aim at <b>${state.players[tgt].name}</b>…`);
-  pointGun(state.players[tgt].angle,1600); await sleep(1700);
-  await pullTrigger(tgt);
-  advanceRound();
-  if(aliveCount()<=1) return endGame();
-  await sleep(700); return beginTurn(nextAliveAfter(shooter));
-}
-
-function advanceRound(){ state.round=Math.min(state.maxRounds,state.round+1); renderHUD(); renderGameInfo(); }
-
-function endGame(){
-  state.phase='over';
-  const alive=state.players.filter(p=>p.alive);
-  const w=alive[0];
-  $('#bj').classList.remove('show'); hideBeam(); $('#revolver').classList.add('idle');
-  renderPlayers(); renderTurnOrder(); setActions();
-  if(w){
-    addEvent(`🏆 <b>${w.name}</b> is the last one standing — wins ${fmtCr(pot())}!`,'win');
-    if(w.human){ state.balance+=pot(); updateBalance(); setStatus(`You win <b>${fmtCr(pot())}</b>! 🏆`); toast(`You win ${fmtCr(pot())}!`); }
-    else setStatus(`<b>${w.name}</b> wins the pot. Better luck next time.`);
-  }
-  $('#startBtn').disabled=false; $('#startSub').textContent='Play again';
+function connect(){
+  const s=io('/rr',{withCredentials:true,transports:['websocket','polling']});
+  C.socket=s;
+  s.on('connect_error',e=>{ if(e.message==='not_authenticated'){ location.href='/login.html'; } });
+  s.on('rr_queue',d=>{ if(C.searching) $('#startSub').textContent=`${d.waiting}/${d.needed} waiting`; });
+  s.on('rr_error',d=>{ toast(friendly(d.error)); C.searching=false; setSearchUI(false); });
+  s.on('rr_match_start',d=>{
+    C.inMatch=true; C.searching=false; setSearchUI(false);
+    C.yourSeat=d.yourSeat; C.prevActive=0; C.prevDealer=0; C.prevActiveName='';
+    revAngle=0; C.lastGunSeat=null; $('#revolver').classList.remove('idle');
+    try{ window.MenuMusic && window.MenuMusic.pause(); }catch(_){}   // music stops on match start
+    addEvent({text:`Match found — you are seat ${d.yourSeat+1}. Pot ${fmtCr(d.pot)}.`,kind:'deal'});
+    toast('Match found!');
+  });
+  s.on('rr_state',applyState);
+  s.on('rr_match_end',d=>{
+    C.inMatch=false; $('#bj').classList.remove('show'); hideBeam(); $('#revolver').classList.add('idle');
+    try{ window.MenuMusic && window.MenuMusic.resume(); }catch(_){}
+    if(typeof d.newBalance==='number'){ const tb=document.querySelector('.topbar .balance'); if(tb&&window.fmtCredits)tb.textContent=fmtCredits(d.newBalance); }
+    if(d.youWon){ addEvent({text:`🏆 You win the pot ${fmtCr(d.pot)}!`,kind:'win'}); $('#statusLine').innerHTML=`<b>You win ${fmtCr(d.pot)}!</b> 🏆`; toast(`You win ${fmtCr(d.pot)}!`); }
+    else if(d.winnerName){ addEvent({text:`🏆 ${d.winnerName} wins the pot.`,kind:'win'}); $('#statusLine').innerHTML=`${d.winnerName} wins. Try again?`; }
+    else { addEvent({text:'Match ended.',kind:'deal'}); $('#statusLine').textContent='Match ended.'; }
+    setTimeout(()=>{ C.st=null; renderHUD(); renderGameInfo(); renderSeatsIdle(); renderTurnOrder(); }, 2500);
+  });
 }
 
 /* ── Misc ────────────────────────────────────────────────────────────────── */
-function setSize(n){
-  if(state.phase!=='idle'&&state.phase!=='over'){ toast('Finish the current game first'); return; }
-  state.size=n; state.fee=MOCK_LOBBIES[n][0].fee;
-  $$('#sizeSeg button').forEach(b=>b.classList.toggle('on',+b.dataset.size===n));
-  resetIdle();
-}
-function resetIdle(){
-  state.phase='idle'; state.active=-1; state.round=0; state.chamber=1; state.players=buildPlayers(state.size,state.fee);
-  revAngle=0; const rev=$('#revolver'); rev.classList.add('idle'); rev.style.transition='none'; rev.style.transform='translate(-50%,-50%) rotate(0deg)';
-  hideBeam(); $('#bj').classList.remove('show');
-  renderLobbyList(); renderPlayers(); renderHUD(); updateChamber(); renderTurnOrder(); renderGameInfo(); setActions();
-  setStatus('Press <b>Start Game</b> to ante up and deal.');
-}
-let _bal=0;
-function updateBalance(){ const tb=document.querySelector('.topbar .balance'); if(tb&&window.fmtCredits) tb.textContent=fmtCredits(state.balance); }
-let toastT; function toast(m){ let t=document.getElementById('rrToast'); if(!t){ t=document.createElement('div'); t.id='rrToast'; t.style.cssText='position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);z-index:9000;background:rgba(13,27,38,.97);border:1px solid var(--rr-red,#ff4d5e);color:#fff;padding:12px 20px;border-radius:11px;font-weight:600;letter-spacing:.5px;box-shadow:0 12px 30px rgba(0,0,0,.5);opacity:0;transition:.3s;font-family:Rajdhani,sans-serif;'; document.body.appendChild(t);} t.textContent=m; requestAnimationFrame(()=>{t.style.opacity='1';t.style.transform='translateX(-50%) translateY(0)';}); clearTimeout(toastT); toastT=setTimeout(()=>{t.style.opacity='0';t.style.transform='translateX(-50%) translateY(20px)';},2300); }
+let toastT; function toast(m){ let t=document.getElementById('rrToast'); if(!t){ t=document.createElement('div'); t.id='rrToast'; t.style.cssText='position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);z-index:9000;background:rgba(13,27,38,.97);border:1px solid #ff4d5e;color:#fff;padding:12px 20px;border-radius:11px;font-weight:600;letter-spacing:.5px;box-shadow:0 12px 30px rgba(0,0,0,.5);opacity:0;transition:.3s;font-family:Rajdhani,sans-serif;'; document.body.appendChild(t);} t.textContent=m; requestAnimationFrame(()=>{t.style.opacity='1';t.style.transform='translateX(-50%) translateY(0)';}); clearTimeout(toastT); toastT=setTimeout(()=>{t.style.opacity='0';t.style.transform='translateX(-50%) translateY(20px)';},2300); }
 
-/* ── Wiring ──────────────────────────────────────────────────────────────── */
 $$('#sizeSeg button').forEach(b=>b.addEventListener('click',()=>setSize(+b.dataset.size)));
-$('#startBtn').addEventListener('click',()=>{ if(state.phase==='idle'||state.phase==='over'){ if(state.balance<state.fee){ toast('Not enough credits for the ante'); return; } startGame(); }});
-$('#cancelBtn').addEventListener('click',()=>{ if(state.phase==='idle'||state.phase==='over') resetIdle(); else toast('Game in progress'); });
-$('#leaveBtn').addEventListener('click',()=>location.href='/dashboard.html');
-$('#createBtn').addEventListener('click',()=>toast('Private lobby created — share the code with friends'));
-$('#bjActions').addEventListener('click',e=>{ const a=e.target.closest('button')?.dataset.act; if(a) humanAct(a); });
+$('#startBtn').addEventListener('click',findMatch);
+$('#cancelBtn').addEventListener('click',cancelSearch);
+$('#leaveBtn').addEventListener('click',()=>{ if(C.searching)cancelSearch(); location.href='/dashboard.html'; });
+$('#bjActions').addEventListener('click',e=>{ const a=e.target.closest('button')?.dataset.act; if(a&&C.st&&C.st.canAct){ C.socket.emit('rr_action',{action:a}); $('#bjActions').querySelectorAll('button').forEach(b=>b.disabled=true); } });
 
 /* ── Boot ────────────────────────────────────────────────────────────────── */
 (async()=>{
-  const user=await renderTopbar();
-  if(!user) return;
-  state.balance=Number(user.balance)||0;
-  state.events=[{text:'Welcome — choose a lobby and press Start Game.',kind:'deal',t:'—'}];
-  resetIdle();
-  $('#events').innerHTML=state.events.map(e=>`<div class="ev ${e.kind}"><span class="dot"></span><span class="txt">${e.text}</span><span class="time">${e.t}</span></div>`).join('');
+  const user=await renderTopbar(); if(!user)return;
+  renderLobby(); renderHUD(); renderGameInfo(); renderSeatsIdle();
+  addEvent({text:'Welcome — pick a buy-in and find a match against real players.',kind:'deal'});
+  connect();
 })();
 </script>
 </body>

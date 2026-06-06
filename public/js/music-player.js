@@ -409,10 +409,20 @@
     if (document.hidden) {
       saveResumeState();
       if (audio) { try { audio.pause(); } catch (_) {} }
-    } else if (audio && unlocked) {
+    } else if (audio && unlocked && !gamePaused) {
       audio.play().catch(() => {});
     }
   });
+
+  // Public control so a game page can silence menu music while a match is
+  // live (e.g. Russian Roulette pauses on match start, resumes on end).
+  // gamePaused overrides the visibility auto-resume above.
+  let gamePaused = false;
+  window.MenuMusic = {
+    pause() { gamePaused = true; if (audio) { try { audio.pause(); } catch (_) {} } },
+    resume() { gamePaused = false; if (audio && unlocked) audio.play().catch(() => {}); },
+    isPlaying() { return !!(audio && !audio.paused); },
+  };
 
   // Save whenever the page is about to be torn down. pagehide fires on
   // both reload and cross-document navigation; beforeunload is the
