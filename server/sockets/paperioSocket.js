@@ -23,7 +23,8 @@ const W = 48, H = 48;                 // grid size
 const TICK_MS = 120;                  // movement cadence
 const DURATION_MS = 150000;           // 2.5 min round
 const SIZES = [2, 3, 4, 5, 6];
-const COLORS = ['#ff4d5e', '#3fd1e6', '#1fd36b', '#b58bff', '#f7c948', '#ff8a3d'];
+// Strong, vibrant, well-separated hues.
+const COLORS = ['#ff2d55', '#00d4ff', '#1fff6a', '#b15bff', '#ffd400', '#ff7a00'];
 const DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0];   // 0=up 1=right 2=down 3=left
 
 function attach(io) {
@@ -154,7 +155,9 @@ function attach(io) {
       if (!p.alive) continue;
       if ((p.pendingDir + 2) % 4 !== p.dir) p.dir = p.pendingDir;
       const nx = p.x + DX[p.dir], ny = p.y + DY[p.dir];
-      if (nx < 0 || nx >= W || ny < 0 || ny >= H) { killPlayer(m, p, 'hit the wall'); continue; }
+      // Walls are solid, NOT lethal — the player just can't move past the edge
+      // and stays put this tick (they can still turn away).
+      if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
       const nc = ny * W + nx;
       const tOwn = m.trail[nc];
       if (tOwn !== -1) {

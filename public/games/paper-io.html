@@ -39,8 +39,8 @@ body{font-family:'Rajdhani',system-ui,sans-serif;}
 .pp-stage{display:flex;flex-direction:column;gap:14px;min-width:0;}
 .hud{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;}
 .hud .rp{padding:12px 14px;text-align:center;} .hud .v{font-size:22px;color:#fff;font-weight:700;} .hud .v.pot{color:var(--pp-gold);} .hud .v.you{color:var(--pp-cyan);}
-.board-wrap{position:relative;background:#0a1620;border:1px solid var(--pp-line);border-radius:14px;padding:10px;display:flex;justify-content:center;}
-#board{display:block;width:100%;max-width:600px;aspect-ratio:1/1;background:#0a1620;border-radius:8px;touch-action:none;}
+.board-wrap{position:relative;background:#0b1b28;border:1px solid var(--pp-line);border-radius:14px;padding:10px;display:flex;justify-content:center;}
+#board{display:block;width:100%;max-width:600px;aspect-ratio:1/1;background:#0b1b28;border-radius:8px;touch-action:none;}
 .pp-banner{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;background:rgba(8,18,26,.72);border-radius:14px;text-align:center;padding:20px;}
 .pp-banner.hide{display:none;}
 .pp-banner h2{margin:0;font-size:26px;color:#fff;letter-spacing:2px;} .pp-banner p{margin:0;color:var(--pp-dim);font-size:14px;}
@@ -124,7 +124,8 @@ const C={ size:4, bet:25, socket:null, inMatch:false, searching:false,
   cur:null, prev:null, tickAt:0, pot:0, fee:0, events:[] };
 
 function fmtCr(n){ return Number(n||0).toLocaleString()+' cr'; }
-function darken(hex,f){ const n=parseInt(hex.slice(1),16); let r=(n>>16)&255,g=(n>>8)&255,b=n&255; r=Math.round(r*f);g=Math.round(g*f);b=Math.round(b*f); return `rgb(${r},${g},${b})`; }
+// Mix a hex colour toward white by `amt` (0..1) — used for the lighter trails.
+function tint(hex,amt){ const n=parseInt(hex.slice(1),16); let r=(n>>16)&255,g=(n>>8)&255,b=n&255; r=Math.round(r+(255-r)*amt);g=Math.round(g+(255-g)*amt);b=Math.round(b+(255-b)*amt); return `rgb(${r},${g},${b})`; }
 
 /* ── Lobby ───────────────────────────────────────────────────────────────── */
 function renderLobby(){
@@ -148,32 +149,34 @@ function redrawTerritory(){
   if(!C.ownerCanvas){ C.ownerCanvas=document.createElement('canvas'); }
   C.ownerCanvas.width=cv.width; C.ownerCanvas.height=cv.height;
   const octx=C.ownerCanvas.getContext('2d'); const s=cell();
-  octx.fillStyle='#0a1620'; octx.fillRect(0,0,cv.width,cv.height);
+  octx.fillStyle='#0b1b28'; octx.fillRect(0,0,cv.width,cv.height);
+  // faint grid on the EMPTY board only — owned cells paint over it for a clean,
+  // solid fill (so the vibrant territory reads as flat colour, not a grid).
+  octx.strokeStyle='rgba(255,255,255,0.045)'; octx.lineWidth=1;
+  for(let g=0;g<=C.W;g++){ const gp=Math.round(g*s)+0.5; octx.beginPath();octx.moveTo(gp,0);octx.lineTo(gp,cv.height);octx.stroke(); octx.beginPath();octx.moveTo(0,gp);octx.lineTo(cv.width,gp);octx.stroke(); }
+  // solid, vibrant territory at full colour
   for(let i=0;i<C.owner.length;i++){ const o=C.owner[i]; if(o<0)continue;
-    const x=i%C.W, y=(i/C.W)|0; octx.fillStyle=darken(C.colors[o]||'#888',0.55); octx.fillRect(x*s,y*s,s+0.6,s+0.6); }
-  // subtle grid
-  octx.strokeStyle='rgba(255,255,255,0.03)'; octx.lineWidth=1;
-  for(let g=0;g<=C.W;g++){ octx.beginPath();octx.moveTo(g*s,0);octx.lineTo(g*s,cv.height);octx.stroke(); octx.beginPath();octx.moveTo(0,g*s);octx.lineTo(cv.width,g*s);octx.stroke(); }
+    const x=i%C.W, y=(i/C.W)|0; octx.fillStyle=C.colors[o]||'#888'; octx.fillRect(Math.floor(x*s),Math.floor(y*s),Math.ceil(s)+1,Math.ceil(s)+1); }
 }
 function render(){
   requestAnimationFrame(render);
   if(!C.inMatch||!C.cur){ return; }
   const s=cell();
   ctx.clearRect(0,0,cv.width,cv.height);
-  if(C.ownerCanvas) ctx.drawImage(C.ownerCanvas,0,0); else { ctx.fillStyle='#0a1620'; ctx.fillRect(0,0,cv.width,cv.height); }
-  // trails
-  if(C.cur.trails){ for(let idx=0;idx<C.cur.trails.length;idx++){ const col=C.colors[idx]||'#888'; ctx.fillStyle=col; ctx.globalAlpha=0.7;
-    for(const c of C.cur.trails[idx]){ const x=c%C.W,y=(c/C.W)|0; ctx.fillRect(x*s,y*s,s,s); } } ctx.globalAlpha=1; }
-  // players (interpolated)
+  if(C.ownerCanvas) ctx.drawImage(C.ownerCanvas,0,0); else { ctx.fillStyle='#0b1b28'; ctx.fillRect(0,0,cv.width,cv.height); }
+  // trails — a lighter tint of the player colour, like fresh wet paint
+  if(C.cur.trails){ ctx.globalAlpha=0.95; for(let idx=0;idx<C.cur.trails.length;idx++){ ctx.fillStyle=tint(C.colors[idx]||'#888',0.42);
+    for(const c of C.cur.trails[idx]){ const x=c%C.W,y=(c/C.W)|0; ctx.fillRect(Math.floor(x*s),Math.floor(y*s),Math.ceil(s)+1,Math.ceil(s)+1); } } ctx.globalAlpha=1; }
+  // players (interpolated) — glowing heads with a white outline
   const t=Math.max(0,Math.min(1,(performance.now()-C.tickAt)/TICK_MS));
   for(const p of C.cur.players){ if(!p.alive)continue;
     const pv=C.prev?C.prev.players.find(q=>q.idx===p.idx):null;
-    let px=p.x, py=p.y;
-    if(pv){ px=pv.x+(p.x-pv.x)*t; py=pv.y+(p.y-pv.y)*t; }
-    const col=C.colors[p.idx]||'#888';
-    ctx.fillStyle=col; ctx.fillRect(px*s-1,py*s-1,s+2,s+2);
-    ctx.strokeStyle = p.idx===C.yourIdx?'#fff':'rgba(0,0,0,.55)'; ctx.lineWidth=p.idx===C.yourIdx?2.5:1.5;
-    ctx.strokeRect(px*s-1,py*s-1,s+2,s+2);
+    let px=p.x, py=p.y; if(pv){ px=pv.x+(p.x-pv.x)*t; py=pv.y+(p.y-pv.y)*t; }
+    const col=C.colors[p.idx]||'#888', mine=p.idx===C.yourIdx;
+    ctx.save(); ctx.shadowColor=col; ctx.shadowBlur=mine?16:9;
+    ctx.fillStyle=col; ctx.fillRect(px*s-1.5,py*s-1.5,s+3,s+3); ctx.restore();
+    ctx.strokeStyle=mine?'#ffffff':'rgba(255,255,255,.82)'; ctx.lineWidth=mine?3:1.6;
+    ctx.strokeRect(px*s-1.5,py*s-1.5,s+3,s+3);
   }
 }
 requestAnimationFrame(render);
