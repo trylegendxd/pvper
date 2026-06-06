@@ -339,9 +339,13 @@
     // CSS rotate(R) rotates element CW by R degrees.
     // For CCW spin: R is negative.
     // After rotate(R), pocket i appears at (i * POCKET_DEG + R) degrees from 12 o'clock.
-    // To bring pocket wheelIndex to 12 o'clock: wheelIndex * POCKET_DEG + R ≡ 0 (mod 360)
-    // → R ≡ -(wheelIndex * POCKET_DEG) (mod 360)
-    const targetDeg = -(wheelIndex * POCKET_DEG);
+    // Each pocket spans [i*POCKET_DEG, (i+1)*POCKET_DEG] from 12 o'clock, so its
+    // CENTRE sits at (i + 0.5)*POCKET_DEG. We must bring that centre — not the
+    // pocket's leading edge — under the 12 o'clock notch, otherwise the ball
+    // lands on the line between two numbers. The +POCKET_DEG/2 is the fix.
+    // To bring pocket wheelIndex's centre to 12 o'clock:
+    //   (wheelIndex + 0.5)*POCKET_DEG + R ≡ 0  →  R ≡ -((wheelIndex+0.5)*POCKET_DEG)
+    const targetDeg = -((wheelIndex + 0.5) * POCKET_DEG);
     const T_mod     = ((targetDeg % 360) + 360) % 360;
     const R_mod     = ((currentWheelRotation % 360) + 360) % 360;
     let   delta     = T_mod - R_mod;

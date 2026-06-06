@@ -188,22 +188,60 @@ body{font-family:'Rajdhani',system-ui,sans-serif;}
           <div class="rr-table"><div class="rim"></div></div>
           <div class="rr-beam" id="beam"></div>
           <div class="rr-flash" id="flash"></div>
-          <svg class="rr-revolver idle" id="revolver" viewBox="0 0 360 170" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-            <defs>
-              <linearGradient id="steel" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e9eef5"/><stop offset=".5" stop-color="#9aa6b6"/><stop offset="1" stop-color="#4b5563"/></linearGradient>
-              <radialGradient id="cyl" cx="40%" cy="35%" r="75%"><stop offset="0" stop-color="#dfe6ef"/><stop offset=".6" stop-color="#828d9d"/><stop offset="1" stop-color="#3a424e"/></radialGradient>
-              <linearGradient id="wood" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8a5a30"/><stop offset="1" stop-color="#4e3018"/></linearGradient>
-            </defs>
-            <path d="M150 96 q-10 40 -34 64 q-14 -2 -20 -16 q16 -34 28 -58 z" fill="url(#wood)" stroke="#2c1a0c" stroke-width="2"/>
-            <path d="M150 104 q22 6 30 26 q-4 8 -14 8 q-12 -2 -22 -18 z" fill="#3a424e" stroke="#23282f" stroke-width="2"/>
-            <circle cx="176" cy="118" r="6" fill="#1b1f25"/>
-            <rect x="150" y="58" width="120" height="30" rx="8" fill="url(#steel)" stroke="#3a4250" stroke-width="2"/>
-            <rect x="248" y="62" width="92" height="22" rx="9" fill="url(#steel)" stroke="#3a4250" stroke-width="2"/>
-            <circle cx="338" cy="73" r="8" fill="#1b1f25" stroke="#6b7682" stroke-width="2"/>
-            <circle cx="178" cy="84" r="40" fill="url(#cyl)" stroke="#2f3742" stroke-width="3"/>
-            <g fill="#1b1f25"><circle cx="178" cy="60" r="6.5"/><circle cx="199" cy="72" r="6.5"/><circle cx="199" cy="96" r="6.5"/><circle cx="178" cy="108" r="6.5"/><circle cx="157" cy="96" r="6.5"/><circle cx="157" cy="72" r="6.5"/></g>
-            <circle cx="178" cy="84" r="7" fill="#2b333d" stroke="#0c0e12" stroke-width="2"/>
-            <path d="M138 70 q-14 -6 -16 -22 q8 -2 14 4 q6 8 8 18 z" fill="#3a424e" stroke="#23282f" stroke-width="2"/>
+          <!-- Original pixel-art revolver, built from crisp rectangles. Barrel
+               points east at rotate(0); the gun pivots about the cylinder. -->
+          <svg class="rr-revolver idle" id="revolver" viewBox="0 0 360 170" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <!-- grip (brown, stepped down-left) -->
+            <rect x="116" y="104" width="46" height="18" fill="#23272e"/>
+            <rect x="110" y="120" width="46" height="18" fill="#23272e"/>
+            <rect x="104" y="136" width="44" height="18" fill="#23272e"/>
+            <rect x="100" y="152" width="38" height="16" fill="#23272e"/>
+            <rect x="120" y="108" width="38" height="14" fill="#7a4a28"/>
+            <rect x="114" y="124" width="38" height="14" fill="#7a4a28"/>
+            <rect x="108" y="140" width="36" height="14" fill="#7a4a28"/>
+            <rect x="104" y="156" width="30" height="10" fill="#7a4a28"/>
+            <rect x="148" y="108" width="8" height="14" fill="#9c6336"/>
+            <rect x="142" y="124" width="8" height="14" fill="#9c6336"/>
+            <rect x="136" y="140" width="8" height="14" fill="#9c6336"/>
+            <rect x="104" y="140" width="6" height="26" fill="#553118"/>
+            <rect x="124" y="114" width="4" height="4" fill="#553118"/>
+            <rect x="132" y="130" width="4" height="4" fill="#553118"/>
+            <!-- barrel -->
+            <rect x="196" y="56" width="142" height="36" fill="#23272e"/>
+            <rect x="200" y="60" width="134" height="28" fill="#9aa6b6"/>
+            <rect x="200" y="60" width="130" height="6"  fill="#d7dde6"/>
+            <rect x="200" y="84" width="134" height="4"  fill="#5b6470"/>
+            <rect x="324" y="64" width="10"  height="20" fill="#5b6470"/>
+            <rect x="330" y="68" width="6"   height="12" fill="#23272e"/>
+            <rect x="312" y="50" width="9"   height="10" fill="#23272e"/>
+            <rect x="314" y="52" width="5"   height="8"  fill="#9aa6b6"/>
+            <!-- frame -->
+            <rect x="144" y="48" width="62" height="70" fill="#23272e"/>
+            <rect x="148" y="52" width="54" height="62" fill="#9aa6b6"/>
+            <rect x="198" y="52" width="6"  height="62" fill="#5b6470"/>
+            <rect x="150" y="44" width="46" height="10" fill="#23272e"/>
+            <rect x="152" y="46" width="42" height="8"  fill="#9aa6b6"/>
+            <!-- cylinder -->
+            <rect x="152" y="58" width="46" height="50" fill="#5b6470"/>
+            <rect x="152" y="58" width="46" height="6"  fill="#9aa6b6"/>
+            <rect x="170" y="76" width="12" height="12" fill="#23272e"/>
+            <rect x="173" y="79" width="6"  height="6"  fill="#9aa6b6"/>
+            <rect x="158" y="64" width="6" height="6" fill="#23272e"/>
+            <rect x="186" y="64" width="6" height="6" fill="#23272e"/>
+            <rect x="158" y="96" width="6" height="6" fill="#23272e"/>
+            <rect x="186" y="96" width="6" height="6" fill="#23272e"/>
+            <!-- hammer -->
+            <rect x="128" y="42" width="20" height="16" fill="#23272e"/>
+            <rect x="131" y="45" width="14" height="10" fill="#5b6470"/>
+            <rect x="120" y="46" width="9"  height="9"  fill="#23272e"/>
+            <rect x="122" y="48" width="5"  height="5"  fill="#9aa6b6"/>
+            <!-- trigger + guard -->
+            <rect x="148" y="114" width="48" height="10" fill="#23272e"/>
+            <rect x="152" y="116" width="40" height="6"  fill="#5b6470"/>
+            <rect x="166" y="118" width="8"  height="16" fill="#23272e"/>
+            <rect x="168" y="120" width="4"  height="12" fill="#9aa6b6"/>
+            <rect x="156" y="130" width="34" height="8"  fill="#23272e"/>
+            <rect x="160" y="132" width="26" height="4"  fill="#5b6470"/>
           </svg>
         </div>
       </div>
@@ -395,6 +433,9 @@ function pointGun(seat,ms=2400){
 function showBeam(seat){ const st=C.st; const b=$('#beam'); b.style.transform=`rotate(${SLOTS[st.size][seat]}deg)`; b.classList.add('show'); }
 function hideBeam(){ $('#beam').classList.remove('show'); }
 function bang(){ const f=$('#flash'); f.classList.remove('bang'); void f.offsetWidth; f.classList.add('bang'); }
+// Reuse the shooter's AK rifle gunshot for the firing sound.
+let _shotSfx=null;
+function playShot(){ try{ if(!_shotSfx){ _shotSfx=new Audio('/audio/gunshot_rifle.mp3'); _shotSfx.preload='auto'; _shotSfx.volume=0.6; } _shotSfx.currentTime=0; _shotSfx.play().catch(()=>{}); }catch(_){} }
 function addEvent(ev){ if(!ev)return; const t=new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});
   C.events.unshift({...ev,t}); if(C.events.length>60)C.events.pop();
   $('#events').innerHTML=C.events.map(e=>`<div class="ev ${e.kind}"><span class="dot"></span><span class="txt">${e.text}</span><span class="time">${e.t}</span></div>`).join(''); }
@@ -407,7 +448,7 @@ function applyState(st){
   // gun: point at the shot victim when firing, else the active seat
   if(st.shot){
     pointGun(st.shot.seat,900); showBeam(st.shot.seat);
-    if(st.shot.fired){ setTimeout(bang,500); }
+    if(st.shot.fired){ setTimeout(()=>{ bang(); playShot(); },500); }
     setTimeout(hideBeam,1400);
   }else{
     hideBeam();
