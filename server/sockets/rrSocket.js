@@ -100,6 +100,21 @@ function attach(io) {
       doTrigger(m, seat, () => afterBlackjackShot(m));
     });
 
+    // Match chat — relayed to everyone in the same match. Light cooldown so
+    // it can't be spammed.
+    socket.on('rr_chat', ({ text } = {}) => {
+      const me = socks.get(socket.id); if (!me?.currentMatch) return;
+      const m = matches.get(me.currentMatch); if (!m) return;
+      const p = m.players.find(x => x.socketId === socket.id); if (!p) return;
+      const now = Date.now();
+      if (now - (me.lastChatAt || 0) < 400) return;
+      me.lastChatAt = now;
+      const t = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+      if (!t) return;
+      const payload = { seat: p.seat, name: p.username, text: t };
+      for (const q of m.players) ns.to(q.socketId).emit('rr_chat', payload);
+    });
+
     socket.on('disconnect', () => handleLeave(socket.id));
   });
 

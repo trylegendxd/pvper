@@ -92,6 +92,20 @@ function attach(io) {
       p.pendingDir = dir;
     });
 
+    // Match chat — relayed to everyone in the same match (light cooldown).
+    socket.on('pp_chat', ({ text } = {}) => {
+      const me = socks.get(socket.id); if (!me?.currentMatch) return;
+      const m = matches.get(me.currentMatch); if (!m) return;
+      const p = m.players.find(x => x.socketId === socket.id); if (!p) return;
+      const now = Date.now();
+      if (now - (me.lastChatAt || 0) < 400) return;
+      me.lastChatAt = now;
+      const t = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+      if (!t) return;
+      const payload = { idx: p.idx, name: p.username, text: t };
+      for (const q of m.players) ns.to(q.socketId).emit('pp_chat', payload);
+    });
+
     socket.on('disconnect', () => handleLeave(socket.id));
   });
 
@@ -117,10 +131,14 @@ function attach(io) {
       const ang = (i / size) * Math.PI * 2 - Math.PI / 2;
       const px = Math.max(2, Math.min(W - 3, Math.round(cx + Math.cos(ang) * R)));
       const py = Math.max(2, Math.min(H - 3, Math.round(cy + Math.sin(ang) * R)));
+      // Start everyone heading toward the centre — fair/symmetric, and avoids
+      // a player whose default direction happens to point straight at a wall.
+      const tcx = cx - px, tcy = cy - py;
+      const dir0 = Math.abs(tcx) > Math.abs(tcy) ? (tcx > 0 ? 1 : 3) : (tcy > 0 ? 2 : 0);
       const p = {
         socketId: sid, userId: socks.get(sid).userId, username: socks.get(sid).username,
         idx: i, color: COLORS[i % COLORS.length], alive: true,
-        x: px, y: py, dir: i % 4, pendingDir: i % 4, trail: [], area: 0,
+        x: px, y: py, dir: dir0, pendingDir: dir0, trail: [], area: 0,
       };
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
         const c = (py + dy) * W + (px + dx); owner[c] = i;

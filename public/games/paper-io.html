@@ -56,10 +56,23 @@ body{font-family:'Rajdhani',system-ui,sans-serif;}
 .brow{display:flex;align-items:center;gap:9px;font-size:13px;}
 .brow .sw{width:14px;height:14px;border-radius:4px;flex-shrink:0;} .brow .nm{color:#fff;font-weight:600;} .brow .nm.you{color:var(--pp-cyan);}
 .brow .pct{margin-left:auto;color:var(--pp-dim);font-variant-numeric:tabular-nums;} .brow.out .nm{color:var(--pp-dim);text-decoration:line-through;}
-.events{display:flex;flex-direction:column;gap:7px;max-height:240px;overflow:auto;}
+.events{display:flex;flex-direction:column;gap:7px;max-height:200px;overflow:auto;}
 .ev{font-size:13px;color:var(--pp-txt);line-height:1.3;} .ev .t{color:var(--pp-dim);font-size:11px;margin-right:6px;}
-@media(max-width:1240px){ .pp-grid{grid-template-columns:1fr 320px;} .pp-lobby{display:none;} }
-@media(max-width:980px){ .pp-grid{grid-template-columns:1fr;} .pp-info{position:static;} }
+.chatbox{display:flex;flex-direction:column;gap:6px;max-height:160px;overflow:auto;margin-bottom:10px;padding-right:4px;}
+.chatbox .cm{font-size:13px;line-height:1.35;word-break:break-word;} .chatbox .cm .who{font-weight:700;} .chatbox .empty{color:var(--pp-dim);font-size:12px;}
+.chat-input{display:flex;gap:8px;}
+.chat-input input{flex:1;background:#0e2531;border:1px solid var(--pp-line);color:#fff;border-radius:8px;padding:9px 11px;font-family:inherit;font-size:13px;}
+.chat-input input:focus{outline:none;border-color:var(--pp-cyan);}
+.chat-input button{border:0;cursor:pointer;background:var(--pp-cyan);color:#04222b;font-weight:700;border-radius:8px;padding:9px 14px;font-family:inherit;font-size:12px;}
+/* on-screen D-pad for touch devices */
+.dpad{display:none;grid-template-columns:repeat(3,52px);grid-template-rows:repeat(3,52px);gap:6px;justify-content:center;margin-top:4px;}
+.dpad button{border:1px solid var(--pp-line);background:var(--pp-panel2);color:#fff;border-radius:10px;font-size:20px;cursor:pointer;}
+.dpad button:active{background:var(--pp-green);color:#03210f;}
+.dpad .up{grid-area:1/2;} .dpad .left{grid-area:2/1;} .dpad .right{grid-area:2/3;} .dpad .down{grid-area:3/2;}
+@media(hover:none) and (pointer:coarse){ .dpad{display:grid;} .ctrl-hint{display:none;} }
+/* Keep the lobby (Find Match) reachable at every width — info wraps below. */
+@media(max-width:1280px){ .pp-grid{grid-template-columns:300px 1fr;} .pp-info{grid-column:1/-1;position:static;} }
+@media(max-width:820px){ .pp-grid{grid-template-columns:1fr;} }
 </style>
 </head>
 <body>
@@ -93,7 +106,13 @@ body{font-family:'Rajdhani',system-ui,sans-serif;}
         <canvas id="board" width="600" height="600"></canvas>
         <div class="pp-banner" id="banner"><h2 id="bannerH">TERRITORY</h2><p id="bannerP">Pick a buy-in and press Find Match.</p></div>
       </div>
-      <div class="ctrl-hint">Move with <b>Arrow keys</b> or <b>WASD</b>. You can't reverse straight back.</div>
+      <div class="ctrl-hint">Move with <b>Arrow keys</b> or <b>WASD</b> (or <b>swipe</b> the board on touch). You can't reverse straight back.</div>
+      <div class="dpad" id="dpad">
+        <button class="up"    data-dir="0" aria-label="up">▲</button>
+        <button class="left"  data-dir="3" aria-label="left">◀</button>
+        <button class="right" data-dir="1" aria-label="right">▶</button>
+        <button class="down"  data-dir="2" aria-label="down">▼</button>
+      </div>
       <div class="actions">
         <button class="act leave" id="leaveBtn">🚪 Leave</button>
         <button class="act start" id="startBtn">🎯 Find Match <small id="startSub">Pick a buy-in</small></button>
@@ -104,6 +123,10 @@ body{font-family:'Rajdhani',system-ui,sans-serif;}
     <aside class="pp-info">
       <div class="rp rp-pad"><div class="shead"><h3 style="font-size:14px">Leaderboard</h3><span class="eyebrow">Live</span></div><div class="board-list" id="board-list"><div style="color:var(--pp-dim);font-size:13px">No game yet.</div></div></div>
       <div class="rp rp-pad"><div class="shead"><h3 style="font-size:14px">Recent Events</h3><span class="eyebrow">Feed</span></div><div class="events" id="events"></div></div>
+      <div class="rp rp-pad"><div class="shead"><h3 style="font-size:14px">Match Chat</h3><span class="eyebrow">Players</span></div>
+        <div class="chatbox" id="chat"></div>
+        <div class="chat-input"><input id="chatInput" maxlength="200" placeholder="Message your lobby…" autocomplete="off"><button id="chatSend">Send</button></div>
+      </div>
     </aside>
   </div>
 </div>
@@ -220,6 +243,7 @@ function connect(){
     C.colors={}; C.names={}; d.players.forEach(p=>{ C.colors[p.idx]=p.color; C.names[p.idx]=p.name; });
     C.owner=null; C.ownerCanvas=null; C.cur=null; C.prev=null;
     $('#banner').classList.add('hide');
+    $('#chat').innerHTML='<div class="empty">Say hi to your lobby…</div>';
     try{ window.MenuMusic && window.MenuMusic.pause(); }catch(_){}   // music stops on match start
     addEvent(`Match started — pot ${fmtCr(d.pot)} (house fee ${d.feePct}%). You are ${C.names[d.yourIdx]}.`);
     toast('Match started!'); renderHUD();
@@ -227,6 +251,7 @@ function connect(){
   s.on('pp_grid',d=>{ C.owner=d.owner; redrawTerritory(); });
   s.on('pp_tick',d=>{ C.prev=C.cur; C.cur=d; C.tickAt=performance.now(); renderHUD(); renderBoardList(); });
   s.on('pp_event',d=>addEvent(d.text));
+  s.on('pp_chat',addChat);
   s.on('pp_end',d=>{
     C.inMatch=false;
     try{ window.MenuMusic && window.MenuMusic.resume(); }catch(_){}
@@ -241,9 +266,23 @@ function connect(){
   });
 }
 
-/* ── Controls ────────────────────────────────────────────────────────────── */
+/* ── Controls (keyboard, swipe, on-screen D-pad) ─────────────────────────── */
 const KEY={ ArrowUp:0,KeyW:0, ArrowRight:1,KeyD:1, ArrowDown:2,KeyS:2, ArrowLeft:3,KeyA:3 };
-document.addEventListener('keydown',e=>{ const d=KEY[e.code]; if(d===undefined)return; if(C.inMatch){ e.preventDefault(); C.socket.emit('pp_dir',{dir:d}); } });
+function sendDir(d){ if(C.inMatch && C.socket) C.socket.emit('pp_dir',{dir:d}); }
+document.addEventListener('keydown',e=>{ if(e.target&&e.target.tagName==='INPUT')return; const d=KEY[e.code]; if(d===undefined)return; if(C.inMatch){ e.preventDefault(); sendDir(d); } });
+$$('#dpad button').forEach(b=>b.addEventListener('click',()=>sendDir(+b.dataset.dir)));
+let _ts=null;
+cv.addEventListener('touchstart',e=>{ _ts={x:e.touches[0].clientX,y:e.touches[0].clientY}; if(C.inMatch)e.preventDefault(); },{passive:false});
+cv.addEventListener('touchmove',e=>{ if(!_ts||!C.inMatch)return; const t=e.touches[0],dx=t.clientX-_ts.x,dy=t.clientY-_ts.y; if(Math.hypot(dx,dy)<22)return; sendDir(Math.abs(dx)>Math.abs(dy)?(dx>0?1:3):(dy>0?2:0)); _ts={x:t.clientX,y:t.clientY}; e.preventDefault(); },{passive:false});
+
+/* ── Match chat ──────────────────────────────────────────────────────────── */
+function addChat(d){ const host=$('#chat'); if(!host)return; const e=host.querySelector('.empty'); if(e)e.remove();
+  const div=document.createElement('div'); div.className='cm';
+  div.innerHTML=`<span class="who" style="color:${C.colors[d.idx]||'#3fd1e6'}">${escapeHtml(d.name)}:</span> ${escapeHtml(d.text)}`;
+  host.appendChild(div); host.scrollTop=host.scrollHeight; }
+function sendChat(){ const inp=$('#chatInput'); const t=(inp.value||'').trim(); if(!t)return; if(!C.inMatch){ toast('Join a match to chat'); return; } C.socket.emit('pp_chat',{text:t}); inp.value=''; }
+$('#chatSend').addEventListener('click',sendChat);
+$('#chatInput').addEventListener('keydown',e=>{ if(e.key==='Enter')sendChat(); });
 
 /* ── Misc ────────────────────────────────────────────────────────────────── */
 let toastT; function toast(m){ let t=document.getElementById('ppToast'); if(!t){ t=document.createElement('div'); t.id='ppToast'; t.style.cssText='position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);z-index:9000;background:rgba(13,27,38,.97);border:1px solid #1fd36b;color:#fff;padding:12px 20px;border-radius:11px;font-weight:600;box-shadow:0 12px 30px rgba(0,0,0,.5);opacity:0;transition:.3s;font-family:Rajdhani,sans-serif;'; document.body.appendChild(t);} t.textContent=m; requestAnimationFrame(()=>{t.style.opacity='1';t.style.transform='translateX(-50%) translateY(0)';}); clearTimeout(toastT); toastT=setTimeout(()=>{t.style.opacity='0';t.style.transform='translateX(-50%) translateY(20px)';},2300); }
