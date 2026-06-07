@@ -456,6 +456,7 @@ function addEvent(ev){ if(!ev)return; const t=new Date().toLocaleTimeString([],{
 /* ── Apply a server state snapshot ───────────────────────────────────────── */
 function applyState(st){
   C.st=st; C.yourSeat=st.yourSeat;
+  C.pendingAct=false;   // a fresh server state means our last action landed
   if(st.event) addEvent(st.event);
   renderHUD(); renderGameInfo(); renderSeats(); renderTurnOrder(); renderHand();
   // gun: point at the shot victim when firing, else the active seat
@@ -530,7 +531,7 @@ $$('#sizeSeg button').forEach(b=>b.addEventListener('click',()=>setSize(+b.datas
 $('#startBtn').addEventListener('click',findMatch);
 $('#cancelBtn').addEventListener('click',cancelSearch);
 $('#leaveBtn').addEventListener('click',()=>{ if(C.searching)cancelSearch(); location.href='/dashboard.html'; });
-$('#bjActions').addEventListener('click',e=>{ const a=e.target.closest('button')?.dataset.act; if(a&&C.st&&C.st.canAct){ C.socket.emit('rr_action',{action:a}); $('#bjActions').querySelectorAll('button').forEach(b=>b.disabled=true); } });
+$('#bjActions').addEventListener('click',e=>{ const a=e.target.closest('button')?.dataset.act; if(a&&C.st&&C.st.canAct&&!C.pendingAct){ C.pendingAct=true; C.socket.emit('rr_action',{action:a}); $('#bjActions').querySelectorAll('button').forEach(b=>b.disabled=true); } });
 
 /* If the operator drops a licensed revolver.png into /public/assets/, use it
    instead of the built-in original SVG (it rotates with the same wrapper). */

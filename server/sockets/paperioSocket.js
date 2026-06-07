@@ -220,12 +220,15 @@ function attach(io) {
     for (let c = 0; c < m.owner.length; c++) {
       if (m.owner[c] !== p.idx && !seen[c]) { m.owner[c] = p.idx; if (m.trail[c] !== -1) m.trail[c] = -1; }
     }
-    // Recompute areas + reconcile any trail arrays the capture overwrote.
+    // Reconcile any trail arrays the capture overwrote.
     for (const q of m.players) {
       if (q !== p) q.trail = q.trail.filter(c => m.trail[c] === q.idx);
     }
-    p.area = 0;
-    for (let c = 0; c < m.owner.length; c++) if (m.owner[c] === p.idx) p.area++;
+    // Recompute EVERY player's area in a single pass — a capture can take
+    // cells from a rival, so that rival's territory (and their leaderboard
+    // percentage) has to drop accordingly, not just the capturer's go up.
+    for (const q of m.players) q.area = 0;
+    for (let c = 0; c < m.owner.length; c++) { const o = m.owner[c]; if (o >= 0) m.players[o].area++; }
     m.gridDirty = true;
     emitEvent(m, `🟦 ${p.username} captured territory (${p.area}).`);
   }

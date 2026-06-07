@@ -218,10 +218,14 @@ function attach(io) {
         setTimer(m, () => handleAction(m, 'stand'), ACTION_TIMEOUT_MS);
         return;
       }
+      // Committed (double or bust) — lock the turn so no extra action lands.
+      m.phase = 'resolving';
       emitState(m, { event: { text: action === 'double' ? `${p.username} doubles down.` : `${p.username} hits and busts!`, kind: 'deal' } });
       return setTimer(m, () => playDealer(m), 600);
     }
-    // stand
+    // stand — lock the turn immediately (was still 'turn' during the short
+    // pre-dealer delay, which let a fast player sneak another hit/stand in).
+    m.phase = 'resolving';
     emitState(m, { event: { text: `${p.username} stands (${rr.handValue(p.cards)}).`, kind: 'deal' } });
     setTimer(m, () => playDealer(m), 500);
   }
