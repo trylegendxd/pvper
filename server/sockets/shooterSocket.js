@@ -19,6 +19,87 @@ const Achievements = require('../games/shooterAchievements');
 // the death overlay clears.
 const SPAWN_INVULN_MS = 1000;
 
+// ── CS:GO-style round economy ───────────────────────────────────────────────
+// A purely IN-MATCH virtual currency — completely separate from the player's
+// real credit balance / wallet. The real wager (bet → pot → winner) is
+// untouched; this money only decides which gun you can spawn with each round.
+//
+// Mapping to this deathmatch: every life is a "round". You start a match with
+// START_MONEY, buy a loadout during the buy window, and keep whatever gun you
+// bought as long as you stay alive (survivors carry weapons across rounds, just
+// like CS). When you die you respawn with the default pistol+knife, collect a
+// loss bonus, and get a fresh buy window to re-arm. Killing earns money based
+// on the weapon used. The economy is only enabled for "all weapons" matches —
+// fixed weapon-mode lobbies keep their classic behaviour.
+const ECON = {
+  START_MONEY:     800,
+  MAX_MONEY:       16000,
+  BUY_TIME_MS:     12000,                      // buy window after each (re)spawn
+  DEFAULT_LOADOUT: ['knife', 'pistol'],        // always owned, free
+  PRICES:   { knife: 0, pistol: 0, shotgun: 1200, rifle: 2700, sniper: 4750 },
+  KILL_REWARD: { knife: 1500, pistol: 600, shotgun: 900, rifle: 300, sniper: 300, molotov: 300, smoke: 300 },
+  LOSS_BONUS:      1400,                        // money granted on respawn (death)
+};
+// What the client needs to render the buy menu. Sent inside match_start.
+const ECON_PUBLIC = {
+  startMoney: ECON.START_MONEY,
+  maxMoney:   ECON.MAX_MONEY,
+  buyTimeMs:  ECON.BUY_TIME_MS,
+  prices:     ECON.PRICES,
+  defaultLoadout: ECON.DEFAULT_LOADOUT,
+};
+
+function econActive(match) { return !!(match && match.economy); }
+
+// Decide whether a freshly-built match runs the economy, and seed every
+// player's money / loadout / buy window. Called right after matches.set().
+function initMatchEconomy(match) {
+  match.economy = (match.weaponMode === 'all');
+  if (!match.economy) return;
+  const t = Date.now();
+  for (const sid of match.playerIds) {
+    const st = match.gameState[sid];
+    if (!st) continue;
+    st.money    = ECON.START_MONEY;
+    st.loadout  = new Set(ECON.DEFAULT_LOADOUT);
+    st.buyUntil = t + ECON.BUY_TIME_MS;
+    st.weapon   = 'pistol';                     // spawn with the free pistol, not a rifle
+  }
+}
+
+// Per-player economy snapshot for the match_start / resume payload.
+function econPlayerSnapshot(st) {
+  return {
+    money:    st?.money ?? ECON.START_MONEY,
+    loadout:  st?.loadout ? [...st.loadout] : [...ECON.DEFAULT_LOADOUT],
+    buyUntil: st?.buyUntil ?? (Date.now() + ECON.BUY_TIME_MS),
+  };
+}
+
+// Award kill money to the killer (no-op when economy is off).
+function awardKillEconomy(io, match, killerSid, killerState, weaponKey) {
+  if (!econActive(match) || !killerState) return;
+  const reward = ECON.KILL_REWARD[weaponKey] ?? 300;
+  killerState.money = Math.min(ECON.MAX_MONEY, (killerState.money || 0) + reward);
+  io.of('/shooter').to(killerSid).emit('economy_update', {
+    money: killerState.money, delta: reward, reason: 'kill',
+  });
+}
+
+// Reset a player's loadout on respawn, grant the loss bonus, reopen the buy
+// window, and tell the client to pop the buy menu (no-op when economy is off).
+function respawnEconomy(io, match, sid, state) {
+  if (!econActive(match) || !state) return;
+  state.money    = Math.min(ECON.MAX_MONEY, (state.money || 0) + ECON.LOSS_BONUS);
+  state.loadout  = new Set(ECON.DEFAULT_LOADOUT);
+  state.weapon   = 'pistol';
+  state.buyUntil = Date.now() + ECON.BUY_TIME_MS;
+  io.of('/shooter').to(sid).emit('buy_open', {
+    money: state.money, loadout: [...state.loadout],
+    buyUntil: state.buyUntil, delta: ECON.LOSS_BONUS, reason: 'respawn',
+  });
+}
+
 // Emit a one-shot invuln event to all players in a match so they can
 // render an aura (or skip their own crosshair fire-confirm). Best-effort
 // — if io isn't ready yet (called from a very early respawn path) the
@@ -793,6 +874,7 @@ function tickThrowables(io, match) {
       if (fatal) {
         const killerState = match.gameState[eff.ownerSocketId];
         if (killerState) killerState.kills = (killerState.kills || 0) + 1;
+        awardKillEconomy(io, match, eff.ownerSocketId, killerState, 'molotov');  // CS economy
         state.deaths = (state.deaths || 0) + 1;
         // Score team win / 1v1 win check.
         let teamWin = null, winnerSock = null;
@@ -842,6 +924,7 @@ function tickThrowables(io, match) {
               else { state.weapons[k].ammo = WEAPONS[k].mag; state.weapons[k].reloading = false; }
             }
             refillThrowables(state);
+            respawnEconomy(io, match, sid, state);   // CS economy: loss bonus + rebuy
             state.position = spawn;
             state.lastPosition = { ...spawn };
             state.positionHistory = [];
@@ -1197,6 +1280,8 @@ function tryResumeMatch(io, socket, userId) {
     endTime: match.endTime,
     weaponMode: match.weaponMode,
     killsToWin: match.killsToWin,
+    economy: match.economy, econ: match.economy ? ECON_PUBLIC : null,
+    wallet: match.economy ? econPlayerSnapshot(match.gameState[newSid]) : null,
     players: playersPayload,
     yourId: newSid,
     resumed: true,
@@ -1518,6 +1603,7 @@ async function startMmMatch(io, queue, teamA, teamB) {
   };
   matches.set(match.id, match);
   ensureThrowableTick(io, match);
+  initMatchEconomy(match);
   for (const sid of playerIds) {
     const p = players.get(sid);
     if (p) p.currentMatch = match.id;
@@ -1541,6 +1627,7 @@ async function startMmMatch(io, queue, teamA, teamB) {
     endTime: match.endTime,
     weaponMode: resolvedMode, killsToWin: resolvedRounds,
     isTeamMatch: true, teamSize,
+    economy: match.economy, econ: match.economy ? ECON_PUBLIC : null,
     players: Object.fromEntries(playerIds.map((sid, i) => {
       const p = players.get(sid);
       return [sid, { username: p?.username || '?', team: gameState[sid].team, spawnIndex: i }];
@@ -1549,6 +1636,7 @@ async function startMmMatch(io, queue, teamA, teamB) {
   for (const sid of playerIds) {
     ns.to(sid).emit('match_start', {
       ...basePayload, yourId: sid, yourTeam: gameState[sid].team,
+      wallet: match.economy ? econPlayerSnapshot(gameState[sid]) : null,
     });
   }
 
@@ -1704,6 +1792,7 @@ async function startPrivateMatch(io, lobby) {
   };
   matches.set(match.id, match);
   ensureThrowableTick(io, match);
+  initMatchEconomy(match);
 
   // Mark every player as being in this match and clear any other state.
   for (const m of allMembers) {
@@ -1732,12 +1821,16 @@ async function startPrivateMatch(io, lobby) {
     killsToWin: lobby.killsToWin,
     isTeamMatch: true,
     teamSize: lobby.teamSize,
+    economy: match.economy, econ: match.economy ? ECON_PUBLIC : null,
     players: Object.fromEntries(allMembers.map((m, i) => [m.socketId, {
       username: m.username, team: m.team, spawnIndex: i,
     }])),
   };
   for (const m of allMembers) {
-    ns.to(m.socketId).emit('match_start', { ...basePayload, yourId: m.socketId, yourTeam: m.team });
+    ns.to(m.socketId).emit('match_start', {
+      ...basePayload, yourId: m.socketId, yourTeam: m.team,
+      wallet: match.economy ? econPlayerSnapshot(match.gameState[m.socketId]) : null,
+    });
   }
   // Match timer
   match.timeoutTimer = setTimeout(() => {
@@ -1853,6 +1946,7 @@ async function _startMatchInner(io, lobby) {
   };
   matches.set(match.id, match);
   ensureThrowableTick(io, match);
+  initMatchEconomy(match);
   p1.currentMatch = match.id;
   p2.currentMatch = match.id;
 
@@ -1884,13 +1978,20 @@ async function _startMatchInner(io, lobby) {
     coverBoxes, spawnPoints,
     endTime: match.endTime,
     weaponMode, killsToWin,
+    economy: match.economy, econ: match.economy ? ECON_PUBLIC : null,
     players: {
       [p1Id]: { username: p1.username, spawnIndex: 0 },
       [p2Id]: { username: p2.username, spawnIndex: 1 },
     },
   };
-  io.of('/shooter').to(p1Id).emit('match_start', { ...basePayload, yourId: p1Id });
-  io.of('/shooter').to(p2Id).emit('match_start', { ...basePayload, yourId: p2Id });
+  io.of('/shooter').to(p1Id).emit('match_start', {
+    ...basePayload, yourId: p1Id,
+    wallet: match.economy ? econPlayerSnapshot(match.gameState[p1Id]) : null,
+  });
+  io.of('/shooter').to(p2Id).emit('match_start', {
+    ...basePayload, yourId: p2Id,
+    wallet: match.economy ? econPlayerSnapshot(match.gameState[p2Id]) : null,
+  });
 
   // Match timer — draw if no winner by deadline
   match.timeoutTimer = setTimeout(() => {
@@ -2566,6 +2667,11 @@ function attach(io) {
       }
       const state = match.gameState[socket.id];
       if (!state) return;
+      // Economy mode: can't equip a weapon you haven't bought (fails open
+      // if loadout is missing).
+      if (econActive(match) && state.loadout && !state.loadout.has(weapon)) {
+        return noteSuspicious(match, socket.id, 'switch_not_owned', { attempted: weapon });
+      }
 
       const now = Date.now();
       if (now - (state.lastWeaponSwitchAt || 0) < WEAPON_SWITCH_COOLDOWN_MS) {
@@ -2587,6 +2693,42 @@ function attach(io) {
       Replay.log(match.id, 'weapon_switch', { s: socket.id, w: weapon });
     });
 
+    // ── buy_weapon ─────────────────────────────────────────────────────
+    // CS:GO buy menu. Spends the in-match virtual money (NOT real credits)
+    // on a weapon, validated against price, funds, and the open buy window.
+    socket.on('buy_weapon', ({ weapon } = {}) => {
+      const p = players.get(socket.id);
+      if (!p?.currentMatch) return;
+      const match = matches.get(p.currentMatch);
+      if (!match || match.status !== 'active' || !econActive(match)) return;
+      const state = match.gameState[socket.id];
+      if (!state || state.respawning) return;
+
+      const wKey = String(weapon || '');
+      const price = ECON.PRICES[wKey];
+      const reply = (ok, reason) => socket.emit('buy_result', {
+        ok, reason: reason || null, weapon: wKey,
+        money: state.money, loadout: [...(state.loadout || [])],
+      });
+
+      if (price === undefined || !WEAPONS[wKey]) return reply(false, 'invalid');
+      if (price <= 0)                            return reply(false, 'free');     // knife/pistol already owned
+      if (Date.now() > (state.buyUntil || 0))    return reply(false, 'closed');   // buy window expired
+      if (state.loadout.has(wKey))               return reply(false, 'owned');
+      if ((state.money || 0) < price)            return reply(false, 'funds');
+
+      state.money -= price;
+      state.loadout.add(wKey);
+      // Top the weapon's magazine off so the buy is immediately usable.
+      if (state.weapons[wKey]) {
+        state.weapons[wKey].ammo = WEAPONS[wKey].mag;
+        state.weapons[wKey].reloading = false;
+        state.weapons[wKey].reloadStartedAt = 0;
+      }
+      Replay.log(match.id, 'weapon_buy', { s: socket.id, w: wKey, money: state.money });
+      reply(true, null);
+    });
+
     // ── shoot ─────────────────────────────────────────────────────────
     socket.on('shoot', ({ origin, direction, timestamp, directions } = {}) => {
       const p = players.get(socket.id);
@@ -2603,6 +2745,12 @@ function attach(io) {
       // Honour the lobby weapon-mode vote.
       if (match.weaponMode && match.weaponMode !== 'all' && wKey !== match.weaponMode) {
         return noteSuspicious(match, socket.id, 'weapon_disallowed', { mode: match.weaponMode, attempted: wKey });
+      }
+      // Economy mode: you can only fire a weapon you actually bought this
+      // round (knife/pistol are always owned). Fails OPEN if loadout is
+      // somehow missing so a bug can never make shooting impossible.
+      if (econActive(match) && state.loadout && !state.loadout.has(wKey)) {
+        return noteSuspicious(match, socket.id, 'weapon_not_owned', { attempted: wKey });
       }
       if (wState.reloading) return noteSuspicious(match, socket.id, 'shot_while_reloading');
 
@@ -2845,6 +2993,7 @@ function attach(io) {
         state.streakKills = (state.streakKills || 0) + 1;
         oppState.deaths++;
         oppState.streakKills = 0;          // dying resets the killer's-side streak counter
+        awardKillEconomy(io, match, socket.id, state, wKey);   // CS economy: kill reward
 
         // Real-time achievement grants. These are fire-and-forget — the
         // tryGrant helper resolves async and only emits if it was new.
@@ -2960,6 +3109,8 @@ function attach(io) {
             oppState.invulnUntil = invulnUntil;
             // Refill throwables on respawn so molotov/smoke counts reset.
             refillThrowables(oppState);
+            // CS economy: loss bonus + reset loadout + reopen buy window.
+            respawnEconomy(io, match, oppSock, oppState);
             Replay.log(match.id, 'player_spawn', { s: oppSock, p: spawn });
             ns.to(oppSock).emit('respawn', { position: spawn, health: MAX_HEALTH, invulnUntil });
             ns.to(socket.id).emit('opponent_respawn', { position: spawn, invulnUntil });

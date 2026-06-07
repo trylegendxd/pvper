@@ -297,6 +297,40 @@ input:focus { border-color:var(--accent); }
 .ammo-label   { font-size:10px;color:#444;letter-spacing:1px;margin-top:3px; }
 .ammo-reload  { font-size:12px;color:#f1c40f;letter-spacing:1px;animation:pulse .6s ease infinite alternate; }
 
+/* ── CS:GO round economy — money HUD + buy menu ───────────────────────── */
+#hud-money { bottom:46px; left:80px; background:rgba(0,0,0,.72); padding:7px 14px 9px; border-radius:4px; display:flex; flex-direction:column; gap:2px; }
+#money-value { font-size:24px; font-weight:800; color:#36d07a; line-height:1; letter-spacing:1px; text-shadow:0 0 10px rgba(54,208,122,.5); }
+#money-buyhint { font-size:9px; letter-spacing:2px; color:#7fae93; }
+#money-buyhint.closed { color:#566; }
+#money-value.flash { animation:moneyflash .5s ease; }
+@keyframes moneyflash { 0%{ color:#bfffd6; transform:scale(1.18);} 100%{ color:#36d07a; transform:scale(1);} }
+#money-gain { position:absolute; bottom:80px; left:90px; color:#36d07a; font-weight:800; font-size:18px; opacity:0; pointer-events:none; z-index:6; text-shadow:0 0 8px rgba(54,208,122,.6); }
+#money-gain.show { animation:moneygain 1s ease forwards; }
+@keyframes moneygain { 0%{opacity:0; transform:translateY(0);} 15%{opacity:1;} 100%{opacity:0; transform:translateY(-26px);} }
+
+#buy-menu { position:absolute; inset:0; z-index:20; display:flex; align-items:center; justify-content:center; background:rgba(6,10,18,.62); }
+.buy-box { width:min(560px,92vw); background:linear-gradient(180deg,#121a27,#0c121c); border:1px solid #25344a; border-radius:10px; padding:20px 22px; box-shadow:0 24px 70px rgba(0,0,0,.6); }
+.buy-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:4px; }
+.buy-title { font-size:18px; font-weight:800; letter-spacing:4px; color:#dfe7f2; }
+.buy-money { font-size:26px; font-weight:800; color:#36d07a; text-shadow:0 0 10px rgba(54,208,122,.45); }
+.buy-timer-row { display:flex; justify-content:space-between; font-size:10px; letter-spacing:2px; color:#7184a0; margin:2px 0 14px; }
+#buy-timer { color:#ffce4a; font-weight:700; }
+#buy-timer.closed { color:#e06464; }
+.buy-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.buy-card { display:flex; align-items:center; gap:10px; text-align:left; background:#16202f; border:1px solid #27374e; border-radius:7px; padding:12px 14px; color:#cdd6e4; font-family:inherit; cursor:pointer; transition:border-color .12s, background .12s, transform .05s; }
+.buy-card:hover { border-color:#3f5e86; background:#1b283a; }
+.buy-card:active { transform:scale(.98); }
+.buy-card .bc-key { width:22px; height:22px; flex:none; display:flex; align-items:center; justify-content:center; background:#0d141f; border:1px solid #2c3e58; border-radius:4px; font-size:11px; color:#8aa6c4; }
+.buy-card .bc-name { flex:1; font-size:14px; font-weight:700; letter-spacing:1px; }
+.buy-card .bc-price { font-size:13px; font-weight:700; color:#36d07a; }
+.buy-card.owned { opacity:.7; cursor:default; }
+.buy-card.owned .bc-price { color:#7fb0ff; }
+.buy-card.locked { opacity:.5; cursor:not-allowed; }
+.buy-card.locked .bc-price { color:#e06464; }
+.buy-foot { display:flex; justify-content:space-between; margin-top:16px; font-size:10px; letter-spacing:1px; color:#6f81a0; }
+.buy-foot b { color:#9fb4d6; }
+.buy-note { color:#566a86; }
+
 /* Crosshair — colour / size / thickness / gap / dot / outline driven by
    the Crosshair module which writes inline styles on these elements. */
 #hud-crosshair { top:50%;left:50%;transform:translate(-50%,-50%);width:0;height:0; }
@@ -1114,6 +1148,32 @@ input:focus { border-color:var(--accent); }
       <input id="game-chat-input" type="text" maxlength="200"
              placeholder="Enter to send · Esc to cancel"
              style="flex:1;background:transparent;border:0;color:#fff;font-family:inherit;font-size:13px;outline:none;">
+    </div>
+  </div>
+
+  <!-- CS economy: round money HUD (only shown in 'all weapons' matches) -->
+  <div class="hud-el" id="hud-money" style="display:none;">
+    <span id="money-value">$800</span>
+    <span id="money-buyhint">[B] BUY</span>
+  </div>
+  <div id="money-gain"></div>
+
+  <!-- CS:GO-style buy menu — toggle with B during the buy window -->
+  <div id="buy-menu" style="display:none;">
+    <div class="buy-box">
+      <div class="buy-head">
+        <div class="buy-title">BUY MENU</div>
+        <div class="buy-money">$<span id="buy-money-value">800</span></div>
+      </div>
+      <div class="buy-timer-row">
+        <span>BUY WINDOW</span>
+        <span id="buy-timer">0:12</span>
+      </div>
+      <div class="buy-grid" id="buy-grid"><!-- cards injected by Economy.renderMenu() --></div>
+      <div class="buy-foot">
+        <span><b>1–4</b> buy · <b>B</b>/<b>Esc</b> close</span>
+        <span class="buy-note">Round cash — separate from your credits</span>
+      </div>
     </div>
   </div>
 </div>
@@ -3630,6 +3690,7 @@ const GameEngine = {
       'Digit5','Digit6',            // throwable select
       'KeyG',                       // throw
       'KeyQ',                       // knife
+      'KeyB',                       // buy menu
       'ControlLeft','ControlRight', // crouch
       'Tab',                        // hold for in-match scoreboard
       'KeyY','KeyU','KeyT',         // chat (Y all, U team; T alias for Y)
@@ -3640,6 +3701,18 @@ const GameEngine = {
       if (document.getElementById('overlay-settings').classList.contains('visible')) {
         if (e.code === 'Escape') { e.preventDefault(); App.closeSettings(); }
         return;
+      }
+      // ── Buy menu (CS economy) ──────────────────────────────────────────
+      // While the menu is open, number keys buy slots and B/Esc close it.
+      if (typeof Economy !== 'undefined' && Economy.menuOpen) {
+        if (e.code === 'KeyB' || e.code === 'Escape') { e.preventDefault(); Economy.closeMenu(); return; }
+        if (['Digit1','Digit2','Digit3','Digit4'].includes(e.code)) {
+          e.preventDefault(); Economy.buyByKey(e.code.slice(-1)); return;
+        }
+      }
+      // B toggles the buy menu when the economy is active.
+      if (e.code === 'KeyB' && typeof Economy !== 'undefined' && Economy.active) {
+        e.preventDefault(); Economy.toggleMenu(); return;
       }
       if (GAME_KEYS.has(e.code)) e.preventDefault();
       this._keys[e.code] = true;
@@ -3791,8 +3864,8 @@ const GameEngine = {
       } else {
         this._keys = {}; // clear all keys to prevent sticky movement
         // Don't show the pause overlay if we released pointer lock for chat
-        // (the chat input is meant to take focus instead).
-        if (this.running && !this._chatOpen) UIManager.showPause();
+        // or the buy menu (those take/need the cursor instead).
+        if (this.running && !this._chatOpen && !(typeof Economy !== 'undefined' && Economy.menuOpen)) UIManager.showPause();
       }
     });
 
@@ -3816,6 +3889,8 @@ const GameEngine = {
     if (!WEAPONS[name]) return;
     // Reject if the current match's weapon mode forbids it.
     if (this.weaponMode && this.weaponMode !== 'all' && name !== this.weaponMode) return;
+    // Economy mode: can't equip a weapon you haven't bought this round.
+    if (typeof Economy !== 'undefined' && !Economy.owns(name)) return;
     // If a throwable is currently held, stash it and put the gun back.
     // We update currentWeapon below; tell Throwables to leave hand mode
     // without restoring the OLD weapon (we're about to set it manually).
@@ -4487,6 +4562,8 @@ const GameEngine = {
     // grenades, in-hand model) so they don't bleed into the post-match
     // screen or the next match.
     try { if (typeof Throwables !== 'undefined') Throwables.resetMatch(); } catch (_) {}
+    // Tear down the CS economy HUD / buy menu + its timer.
+    try { if (typeof Economy !== 'undefined') Economy.reset(); } catch (_) {}
     this.pointerLocked  = false;
     this._keys          = {};
     this._oppVisible    = false;
@@ -7132,6 +7209,218 @@ document.addEventListener('DOMContentLoaded', () => {
   if (el) el.addEventListener('click', () => VoiceChat.toggleMute());
 });
 
+// ── CS:GO round economy (client) ────────────────────────────────────────────
+// Virtual in-match money + buy menu. Completely cosmetic toward the wallet —
+// it only decides which gun you spawn with. Server is authoritative on money,
+// the buy window, and which weapons you actually own (it rejects firing a gun
+// you didn't buy), so this layer is just UI + intent.
+const Economy = {
+  active: false,
+  money: 800,
+  maxMoney: 16000,
+  buyTimeMs: 12000,
+  buyUntil: 0,
+  prices: { knife: 0, pistol: 0, shotgun: 1200, rifle: 2700, sniper: 4750 },
+  loadout: new Set(['knife', 'pistol']),
+  menuOpen: false,
+  _timer: null,
+
+  // Buy-menu rows. Hotkeys match the in-game weapon-slot keys (1 rifle,
+  // 2 pistol, 3 shotgun, 4 sniper) so the same number means the same gun
+  // whether you're buying or quick-switching. Pistol/knife are free.
+  SLOTS: [
+    { key: 'rifle',   hotkey: '1' },
+    { key: 'pistol',  hotkey: '2' },
+    { key: 'shotgun', hotkey: '3' },
+    { key: 'sniper',  hotkey: '4' },
+    { key: 'knife',   hotkey: ''  },
+  ],
+
+  owns(name) { return !this.active || name === 'knife' || this.loadout.has(name); },
+  isBuyOpen() { return this.active && Date.now() < this.buyUntil; },
+
+  onMatchStart(data) {
+    this.reset();
+    this.active = !!data.economy;
+    if (!this.active) return { active: false };
+    const e = data.econ || {};
+    this.prices    = e.prices || this.prices;
+    this.maxMoney  = e.maxMoney || 16000;
+    this.buyTimeMs = e.buyTimeMs || 12000;
+    const w = data.wallet || {};
+    this.money    = (typeof w.money === 'number') ? w.money : (e.startMoney || 800);
+    this.loadout  = new Set(w.loadout || e.defaultLoadout || ['knife', 'pistol']);
+    this.buyUntil = w.buyUntil || (Date.now() + this.buyTimeMs);
+    const hm = document.getElementById('hud-money');
+    if (hm) hm.style.display = 'flex';
+    this.updateHud();
+    this.startTimer();
+    // Pop the buy menu shortly after the match UI settles — CS-style. Only if
+    // the buy window is actually open (e.g. not on a late reconnect).
+    setTimeout(() => { if (this.active && GameEngine.running && this.isBuyOpen()) this.openMenu(); }, 350);
+    return { active: true };
+  },
+
+  // Server reopened the buy window on respawn: loss bonus + reset loadout.
+  onBuyOpen(d) {
+    if (!this.active) return;
+    this.money    = (typeof d.money === 'number') ? d.money : this.money;
+    this.loadout  = new Set(d.loadout || ['knife', 'pistol']);
+    this.buyUntil = d.buyUntil || (Date.now() + this.buyTimeMs);
+    // You respawn holding the free pistol again.
+    try { GameEngine.switchWeapon('pistol'); } catch (_) {}
+    this.flashMoney(d.delta || 0);
+    this.updateHud();
+    this.startTimer();
+    // Defer so the 'respawn' event (which clears isDead) has been processed
+    // regardless of socket event ordering, then pop the buy menu.
+    setTimeout(() => { if (this.active && GameEngine.running && !GameEngine.isDead) this.openMenu(); }, 140);
+  },
+
+  onEconomyUpdate(d) {
+    if (!this.active) return;
+    this.money = (typeof d.money === 'number') ? d.money : this.money;
+    this.flashMoney(d.delta || 0);
+    this.updateHud();
+    if (this.menuOpen) this.renderMenu();
+  },
+
+  buy(weapon) {
+    if (!this.active) return;
+    if (this.owns(weapon) || (this.prices[weapon] ?? 0) <= 0) return;  // already owned / free
+    if (!this.isBuyOpen()) { this.bump('buy-timer'); return; }
+    if (this.money < (this.prices[weapon] || 0)) { this.bump('buy-money-value'); return; }
+    try { NetworkManager.socket?.emit('buy_weapon', { weapon }); } catch (_) {}
+  },
+  buyByKey(hotkey) {
+    const slot = this.SLOTS.find(s => s.hotkey === hotkey);
+    if (slot) this.buy(slot.key);
+  },
+
+  onBuyResult(d) {
+    if (!this.active) return;
+    if (typeof d.money === 'number') this.money = d.money;
+    if (Array.isArray(d.loadout)) this.loadout = new Set(d.loadout);
+    if (d.ok) {
+      try { AudioManager.playReload(); } catch (_) {}
+      try { GameEngine.switchWeapon(d.weapon); } catch (_) {}   // auto-equip the buy
+      this.flashMoney(0);
+    } else if (d.reason === 'funds') { this.bump('buy-money-value'); }
+    else if (d.reason === 'closed') { this.bump('buy-timer'); }
+    this.updateHud();
+    if (this.menuOpen) this.renderMenu();
+  },
+
+  // ── Menu show/hide (frees the cursor so you can click) ────────────────────
+  openMenu() {
+    if (!this.active || this.menuOpen) return;
+    this.menuOpen = true;
+    const el = document.getElementById('buy-menu');
+    if (el) el.style.display = 'flex';
+    this.renderMenu();
+    try { document.exitPointerLock?.(); } catch (_) {}
+  },
+  closeMenu() {
+    if (!this.menuOpen) return;
+    this.menuOpen = false;
+    const el = document.getElementById('buy-menu');
+    if (el) el.style.display = 'none';
+    if (GameEngine.running && !GameEngine.isDead) GameEngine.requestPointerLock();
+  },
+  toggleMenu() {
+    if (!this.active) return;
+    if (this.menuOpen) this.closeMenu(); else this.openMenu();
+  },
+
+  renderMenu() {
+    const grid = document.getElementById('buy-grid');
+    const mv = document.getElementById('buy-money-value');
+    if (mv) mv.textContent = this.money;
+    if (!grid) return;
+    const open = this.isBuyOpen();
+    grid.innerHTML = this.SLOTS.map(s => {
+      const cfg = WEAPONS[s.key] || { name: s.key.toUpperCase() };
+      const price = this.prices[s.key] ?? 0;
+      const owned = this.owns(s.key) || price <= 0;
+      const afford = this.money >= price;
+      const cls = owned ? 'owned' : (open && afford ? '' : 'locked');
+      const right = owned ? 'OWNED' : ('$' + price);
+      const keyTag = s.hotkey ? `<span class="bc-key">${s.hotkey}</span>` : `<span class="bc-key">·</span>`;
+      return `<button class="buy-card ${cls}" data-weapon="${s.key}">
+                ${keyTag}
+                <span class="bc-name">${escapeHtml(cfg.name)}</span>
+                <span class="bc-price">${right}</span>
+              </button>`;
+    }).join('');
+    grid.querySelectorAll('.buy-card').forEach(b => {
+      b.addEventListener('click', () => this.buy(b.dataset.weapon));
+    });
+  },
+
+  updateHud() {
+    const mvHud = document.getElementById('money-value');
+    if (mvHud) mvHud.textContent = '$' + this.money;
+    const mvBuy = document.getElementById('buy-money-value');
+    if (mvBuy) mvBuy.textContent = this.money;
+    const hint = document.getElementById('money-buyhint');
+    if (hint) {
+      const open = this.isBuyOpen();
+      hint.textContent = open ? '[B] BUY' : 'BUY CLOSED';
+      hint.classList.toggle('closed', !open);
+    }
+  },
+
+  flashMoney(delta) {
+    const mv = document.getElementById('money-value');
+    if (mv) { mv.classList.remove('flash'); void mv.offsetWidth; mv.classList.add('flash'); }
+    if (delta && delta > 0) {
+      const g = document.getElementById('money-gain');
+      if (g) { g.textContent = '+$' + delta; g.classList.remove('show'); void g.offsetWidth; g.classList.add('show'); }
+    }
+  },
+
+  // Brief shake to signal "can't afford / window closed".
+  bump(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.animate(
+      [{ transform: 'translateX(0)' }, { transform: 'translateX(-4px)' },
+       { transform: 'translateX(4px)' }, { transform: 'translateX(0)' }],
+      { duration: 220 }
+    );
+  },
+
+  startTimer() {
+    this.stopTimer();
+    const tick = () => {
+      const t = document.getElementById('buy-timer');
+      const left = Math.max(0, this.buyUntil - Date.now());
+      const open = left > 0;
+      if (t) {
+        const s = Math.ceil(left / 1000);
+        t.textContent = `0:${String(Math.min(59, s)).padStart(2, '0')}`;
+        t.classList.toggle('closed', !open);
+        if (!open) t.textContent = 'CLOSED';
+      }
+      const hint = document.getElementById('money-buyhint');
+      if (hint) { hint.textContent = open ? '[B] BUY' : 'BUY CLOSED'; hint.classList.toggle('closed', !open); }
+      if (!open) { this.stopTimer(); if (this.menuOpen) this.renderMenu(); }
+    };
+    tick();
+    this._timer = setInterval(tick, 250);
+  },
+  stopTimer() { if (this._timer) { clearInterval(this._timer); this._timer = null; } },
+
+  reset() {
+    this.stopTimer();
+    this.active = false;
+    this.menuOpen = false;
+    this.loadout = new Set(['knife', 'pistol']);
+    const bm = document.getElementById('buy-menu');  if (bm) bm.style.display = 'none';
+    const hm = document.getElementById('hud-money'); if (hm) hm.style.display = 'none';
+  },
+};
+
 // ══════════════════════════════════════════════════════════════
 //  NETWORK MANAGER
 // ══════════════════════════════════════════════════════════════
@@ -7268,6 +7557,9 @@ const NetworkManager = {
     s.on('kill_event',          d => App.onKillEvent(d));
     s.on('respawn',             d => App.onRespawn(d));
     s.on('opponent_respawn',    d => GameEngine.onOpponentRespawn(d));
+    s.on('buy_result',          d => Economy.onBuyResult(d));
+    s.on('economy_update',      d => Economy.onEconomyUpdate(d));
+    s.on('buy_open',            d => Economy.onBuyOpen(d));
     s.on('match_end',           d => App.onMatchEnd(d));
     s.on('reload_complete',     d => GameEngine.finishReload(d?.weapon));
     s.on('position_correction', d => GameEngine.onPositionCorrection(d));
@@ -8044,13 +8336,20 @@ const App = {
     this.isTeamMatch   = !!data.isTeamMatch;
     this.yourTeam      = data.yourTeam || null;
     GameEngine._disposeOtherPlayers();
-    const startingW = (GameEngine.weaponMode === 'all') ? 'rifle' : GameEngine.weaponMode;
+    // CS economy: when active you spawn with only the free pistol + knife and
+    // buy the rest. Returns {active} so we can pick the right starting weapon.
+    const econ = Economy.onMatchStart(data);
+    const startingW = econ.active
+      ? 'pistol'
+      : ((GameEngine.weaponMode === 'all') ? 'rifle' : GameEngine.weaponMode);
     GameEngine.currentWeapon = startingW;
     const ml = document.getElementById('hud-mode-label');
     if (ml) {
-      const modeLabel = GameEngine.weaponMode === 'all'
-        ? 'ALL WEAPONS'
-        : `${GameEngine.weaponMode.toUpperCase()} ONLY`;
+      const modeLabel = econ.active
+        ? 'BUY ECONOMY'
+        : (GameEngine.weaponMode === 'all'
+            ? 'ALL WEAPONS'
+            : `${GameEngine.weaponMode.toUpperCase()} ONLY`);
       ml.textContent = `${modeLabel} · FIRST TO ${GameEngine.killsToWin}`;
       ml.style.color = '#aaa';
     }
@@ -8198,6 +8497,7 @@ const App = {
 
   onMatchEnd(data) {
     clearInterval(this._timerInterval);
+    try { Economy.reset(); } catch (_) {}
     if (this._mmCountdownTimer) {
       clearInterval(this._mmCountdownTimer);
       this._mmCountdownTimer = null;
