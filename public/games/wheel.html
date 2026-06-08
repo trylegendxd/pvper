@@ -254,7 +254,10 @@ body {
 .w-strip {
   display: flex; flex-direction: column; gap: 4px;
   align-items: center; padding: 16px 10px;
+  max-height: 440px; overflow-y: auto;
 }
+.w-strip::-webkit-scrollbar { width: 5px; }
+.w-strip::-webkit-scrollbar-thumb { background: rgba(255,255,255,.15); border-radius: 3px; }
 .w-strip-title {
   font-size: 9px; letter-spacing: 2px; color: var(--dim);
   margin-bottom: 6px; text-transform: uppercase;

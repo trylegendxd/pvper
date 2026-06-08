@@ -82,7 +82,7 @@ async function startResultPhase() {
     multiplier: wheel.state.result.multiplier,
     segment: wheel.state.result.segment,
     totals: { ...wheel.state.totals },
-    history: wheel.state.history.slice(0, 12),
+    history: wheel.state.history.slice(0, 40),
   });
 
   // Push fresh balance to every user that had a bet this round so their
@@ -105,7 +105,7 @@ async function startResultPhase() {
 async function startLoop() {
   // Hydrate the history strip from the DB so a fresh boot doesn't show
   // an empty history.
-  try { wheel.state.history = await wheel.recentHistory(20); } catch (_) {}
+  try { wheel.state.history = await wheel.recentHistory(40); } catch (_) {}
   startBettingPhase().catch(e => {
     console.error('[wheel] initial round failed', e.message);
     _loopTimer = setTimeout(() => startLoop().catch(()=>{}), 5000);

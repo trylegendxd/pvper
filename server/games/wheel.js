@@ -63,7 +63,7 @@ const state = {
   result: null,
   // Last N completed spins for the history strip.
   history: [],          // newest first; each { color, multiplier, segment }
-  HISTORY_MAX: 20,
+  HISTORY_MAX: 60,
 };
 
 // Per-(userId, color) monotonic counter for generating unique refIds.
@@ -87,7 +87,7 @@ function snapshot() {
     phaseEndsAt: state.phaseEndsAt,
     totals: { ...state.totals },
     result: state.result ? { ...state.result } : null,
-    history: state.history.slice(0, 12),
+    history: state.history.slice(0, 40),
     layout: SEGMENT_LAYOUT,
     multipliers: COLOR_MULT,
     serverNow: Date.now(),
@@ -365,7 +365,7 @@ async function undoAllBets(userId) {
 }
 
 // ── History (DB lookup, for fresh viewers / page reloads) ────────────────
-async function recentHistory(limit = 12) {
+async function recentHistory(limit = 40) {
   try {
     const { rows } = await pool.query(
       `SELECT id, winning_segment, winning_color, winning_multiplier, spun_at
