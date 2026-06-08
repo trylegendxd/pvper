@@ -2150,6 +2150,9 @@ const Bot = {
 
   update(dt, playerPos, staticBoxes) {
     if (!this.active) return;
+    // Hold fire/movement during the player's buy freeze (round start), so the
+    // bot can't shoot you while you're pinned at spawn shopping.
+    if (typeof Economy !== 'undefined' && Economy.isFrozen()) return;
 
     const dx = playerPos.x - this.pos.x;
     const dz = playerPos.z - this.pos.z;
@@ -2260,6 +2263,7 @@ const Bot = {
       this.active  = false;
       this.deaths++;
       App.myKills++;
+      try { Economy.trainingKill(GameEngine.currentWeapon); } catch (_) {}   // CS economy: kill reward
       UIManager.showKillNotify();
       AudioManager.playKill();
       UIManager.updateScore(App.myKills, this.kills);
@@ -3193,9 +3197,20 @@ const GameEngine = {
       const bipL   = box(0.018, 0.11, 0.015, metal); bipL.position.set(-0.048, -0.055, -0.40); bipL.rotation.z = 0.28;
       const bipR   = box(0.018, 0.11, 0.015, metal); bipR.position.set( 0.048, -0.055, -0.40); bipR.rotation.z = -0.28;
       G.add(recv, bar, hg, stk, grip, mag, scopeB, lensF, lensR, supp, bipL, bipR);
+    } else if (key === 'knife') {
+      // Combat knife held upright in the right hand (CS idle pose) — blade up.
+      G.position.set(0.26, -0.16, -0.42);
+      G.rotation.set(-0.5, 0.32, 0.12);
+      const grip  = box(0.034, 0.15, 0.05, dark);   grip.position.set(0, 0, 0);
+      const guard = box(0.075, 0.022, 0.062, metal); guard.position.set(0, 0.085, 0);
+      const blade = box(0.016, 0.24, 0.07, metal);  blade.position.set(0, 0.215, 0.004);
+      const edge  = box(0.006, 0.24, 0.026, accent); edge.position.set(-0.007, 0.215, 0.03);
+      const tip   = box(0.016, 0.07, 0.04, metal);   tip.position.set(0, 0.345, -0.012); tip.rotation.x = 0.25;
+      const pommel= box(0.04, 0.03, 0.055, metal);   pommel.position.set(0, -0.085, 0);
+      G.add(grip, guard, blade, edge, tip, pommel);
     }
-    // First-person arms gripping the weapon (skipped for the empty knife group).
-    if (key !== 'knife') this._addViewModelArms(G, key);
+    // First-person arms gripping the weapon (knife gets a single hand).
+    this._addViewModelArms(G, key);
     return G;
   },
 
@@ -3205,46 +3220,49 @@ const GameEngine = {
   // top (depthTest off) to match the gun convention so they never clip walls.
   _addViewModelArms(G, key) {
     const sleeveMat = new THREE.MeshLambertMaterial({ color: 0x55602f, depthTest:false, depthWrite:false }); // olive sleeve
-    const gloveMat  = new THREE.MeshLambertMaterial({ color: 0x1b1b1b, depthTest:false, depthWrite:false }); // dark glove
+    const gloveMat  = new THREE.MeshLambertMaterial({ color: 0x232323, depthTest:false, depthWrite:false }); // dark glove
     const cuffMat   = new THREE.MeshLambertMaterial({ color: 0x39411f, depthTest:false, depthWrite:false }); // cuff band
-    const knuckMat  = new THREE.MeshLambertMaterial({ color: 0x111111, depthTest:false, depthWrite:false }); // knuckle plate
 
     const UP = new THREE.Vector3(0, 1, 0);
-    // Build one arm: glove sits at `hand`, forearm trails toward `dir`.
-    const makeArm = (hand, dir) => {
+    // One arm: a small glove gripping the gun at `hand`, with a slim sleeved
+    // forearm trailing toward `dir` (down + back toward the screen corner so
+    // the elbow runs off-frame instead of poking up into view).
+    const makeArm = (hand, dir, len = 0.34) => {
       const arm = new THREE.Group();
       arm.userData.isViewArms = true;          // survive the FBX gun swap
-      const len = 0.36;
       const d = new THREE.Vector3(dir.x, dir.y, dir.z).normalize();
       const q = new THREE.Quaternion().setFromUnitVectors(UP, d);
       const h = new THREE.Vector3(hand.x, hand.y, hand.z);
 
-      const glove = new THREE.Mesh(new THREE.BoxGeometry(0.088, 0.078, 0.115), gloveMat);
-      glove.position.copy(h); glove.quaternion.copy(q); glove.renderOrder = 1002;
-      const knuck = new THREE.Mesh(new THREE.BoxGeometry(0.092, 0.030, 0.085), knuckMat);
-      knuck.position.copy(h).addScaledVector(d, -0.005); knuck.position.y += 0.045;
-      knuck.quaternion.copy(q); knuck.renderOrder = 1003;
-      const fore  = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.066, len, 16), sleeveMat);
+      const glove = new THREE.Mesh(new THREE.BoxGeometry(0.066, 0.058, 0.10), gloveMat);
+      glove.position.copy(h); glove.quaternion.copy(q); glove.renderOrder = 1003;
+      const fore = new THREE.Mesh(new THREE.CylinderGeometry(0.038, 0.05, len, 14), sleeveMat);
       fore.position.copy(h).addScaledVector(d, len * 0.5); fore.quaternion.copy(q); fore.renderOrder = 1001;
-      const cuff  = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.05, 16), cuffMat);
-      cuff.position.copy(h).addScaledVector(d, len); cuff.quaternion.copy(q); cuff.renderOrder = 1001;
+      const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.054, 0.054, 0.045, 14), cuffMat);
+      cuff.position.copy(h).addScaledVector(d, len * 0.78); cuff.quaternion.copy(q); cuff.renderOrder = 1002;
 
-      arm.add(fore, cuff, glove, knuck);
+      arm.add(fore, cuff, glove);
       return arm;
     };
 
+    if (key === 'knife') {
+      // Single hand wrapping the knife handle (held upright in the right hand).
+      G.add(makeArm({ x: 0.0, y: -0.01, z: 0.0 }, { x: 0.32, y: -0.55, z: 0.76 }, 0.32));
+      return;
+    }
+
     let rightHand, leftHand, rDir, lDir;
     if (key === 'pistol') {
-      rightHand = { x: 0.00, y: -0.105, z: 0.03 };
-      leftHand  = { x: -0.03, y: -0.12, z: 0.02 };   // support hand cupping
-      rDir = { x: 0.42, y: -0.84, z: 0.36 };
-      lDir = { x: -0.40, y: -0.86, z: 0.32 };
+      rightHand = { x: 0.00, y: -0.115, z: 0.02 };   // firing hand on the grip
+      leftHand  = { x: -0.045, y: -0.14, z: 0.0 };    // support hand cupping under
+      rDir = { x: 0.36, y: -0.55, z: 0.75 };
+      lDir = { x: -0.5, y: -0.5,  z: 0.71 };
     } else {
       // rifle / shotgun / sniper — right on the grip, left on the handguard.
-      rightHand = { x: 0.02, y: -0.088, z: 0.06 };
-      leftHand  = { x: -0.01, y: -0.055, z: -0.19 };
-      rDir = { x: 0.5,  y: -0.8,  z: 0.42 };
-      lDir = { x: -0.55, y: -0.78, z: 0.30 };
+      rightHand = { x: 0.02, y: -0.10, z: 0.07 };
+      leftHand  = { x: -0.02, y: -0.07, z: -0.18 };
+      rDir = { x: 0.42, y: -0.55, z: 0.72 };
+      lDir = { x: -0.6, y: -0.5,  z: 0.62 };
     }
     G.add(makeArm(rightHand, rDir));
     G.add(makeArm(leftHand,  lDir));
@@ -6833,8 +6851,31 @@ const Throwables = {
 
   // First-person variants — same body geometry, positioned for the
   // player's right hand. Slightly smaller so they don't fill the HUD.
+  // A sleeved forearm + gloved hand gripping the throwable, sized in the
+  // throwable's LOCAL space (it inherits the 0.65 hand-model scale). Added
+  // before the depthTest traverse so it also renders always-on-top.
+  _buildThrowArm() {
+    const arm = new THREE.Group();
+    const sleeveMat = new THREE.MeshLambertMaterial({ color: 0x55602f });
+    const gloveMat  = new THREE.MeshLambertMaterial({ color: 0x232323 });
+    const cuffMat   = new THREE.MeshLambertMaterial({ color: 0x39411f });
+    const UP   = new THREE.Vector3(0, 1, 0);
+    const hand = new THREE.Vector3(0.03, 0.13, 0.07);         // grip the lower bottle, front face
+    const dir  = new THREE.Vector3(0.55, -0.85, 0.5).normalize();
+    const q    = new THREE.Quaternion().setFromUnitVectors(UP, dir);
+    const len  = 0.55;
+    const glove = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.11, 0.16), gloveMat);
+    glove.position.copy(hand); glove.quaternion.copy(q);
+    const fore  = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.085, len, 14), sleeveMat);
+    fore.position.copy(hand).addScaledVector(dir, len * 0.5); fore.quaternion.copy(q);
+    const cuff  = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.07, 14), cuffMat);
+    cuff.position.copy(hand).addScaledVector(dir, len * 0.82); cuff.quaternion.copy(q);
+    arm.add(fore, cuff, glove);
+    return arm;
+  },
   _buildHandMolotov() {
     const g = this._buildMolotovMesh();
+    g.add(this._buildThrowArm());          // visible hand gripping the bottle
     g.scale.setScalar(0.65);
     g.position.set(0.20, -0.20, -0.42);
     // Lean it slightly forward as if held by the bottom.
@@ -6849,6 +6890,7 @@ const Throwables = {
   },
   _buildHandSmoke() {
     const g = this._buildSmokeCanMesh();
+    g.add(this._buildThrowArm());          // visible hand gripping the can
     g.scale.setScalar(0.65);
     g.position.set(0.20, -0.20, -0.42);
     g.rotation.x = 0.15;
@@ -7363,14 +7405,18 @@ document.addEventListener('DOMContentLoaded', () => {
 // you didn't buy), so this layer is just UI + intent.
 const Economy = {
   active: false,
+  training: false,          // true = offline practice (client-driven money)
   money: 800,
+  startMoney: 800,
   maxMoney: 16000,
   buyTimeMs: 11000,
   buyUntil: 0,
   freezeMs: 3500,
   freezeUntil: 0,
-  roundWinBonus: 3250,
-  lossBonus: [1400, 1900, 2400, 2900, 3400],
+  roundWinBonus: 250,
+  lossStreak: 0,
+  lossBonus: [900, 1200, 1500, 1800, 2100],
+  killReward: { knife: 600, pistol: 250, shotgun: 400, rifle: 250, sniper: 150, molotov: 250, smoke: 250 },
   prices: { knife: 0, pistol: 0, shotgun: 1100, rifle: 2700, sniper: 4750 },
   loadout: new Set(['knife', 'pistol']),
   menuOpen: false,
@@ -7449,7 +7495,56 @@ const Economy = {
     if (this.owns(weapon) || (this.prices[weapon] ?? 0) <= 0) return;  // already owned / free
     if (!this.isBuyOpen()) { this.bump('buy-timer'); return; }
     if (this.money < (this.prices[weapon] || 0)) { this.bump('buy-money-value'); return; }
+    if (this.training) { this._trainBuy(weapon); return; }              // offline: resolve locally
     try { NetworkManager.socket?.emit('buy_weapon', { weapon }); } catch (_) {}
+  },
+
+  // ── Offline (training) economy — same rules, no server ────────────────────
+  startTrainingEconomy() {
+    this.reset();
+    this.active = true;
+    this.training = true;
+    this.money = this.startMoney || 800;
+    this.lossStreak = 0;
+    const hm = document.getElementById('hud-money'); if (hm) hm.style.display = 'flex';
+    this._openFreshRound(0);          // opening freeze + buy
+  },
+  _trainBuy(weapon) {
+    const price = this.prices[weapon] ?? 0;
+    this.money -= price;
+    this.loadout.add(weapon);
+    try {
+      if (GameEngine.weapons[weapon]) {
+        GameEngine.weapons[weapon].ammo = WEAPONS[weapon].mag;
+        GameEngine.weapons[weapon].reloading = false;
+      }
+    } catch (_) {}
+    this.onBuyResult({ ok: true, weapon, money: this.money, loadout: [...this.loadout] });
+  },
+  trainingKill(weapon = 'rifle') {
+    if (!this.training) return;
+    this.lossStreak = 0;
+    const reward = (this.killReward[weapon] ?? 250) + (this.roundWinBonus || 250);
+    this.money = Math.min(this.maxMoney, this.money + reward);
+    this.onEconomyUpdate({ money: this.money, delta: reward, reason: 'round_win' });
+  },
+  trainingDeath() {
+    if (!this.training) return;
+    this.lossStreak = Math.min(this.lossBonus.length, this.lossStreak + 1);
+    const bonus = this.lossBonus[this.lossStreak - 1];
+    this.money = Math.min(this.maxMoney, this.money + bonus);
+    this._openFreshRound(bonus);
+  },
+  _openFreshRound(delta) {
+    this.loadout = new Set(['knife', 'pistol']);
+    try { GameEngine.switchWeapon('pistol'); } catch (_) {}
+    this.freezeUntil = Date.now() + (this.freezeMs || 3500);
+    this.buyUntil    = this.freezeUntil + (this.buyTimeMs || 11000);
+    if (delta) this.flashMoney(delta);
+    this.updateHud();
+    this.startTimer();
+    this.startFreeze(this.freezeUntil);
+    setTimeout(() => { if (this.active && GameEngine.running && !GameEngine.isDead) this.openMenu(); }, 200);
   },
   buyByKey(hotkey) {
     const slot = this.SLOTS.find(s => s.hotkey === hotkey);
@@ -7601,6 +7696,8 @@ const Economy = {
     this.stopTimer();
     this.stopFreeze();
     this.active = false;
+    this.training = false;
+    this.lossStreak = 0;
     this.menuOpen = false;
     this.loadout = new Set(['knife', 'pistol']);
     const bm = document.getElementById('buy-menu');  if (bm) bm.style.display = 'none';
@@ -8417,10 +8514,17 @@ const App = {
     UIManager.showReloadIndicator(false);
     UIManager.setOpponentLabel('BOT');
     const ml = document.getElementById('hud-mode-label');
-    if (ml) { ml.textContent = 'TRAINING'; ml.style.color = '#5fa85f'; }
+    if (ml) { ml.textContent = 'TRAINING · BUY ECONOMY'; ml.style.color = '#5fa85f'; }
 
     GameEngine.buildArena(coverBoxes, 40, [{ x:0, y:0, z:17 }, { x:0, y:0, z:-17 }]);
     GameEngine.start(spawnA);
+
+    // Offline buy economy so practice duels have the buy menu + money too.
+    try {
+      Economy.startTrainingEconomy();
+      GameEngine.currentWeapon = 'pistol';
+      UIManager.updateAmmo(WEAPONS.pistol.mag, WEAPONS.pistol.mag, WEAPONS.pistol.name);
+    } catch (e) { console.warn('[train] economy init failed', e); }
 
     Bot.init(spawnB);
     GameEngine.onOpponentRespawn({ position: spawnB });
@@ -8475,6 +8579,8 @@ const App = {
           GameEngine.weapons[k].reloading = false;
         }
       }
+      // CS economy: loss bonus + reset loadout + fresh buy freeze on respawn.
+      try { Economy.trainingDeath(); } catch (_) {}
       const w = WEAPONS[GameEngine.currentWeapon];
       UIManager.updateAmmo(w.mag, w.mag, w.name);
       UIManager.showReloadIndicator(false);
