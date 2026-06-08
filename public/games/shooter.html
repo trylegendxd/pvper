@@ -3198,15 +3198,16 @@ const GameEngine = {
       const bipR   = box(0.018, 0.11, 0.015, metal); bipR.position.set( 0.048, -0.055, -0.40); bipR.rotation.z = -0.28;
       G.add(recv, bar, hg, stk, grip, mag, scopeB, lensF, lensR, supp, bipL, bipR);
     } else if (key === 'knife') {
-      // Combat knife held upright in the right hand (CS idle pose) — blade up.
-      G.position.set(0.26, -0.16, -0.42);
-      G.rotation.set(-0.5, 0.32, 0.12);
-      const grip  = box(0.034, 0.15, 0.05, dark);   grip.position.set(0, 0, 0);
-      const guard = box(0.075, 0.022, 0.062, metal); guard.position.set(0, 0.085, 0);
-      const blade = box(0.016, 0.24, 0.07, metal);  blade.position.set(0, 0.215, 0.004);
-      const edge  = box(0.006, 0.24, 0.026, accent); edge.position.set(-0.007, 0.215, 0.03);
-      const tip   = box(0.016, 0.07, 0.04, metal);   tip.position.set(0, 0.345, -0.012); tip.rotation.x = 0.25;
-      const pommel= box(0.04, 0.03, 0.055, metal);   pommel.position.set(0, -0.085, 0);
+      // Combat knife held UPRIGHT in the right hand — blade pointing straight
+      // up. Only a tiny yaw so it isn't perfectly edge-on to the camera.
+      G.position.set(0.20, -0.22, -0.44);
+      G.rotation.set(0.04, 0.30, 0.0);
+      const grip  = box(0.036, 0.16, 0.052, dark);   grip.position.set(0, 0.02, 0);
+      const guard = box(0.082, 0.024, 0.066, metal); guard.position.set(0, 0.115, 0);
+      const blade = box(0.018, 0.27, 0.075, metal);  blade.position.set(0, 0.27, 0.004);
+      const edge  = box(0.007, 0.27, 0.028, accent); edge.position.set(-0.008, 0.27, 0.032);
+      const tip   = box(0.018, 0.08, 0.042, metal);  tip.position.set(0, 0.425, -0.012); tip.rotation.x = 0.22;
+      const pommel= box(0.044, 0.032, 0.058, metal); pommel.position.set(0, -0.07, 0);
       G.add(grip, guard, blade, edge, tip, pommel);
     }
     // First-person arms gripping the weapon (knife gets a single hand).
@@ -3220,49 +3221,50 @@ const GameEngine = {
   // top (depthTest off) to match the gun convention so they never clip walls.
   _addViewModelArms(G, key) {
     const sleeveMat = new THREE.MeshLambertMaterial({ color: 0x55602f, depthTest:false, depthWrite:false }); // olive sleeve
-    const gloveMat  = new THREE.MeshLambertMaterial({ color: 0x232323, depthTest:false, depthWrite:false }); // dark glove
-    const cuffMat   = new THREE.MeshLambertMaterial({ color: 0x39411f, depthTest:false, depthWrite:false }); // cuff band
+    const gloveMat  = new THREE.MeshLambertMaterial({ color: 0x2a2a2a, depthTest:false, depthWrite:false }); // dark glove
+    const thumbMat  = new THREE.MeshLambertMaterial({ color: 0x202020, depthTest:false, depthWrite:false }); // thumb
 
     const UP = new THREE.Vector3(0, 1, 0);
-    // One arm: a small glove gripping the gun at `hand`, with a slim sleeved
-    // forearm trailing toward `dir` (down + back toward the screen corner so
-    // the elbow runs off-frame instead of poking up into view).
-    const makeArm = (hand, dir, len = 0.34) => {
+    // A fist gripping the gun at `hand`, with a SHORT wrist stub going mostly
+    // straight DOWN (+ a little back) so the forearm runs off the bottom of the
+    // screen instead of extending toward the camera and ballooning in
+    // perspective (which is what made the old arms look like floating tubes).
+    const makeArm = (hand, dir, len = 0.18) => {
       const arm = new THREE.Group();
       arm.userData.isViewArms = true;          // survive the FBX gun swap
       const d = new THREE.Vector3(dir.x, dir.y, dir.z).normalize();
       const q = new THREE.Quaternion().setFromUnitVectors(UP, d);
       const h = new THREE.Vector3(hand.x, hand.y, hand.z);
 
-      const glove = new THREE.Mesh(new THREE.BoxGeometry(0.066, 0.058, 0.10), gloveMat);
-      glove.position.copy(h); glove.quaternion.copy(q); glove.renderOrder = 1003;
-      const fore = new THREE.Mesh(new THREE.CylinderGeometry(0.038, 0.05, len, 14), sleeveMat);
+      const fist = new THREE.Mesh(new THREE.BoxGeometry(0.072, 0.066, 0.092), gloveMat);
+      fist.position.copy(h); fist.quaternion.copy(q); fist.renderOrder = 1003;
+      const thumb = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.05, 0.045), thumbMat);
+      thumb.position.copy(h).add(new THREE.Vector3(0, 0.018, 0.05)); thumb.quaternion.copy(q); thumb.renderOrder = 1004;
+      const fore = new THREE.Mesh(new THREE.CylinderGeometry(0.046, 0.056, len, 12), sleeveMat);
       fore.position.copy(h).addScaledVector(d, len * 0.5); fore.quaternion.copy(q); fore.renderOrder = 1001;
-      const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.054, 0.054, 0.045, 14), cuffMat);
-      cuff.position.copy(h).addScaledVector(d, len * 0.78); cuff.quaternion.copy(q); cuff.renderOrder = 1002;
 
-      arm.add(fore, cuff, glove);
+      arm.add(fore, fist, thumb);
       return arm;
     };
 
     if (key === 'knife') {
-      // Single hand wrapping the knife handle (held upright in the right hand).
-      G.add(makeArm({ x: 0.0, y: -0.01, z: 0.0 }, { x: 0.32, y: -0.55, z: 0.76 }, 0.32));
+      // Single fist wrapping the knife handle.
+      G.add(makeArm({ x: 0.0, y: -0.05, z: 0.0 }, { x: 0.18, y: -0.95, z: 0.25 }, 0.2));
       return;
     }
 
     let rightHand, leftHand, rDir, lDir;
     if (key === 'pistol') {
-      rightHand = { x: 0.00, y: -0.115, z: 0.02 };   // firing hand on the grip
-      leftHand  = { x: -0.045, y: -0.14, z: 0.0 };    // support hand cupping under
-      rDir = { x: 0.36, y: -0.55, z: 0.75 };
-      lDir = { x: -0.5, y: -0.5,  z: 0.71 };
+      rightHand = { x: 0.00,  y: -0.12, z: 0.0 };    // firing hand on the grip
+      leftHand  = { x: -0.05, y: -0.145, z: -0.02 }; // support hand under
+      rDir = { x: 0.2,  y: -0.94, z: 0.28 };
+      lDir = { x: -0.3, y: -0.92, z: 0.26 };
     } else {
       // rifle / shotgun / sniper — right on the grip, left on the handguard.
-      rightHand = { x: 0.02, y: -0.10, z: 0.07 };
-      leftHand  = { x: -0.02, y: -0.07, z: -0.18 };
-      rDir = { x: 0.42, y: -0.55, z: 0.72 };
-      lDir = { x: -0.6, y: -0.5,  z: 0.62 };
+      rightHand = { x: 0.02,  y: -0.105, z: 0.06 };
+      leftHand  = { x: -0.02, y: -0.075, z: -0.18 };
+      rDir = { x: 0.24,  y: -0.93, z: 0.27 };
+      lDir = { x: -0.34, y: -0.91, z: 0.24 };
     }
     G.add(makeArm(rightHand, rDir));
     G.add(makeArm(leftHand,  lDir));
@@ -6629,42 +6631,37 @@ const Throwables = {
     for (const e of this.effects.values()) {
       const elapsed = (Date.now() - e.startedAt);
       if (e.type === 'molotov') {
-        e.particles?.forEach((m, i) => {
-          const phase = (now / 220) + i * 0.5;
-          const sy = 0.6 + Math.sin(phase) * 0.25;
-          m.scale.y = Math.max(0.2, sy);
-          m.position.y = sy * 0.5;
-        });
-        // Spawn rising embers occasionally.
-        e._emberAccum = (e._emberAccum || 0) + dt;
-        if (e._emberAccum > 0.06 && (e.endsAt - Date.now()) > 800) {
-          e._emberAccum = 0;
-          const angle = Math.random() * Math.PI * 2;
-          const r = Math.random() * e.radius * 0.85;
-          const em = new THREE.Mesh(
-            new THREE.BoxGeometry(0.07, 0.07, 0.07),
-            new THREE.MeshBasicMaterial({ color: Math.random() < 0.5 ? 0xffd24a : 0xff7a22, transparent: true, opacity: 0.95 })
-          );
-          em.position.set(Math.cos(angle) * r, 0.4 + Math.random() * 0.6, Math.sin(angle) * r);
-          e.group.add(em);
-          e.embers = e.embers || [];
-          e.embers.push({ m: em, life: 1.2 + Math.random() * 0.6, vy: 0.9 + Math.random() * 0.7 });
-        }
-        if (e.embers) {
-          for (let i = e.embers.length - 1; i >= 0; i--) {
-            const em = e.embers[i];
-            em.life -= dt;
-            em.m.position.y += em.vy * dt;
-            if (em.life <= 0) {
-              e.group.remove(em.m);
-              em.m.geometry.dispose();
-              em.m.material.dispose();
-              e.embers.splice(i, 1);
-            } else {
-              em.m.material.opacity = Math.max(0, em.life / 1.5);
-            }
+        // Die down over the last second.
+        const tleft = e.endsAt - Date.now();
+        const fade  = tleft < 1000 ? Math.max(0, tleft / 1000) : 1;
+        const pal   = this.FIRE_PALETTE;
+        for (const m of (e.particles || [])) {
+          const u = m.userData;
+          u.phase += dt * u.speed / Math.max(0.45, u.maxH);
+          if (u.phase >= 1) {
+            // Respawn at the ground at a fresh spot.
+            u.phase = Math.random() * 0.12;
+            const ang = Math.random() * Math.PI * 2;
+            const rr  = Math.pow(Math.random(), 0.6) * e.radius * 0.92;
+            u.baseX = Math.cos(ang) * rr;
+            u.baseZ = Math.sin(ang) * rr;
           }
+          const h = u.phase * u.maxH;
+          const wob = (now * 0.004);
+          m.position.set(
+            u.baseX + Math.sin(wob + u.baseX * 4) * u.sway * u.phase,
+            h + u.size * 0.5,
+            u.baseZ + Math.cos(wob + u.baseZ * 4) * u.sway * u.phase
+          );
+          // Shrink + fade as it rises; colour climbs yellow → red with height.
+          const k = 1 - u.phase;
+          m.scale.setScalar(Math.max(0.22, k * 1.05));
+          m.material.opacity = fade * (0.9 * k + 0.08);
+          m.material.color.setHex(pal[Math.min(pal.length - 1, (u.phase * pal.length) | 0)]);
         }
+        // Flicker the warm glow.
+        const fl = e.group.userData.fireLight;
+        if (fl) fl.intensity = fade * (1.15 + Math.random() * 0.7);
       } else if (e.type === 'smoke') {
         const cfg = { fadeInMs: 500, fadeOutMs: 1000, duration: e.endsAt - e.startedAt };
         let opacity;
@@ -6857,20 +6854,22 @@ const Throwables = {
   _buildThrowArm() {
     const arm = new THREE.Group();
     const sleeveMat = new THREE.MeshLambertMaterial({ color: 0x55602f });
-    const gloveMat  = new THREE.MeshLambertMaterial({ color: 0x232323 });
-    const cuffMat   = new THREE.MeshLambertMaterial({ color: 0x39411f });
+    const gloveMat  = new THREE.MeshLambertMaterial({ color: 0x2a2a2a });
+    const thumbMat  = new THREE.MeshLambertMaterial({ color: 0x202020 });
     const UP   = new THREE.Vector3(0, 1, 0);
-    const hand = new THREE.Vector3(0.03, 0.13, 0.07);         // grip the lower bottle, front face
-    const dir  = new THREE.Vector3(0.55, -0.85, 0.5).normalize();
+    // Local to the throwable mesh (which is then scaled 0.65). Fist on the
+    // lower bottle, short wrist running straight down off-screen.
+    const hand = new THREE.Vector3(0.05, 0.12, 0.06);
+    const dir  = new THREE.Vector3(0.22, -0.93, 0.28).normalize();
     const q    = new THREE.Quaternion().setFromUnitVectors(UP, dir);
-    const len  = 0.55;
-    const glove = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.11, 0.16), gloveMat);
-    glove.position.copy(hand); glove.quaternion.copy(q);
-    const fore  = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.085, len, 14), sleeveMat);
+    const len  = 0.30;
+    const fist  = new THREE.Mesh(new THREE.BoxGeometry(0.115, 0.105, 0.145), gloveMat);
+    fist.position.copy(hand); fist.quaternion.copy(q);
+    const thumb = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.08, 0.07), thumbMat);
+    thumb.position.copy(hand).add(new THREE.Vector3(0, 0.03, 0.08)); thumb.quaternion.copy(q);
+    const fore  = new THREE.Mesh(new THREE.CylinderGeometry(0.072, 0.088, len, 12), sleeveMat);
     fore.position.copy(hand).addScaledVector(dir, len * 0.5); fore.quaternion.copy(q);
-    const cuff  = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.07, 14), cuffMat);
-    cuff.position.copy(hand).addScaledVector(dir, len * 0.82); cuff.quaternion.copy(q);
-    arm.add(fore, cuff, glove);
+    arm.add(fore, fist, thumb);
     return arm;
   },
   _buildHandMolotov() {
@@ -6901,33 +6900,49 @@ const Throwables = {
     });
     return g;
   },
+  // Pixel-fire: a swarm of small cubes that emerge from the ground, rise,
+  // shift colour yellow→orange→red as they climb, shrink + fade, then respawn
+  // at the base. Driven each frame by the molotov branch in the effect loop.
+  FIRE_PALETTE: [0xfff36b, 0xffd24a, 0xff9a2a, 0xff5a1e, 0xe23a16],
   _buildFireGroup(radius) {
     const g = new THREE.Group();
-    // Black scorch disc.
+    // Charred scorch disc on the ground.
     const scorch = new THREE.Mesh(
-      new THREE.CircleGeometry(radius, 24),
-      new THREE.MeshBasicMaterial({ color: 0x2a1a0a, transparent: true, opacity: 0.55 })
+      new THREE.CircleGeometry(radius * 1.05, 28),
+      new THREE.MeshBasicMaterial({ color: 0x1a0d05, transparent: true, opacity: 0.62, depthWrite: false })
     );
     scorch.rotation.x = -Math.PI / 2;
-    scorch.position.y = 0.02;
+    scorch.position.y = 0.015;
     g.add(scorch);
-    // Voxel-style flame cubes.
-    const flames = [];
-    const FLAME_COUNT = 22;
-    for (let i = 0; i < FLAME_COUNT; i++) {
-      const angle = (i / FLAME_COUNT) * Math.PI * 2 + Math.random();
-      const r = Math.random() * radius * 0.9;
-      const w = 0.18 + Math.random() * 0.22;
-      const h = 0.40 + Math.random() * 0.55;
-      const color = Math.random() < 0.45 ? 0xffd24a : 0xff7a22;
-      const f = new THREE.Mesh(
-        new THREE.BoxGeometry(w, h, w),
-        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95 })
+
+    const palette = this.FIRE_PALETTE;
+    const particles = [];
+    const COUNT = Math.round(54 + radius * 12);
+    for (let i = 0; i < COUNT; i++) {
+      const s = 0.05 + Math.random() * 0.08;
+      const m = new THREE.Mesh(
+        new THREE.BoxGeometry(s, s, s),
+        new THREE.MeshBasicMaterial({ color: palette[0], transparent: true, opacity: 0.95, depthWrite: false })
       );
-      f.position.set(Math.cos(angle) * r, h / 2, Math.sin(angle) * r);
-      g.add(f); flames.push(f);
+      const ang = Math.random() * Math.PI * 2;
+      const rr  = Math.pow(Math.random(), 0.6) * radius * 0.92;   // clustered toward centre
+      m.userData = {
+        baseX: Math.cos(ang) * rr, baseZ: Math.sin(ang) * rr, size: s,
+        maxH:  0.55 + Math.random() * (0.85 + radius * 0.12),
+        speed: 0.85 + Math.random() * 1.5,
+        phase: Math.random(),                                     // 0 (ground) → 1 (top)
+        sway:  0.04 + Math.random() * 0.07,
+      };
+      m.position.set(m.userData.baseX, 0, m.userData.baseZ);
+      g.add(m); particles.push(m);
     }
-    g.userData.particles = flames;
+    g.userData.particles = particles;
+
+    // Flickering warm glow on the surroundings (no shadow — cheap fill).
+    const light = new THREE.PointLight(0xff7322, 1.4, radius * 4.0, 2);
+    light.position.set(0, 0.5, 0);
+    g.add(light);
+    g.userData.fireLight = light;
     return g;
   },
   _buildSmokeGroup(radius) {
