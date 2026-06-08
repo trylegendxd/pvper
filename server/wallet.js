@@ -8,6 +8,11 @@
 // as a parameter. See tests/wallet.test.js.
 const db = require('./db');
 
+// Credits carry up to 2 decimals. Round every money value to cents so JS
+// float drift (0.1 + 0.2 = 0.30000000000000004) can never leak into a
+// NUMERIC(18,2) column or a balance.
+function round2(n) { return Math.round((Number(n) + Number.EPSILON) * 100) / 100; }
+
 /**
  * Adjust a user's balance. NEVER allows negative balance.
  *
@@ -31,8 +36,9 @@ async function adjustBalance(userId, amount, reason, opts = {}) {
     );
     if (!wrows.length) throw new Error('wallet_not_found');
 
-    const current = Number(wrows[0].balance);
-    const next    = current + Number(amount);
+    const current = round2(wrows[0].balance);
+    const delta   = round2(amount);
+    const next    = round2(current + delta);
     if (next < 0) throw new Error('insufficient_balance');
 
     await client.query(
@@ -48,7 +54,7 @@ async function adjustBalance(userId, amount, reason, opts = {}) {
            (user_id, amount, balance_after, reason, ref_type, ref_id, metadata)
          VALUES ($1,$2,$3,$4,$5,$6,$7)
          RETURNING id`,
-        [userId, amount, next, reason, opts.refType || null, opts.refId || null, opts.metadata || null]
+        [userId, delta, next, reason, opts.refType || null, opts.refId || null, opts.metadata || null]
       );
       txRow = rows[0];
     } catch (e) {
@@ -70,7 +76,7 @@ async function getBalance(userId) {
   const { rows } = await db.pool.query(
     'SELECT balance FROM wallets WHERE user_id = $1', [userId]
   );
-  return rows.length ? Number(rows[0].balance) : 0;
+  return rows.length ? round2(rows[0].balance) : 0;
 }
 
 /** Recent ledger entries for a user. */

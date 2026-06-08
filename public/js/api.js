@@ -14,6 +14,14 @@ async function api(path, opts = {}) {
 window.api = api;
 
 window.fmtCredits = function (n) {
-  const s = Math.abs(Number(n) || 0).toLocaleString();
-  return (n < 0 ? '-' : '') + s + ' cr';
+  const v = Number(n) || 0;
+  const abs = Math.abs(v);
+  // Up to 2 decimals — show them only when there's a fractional part so
+  // whole balances stay clean (e.g. "1,250 cr", "1,250.50 cr").
+  const hasFrac = Math.round(abs * 100) % 100 !== 0;
+  const s = abs.toLocaleString(undefined, {
+    minimumFractionDigits: hasFrac ? 2 : 0,
+    maximumFractionDigits: 2,
+  });
+  return (v < 0 ? '-' : '') + s + ' cr';
 };

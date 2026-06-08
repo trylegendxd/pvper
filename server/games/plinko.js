@@ -112,7 +112,7 @@ async function drop(userId, betAmount, rows, risk) {
       metadata: { rows, risk }, client,
     });
 
-    const payout = Math.floor(bet * multiplier);
+    const payout = Math.round(bet * multiplier * 100) / 100;   // 2-decimal credits
     if (payout > 0) {
       await adjustBalance(userId, payout, 'plinko_payout', {
         refType: 'plinko', refId: sessionId,

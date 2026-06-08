@@ -159,7 +159,7 @@ async function startBatch(userId, bets) {
       let outcome = null;
       let payout  = 0;
       if (pBJ && dealerBJ)      { status = 'push';             outcome = 'push';     payout = bet; }
-      else if (pBJ)             { status = 'player_blackjack'; outcome = 'blackjack';payout = Math.floor(bet * 2.5); }
+      else if (pBJ)             { status = 'player_blackjack'; outcome = 'blackjack';payout = Math.round(bet * 2.5 * 100) / 100; }
       else if (dealerBJ)        { status = 'lost';             outcome = 'lose';     payout = 0; }
       return { bet, cards: pc, status, outcome, payout };
     });

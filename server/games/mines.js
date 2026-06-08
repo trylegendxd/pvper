@@ -63,7 +63,7 @@ async function _finishCashOut(userId, key, state) {
   state.status = 'won';
   activeSessions.delete(key);
   const mult   = computeMultiplier(state.revealedCount, state.mines);
-  const payout = Math.floor(state.bet * mult);
+  const payout = Math.round(state.bet * mult * 100) / 100;   // 2-decimal credits
 
   return withTx(async (client) => {
     await client.query(
