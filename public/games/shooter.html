@@ -308,6 +308,16 @@ input:focus { border-color:var(--accent); }
 #money-gain.show { animation:moneygain 1s ease forwards; }
 @keyframes moneygain { 0%{opacity:0; transform:translateY(0);} 15%{opacity:1;} 100%{opacity:0; transform:translateY(-26px);} }
 
+#freeze-indicator { position:absolute; top:84px; left:50%; transform:translateX(-50%); z-index:16;
+  display:flex; align-items:center; gap:8px; padding:8px 16px; border-radius:6px;
+  background:rgba(10,28,48,.82); border:1px solid #2f7fd6; color:#bfe3ff;
+  font-size:14px; font-weight:700; letter-spacing:2px; box-shadow:0 0 22px rgba(47,127,214,.35);
+  pointer-events:none; animation:fzpulse 1s ease infinite alternate; }
+#freeze-indicator .fz-lock { color:#7fd0ff; font-size:16px; }
+#freeze-indicator #freeze-secs { color:#fff; font-variant-numeric:tabular-nums; min-width:30px; text-align:right; }
+#freeze-indicator .fz-s { color:#7fa8cc; margin-left:1px; }
+@keyframes fzpulse { from{ box-shadow:0 0 14px rgba(47,127,214,.25);} to{ box-shadow:0 0 26px rgba(47,127,214,.55);} }
+
 #buy-menu { position:absolute; inset:0; z-index:20; display:flex; align-items:center; justify-content:center; background:rgba(6,10,18,.62); }
 .buy-box { width:min(560px,92vw); background:linear-gradient(180deg,#121a27,#0c121c); border:1px solid #25344a; border-radius:10px; padding:20px 22px; box-shadow:0 24px 70px rgba(0,0,0,.6); }
 .buy-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:4px; }
@@ -1157,6 +1167,13 @@ input:focus { border-color:var(--accent); }
     <span id="money-buyhint">[B] BUY</span>
   </div>
   <div id="money-gain"></div>
+
+  <!-- CS buy-freeze banner: shown while frozen at spawn (can shop, can't move) -->
+  <div id="freeze-indicator" style="display:none;">
+    <span class="fz-lock">❄</span>
+    <span class="fz-text">FREEZE — BUY TIME</span>
+    <span id="freeze-secs">3.5</span><span class="fz-s">s</span>
+  </div>
 
   <!-- CS:GO-style buy menu — toggle with B during the buy window -->
   <div id="buy-menu" style="display:none;">
@@ -3737,7 +3754,8 @@ const GameEngine = {
         // settings/HUD if any. Ctrl is more standard than C.
         this.crouching = true;
       }
-      if (e.code === 'Space' && this.pointerLocked && this._grounded && !this.crouching) {
+      if (e.code === 'Space' && this.pointerLocked && this._grounded && !this.crouching
+          && !(typeof Economy !== 'undefined' && Economy.isFrozen())) {
         this._yVel = 4.5;
         this._grounded = false;
       }
@@ -3928,6 +3946,8 @@ const GameEngine = {
   // ── Weapon ─────────────────────────────────────────────────────────────
   _shoot() {
     if (this.isDead) return;
+    // CS buy freeze: no shooting while frozen at spawn.
+    if (typeof Economy !== 'undefined' && Economy.isFrozen()) return;
     // Throwables in hand never fire bullets — LMB throws (handled in mousedown).
     // This is a defensive guard against any other path (auto-fire loop, etc.).
     if (typeof Throwables !== 'undefined' && Throwables._inHand) return;
@@ -4285,6 +4305,8 @@ const GameEngine = {
     if (this._keys['KeyS']) mz += 1;
     if (this._keys['KeyA']) mx -= 1;
     if (this._keys['KeyD']) mx += 1;
+    // CS buy freeze: pinned in place (can still look around + shop).
+    if (typeof Economy !== 'undefined' && Economy.isFrozen()) { mx = 0; mz = 0; }
 
     if (mx !== 0 || mz !== 0) {
       const len  = Math.hypot(mx, mz);
@@ -4400,8 +4422,9 @@ const GameEngine = {
 
     // Send position (online mode only). yOffset captures jump height and
     // crouching state for the killcam — gameplay still uses y=0 for hit
-    // detection so this can't be abused to dodge bullets.
-    if (!App.trainingMode) {
+    // detection so this can't be abused to dodge bullets. Skipped during the
+    // buy freeze (we're pinned at spawn — avoids a position_correction storm).
+    if (!App.trainingMode && !(typeof Economy !== 'undefined' && Economy.isFrozen())) {
       NetworkManager.sendMove(
         { x: this.pos.x, y: 0, z: this.pos.z },
         { x: this.pitch,  y: this.yaw },
@@ -7218,12 +7241,17 @@ const Economy = {
   active: false,
   money: 800,
   maxMoney: 16000,
-  buyTimeMs: 12000,
+  buyTimeMs: 11000,
   buyUntil: 0,
-  prices: { knife: 0, pistol: 0, shotgun: 1200, rifle: 2700, sniper: 4750 },
+  freezeMs: 3500,
+  freezeUntil: 0,
+  roundWinBonus: 3250,
+  lossBonus: [1400, 1900, 2400, 2900, 3400],
+  prices: { knife: 0, pistol: 0, shotgun: 1100, rifle: 2700, sniper: 4750 },
   loadout: new Set(['knife', 'pistol']),
   menuOpen: false,
   _timer: null,
+  _freezeTimer: null,
 
   // Buy-menu rows. Hotkeys match the in-game weapon-slot keys (1 rifle,
   // 2 pistol, 3 shotgun, 4 sniper) so the same number means the same gun
@@ -7238,6 +7266,8 @@ const Economy = {
 
   owns(name) { return !this.active || name === 'knife' || this.loadout.has(name); },
   isBuyOpen() { return this.active && Date.now() < this.buyUntil; },
+  // Buy freeze — movement + shooting are locked, but you can shop.
+  isFrozen()  { return this.active && this.freezeUntil > 0 && Date.now() < this.freezeUntil; },
 
   onMatchStart(data) {
     this.reset();
@@ -7246,7 +7276,10 @@ const Economy = {
     const e = data.econ || {};
     this.prices    = e.prices || this.prices;
     this.maxMoney  = e.maxMoney || 16000;
-    this.buyTimeMs = e.buyTimeMs || 12000;
+    this.buyTimeMs = e.buyTimeMs || 11000;
+    this.freezeMs  = e.freezeMs || 3500;
+    this.roundWinBonus = e.roundWinBonus || 3250;
+    this.lossBonus = Array.isArray(e.lossBonus) ? e.lossBonus : this.lossBonus;
     const w = data.wallet || {};
     this.money    = (typeof w.money === 'number') ? w.money : (e.startMoney || 800);
     this.loadout  = new Set(w.loadout || e.defaultLoadout || ['knife', 'pistol']);
@@ -7255,6 +7288,7 @@ const Economy = {
     if (hm) hm.style.display = 'flex';
     this.updateHud();
     this.startTimer();
+    this.startFreeze(w.freezeUntil || 0);
     // Pop the buy menu shortly after the match UI settles — CS-style. Only if
     // the buy window is actually open (e.g. not on a late reconnect).
     setTimeout(() => { if (this.active && GameEngine.running && this.isBuyOpen()) this.openMenu(); }, 350);
@@ -7272,6 +7306,7 @@ const Economy = {
     this.flashMoney(d.delta || 0);
     this.updateHud();
     this.startTimer();
+    this.startFreeze(d.freezeUntil || 0);
     // Defer so the 'respawn' event (which clears isDead) has been processed
     // regardless of socket event ordering, then pop the buy menu.
     setTimeout(() => { if (this.active && GameEngine.running && !GameEngine.isDead) this.openMenu(); }, 140);
@@ -7411,8 +7446,36 @@ const Economy = {
   },
   stopTimer() { if (this._timer) { clearInterval(this._timer); this._timer = null; } },
 
+  // CS buy freeze: show a countdown banner; movement + shooting are locked
+  // (GameEngine reads Economy.isFrozen()). Auto-hides when the freeze ends.
+  startFreeze(freezeUntil) {
+    this.freezeUntil = freezeUntil || 0;
+    if (this._freezeTimer) { clearInterval(this._freezeTimer); this._freezeTimer = null; }
+    const el = document.getElementById('freeze-indicator');
+    if (!this.isFrozen()) { if (el) el.style.display = 'none'; return; }
+    if (el) el.style.display = 'flex';
+    const tick = () => {
+      const left = this.freezeUntil - Date.now();
+      if (left <= 0) {
+        if (el) el.style.display = 'none';
+        if (this._freezeTimer) { clearInterval(this._freezeTimer); this._freezeTimer = null; }
+        return;
+      }
+      const secs = document.getElementById('freeze-secs');
+      if (secs) secs.textContent = (left / 1000).toFixed(1);
+    };
+    tick();
+    this._freezeTimer = setInterval(tick, 75);
+  },
+  stopFreeze() {
+    this.freezeUntil = 0;
+    if (this._freezeTimer) { clearInterval(this._freezeTimer); this._freezeTimer = null; }
+    const el = document.getElementById('freeze-indicator'); if (el) el.style.display = 'none';
+  },
+
   reset() {
     this.stopTimer();
+    this.stopFreeze();
     this.active = false;
     this.menuOpen = false;
     this.loadout = new Set(['knife', 'pistol']);

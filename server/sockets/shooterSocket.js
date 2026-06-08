@@ -32,27 +32,37 @@ const SPAWN_INVULN_MS = 1000;
 // on the weapon used. The economy is only enabled for "all weapons" matches —
 // fixed weapon-mode lobbies keep their classic behaviour.
 const ECON = {
-  START_MONEY:     800,
+  START_MONEY:     800,                         // CS pistol-round bank
   MAX_MONEY:       16000,
-  BUY_TIME_MS:     12000,                      // buy window after each (re)spawn
-  DEFAULT_LOADOUT: ['knife', 'pistol'],        // always owned, free
-  PRICES:   { knife: 0, pistol: 0, shotgun: 1200, rifle: 2700, sniper: 4750 },
-  KILL_REWARD: { knife: 1500, pistol: 600, shotgun: 900, rifle: 300, sniper: 300, molotov: 300, smoke: 300 },
-  LOSS_BONUS:      1400,                        // money granted on respawn (death)
+  BUY_TIME_MS:     11000,                       // buy window length after the freeze
+  FREEZE_MS:       3500,                        // CS buy-freeze: can buy, can't move/shoot
+  DEFAULT_LOADOUT: ['knife', 'pistol'],         // free starting kit
+  // CS:GO weapon prices (pistol/knife are the free kit).
+  PRICES:   { knife: 0, pistol: 0, shotgun: 1100, rifle: 2700, sniper: 4750 },
+  // CS:GO kill rewards: rifles/pistols $300, AWP $100, shotgun $900, knife $1500.
+  KILL_REWARD: { knife: 1500, pistol: 300, shotgun: 900, rifle: 300, sniper: 100, molotov: 300, smoke: 300 },
+  ROUND_WIN_BONUS: 3250,                        // CS elimination-win reward (to the killer)
+  // CS:GO escalating loss bonus by consecutive rounds lost (capped at $3400).
+  LOSS_BONUS:      [1400, 1900, 2400, 2900, 3400],
 };
-// What the client needs to render the buy menu. Sent inside match_start.
+// What the client needs to render the buy menu + HUD. Sent inside match_start.
 const ECON_PUBLIC = {
-  startMoney: ECON.START_MONEY,
-  maxMoney:   ECON.MAX_MONEY,
-  buyTimeMs:  ECON.BUY_TIME_MS,
-  prices:     ECON.PRICES,
-  defaultLoadout: ECON.DEFAULT_LOADOUT,
+  startMoney:    ECON.START_MONEY,
+  maxMoney:      ECON.MAX_MONEY,
+  buyTimeMs:     ECON.BUY_TIME_MS,
+  freezeMs:      ECON.FREEZE_MS,
+  prices:        ECON.PRICES,
+  defaultLoadout:ECON.DEFAULT_LOADOUT,
+  roundWinBonus: ECON.ROUND_WIN_BONUS,
+  lossBonus:     ECON.LOSS_BONUS,
 };
 
 function econActive(match) { return !!(match && match.economy); }
+// True while a player is in their buy-freeze (can shop, can't move or shoot).
+function econFrozen(state) { return !!(state && state.freezeUntil && Date.now() < state.freezeUntil); }
 
 // Decide whether a freshly-built match runs the economy, and seed every
-// player's money / loadout / buy window. Called right after matches.set().
+// player's money / loadout / opening freeze. Called right after matches.set().
 function initMatchEconomy(match) {
   match.economy = (match.weaponMode === 'all');
   if (!match.economy) return;
@@ -60,44 +70,55 @@ function initMatchEconomy(match) {
   for (const sid of match.playerIds) {
     const st = match.gameState[sid];
     if (!st) continue;
-    st.money    = ECON.START_MONEY;
-    st.loadout  = new Set(ECON.DEFAULT_LOADOUT);
-    st.buyUntil = t + ECON.BUY_TIME_MS;
-    st.weapon   = 'pistol';                     // spawn with the free pistol, not a rifle
+    st.money      = ECON.START_MONEY;
+    st.loadout    = new Set(ECON.DEFAULT_LOADOUT);
+    st.lossStreak = 0;
+    st.weapon     = 'pistol';                    // spawn with the free pistol
+    // Opening buy freeze — everyone starts at spawn, frozen, shopping.
+    st.freezeUntil = t + ECON.FREEZE_MS;
+    st.buyUntil    = st.freezeUntil + ECON.BUY_TIME_MS;
+    st.invulnUntil = Math.max(st.invulnUntil || 0, st.freezeUntil + 400);
   }
 }
 
 // Per-player economy snapshot for the match_start / resume payload.
 function econPlayerSnapshot(st) {
   return {
-    money:    st?.money ?? ECON.START_MONEY,
-    loadout:  st?.loadout ? [...st.loadout] : [...ECON.DEFAULT_LOADOUT],
-    buyUntil: st?.buyUntil ?? (Date.now() + ECON.BUY_TIME_MS),
+    money:       st?.money ?? ECON.START_MONEY,
+    loadout:     st?.loadout ? [...st.loadout] : [...ECON.DEFAULT_LOADOUT],
+    buyUntil:    st?.buyUntil ?? (Date.now() + ECON.BUY_TIME_MS),
+    freezeUntil: st?.freezeUntil ?? 0,
   };
 }
 
-// Award kill money to the killer (no-op when economy is off).
+// Killer won the round → kill reward + round-win bonus, loss streak reset.
 function awardKillEconomy(io, match, killerSid, killerState, weaponKey) {
   if (!econActive(match) || !killerState) return;
-  const reward = ECON.KILL_REWARD[weaponKey] ?? 300;
+  const reward = (ECON.KILL_REWARD[weaponKey] ?? 300) + ECON.ROUND_WIN_BONUS;
+  killerState.lossStreak = 0;
   killerState.money = Math.min(ECON.MAX_MONEY, (killerState.money || 0) + reward);
   io.of('/shooter').to(killerSid).emit('economy_update', {
-    money: killerState.money, delta: reward, reason: 'kill',
+    money: killerState.money, delta: reward, reason: 'round_win',
   });
 }
 
-// Reset a player's loadout on respawn, grant the loss bonus, reopen the buy
-// window, and tell the client to pop the buy menu (no-op when economy is off).
+// Victim lost the round → escalating loss bonus, reset loadout, fresh buy
+// freeze. Returns the freezeUntil so the respawn path can match invuln to it.
 function respawnEconomy(io, match, sid, state) {
-  if (!econActive(match) || !state) return;
-  state.money    = Math.min(ECON.MAX_MONEY, (state.money || 0) + ECON.LOSS_BONUS);
-  state.loadout  = new Set(ECON.DEFAULT_LOADOUT);
-  state.weapon   = 'pistol';
-  state.buyUntil = Date.now() + ECON.BUY_TIME_MS;
+  if (!econActive(match) || !state) return 0;
+  state.lossStreak = Math.min(ECON.LOSS_BONUS.length, (state.lossStreak || 0) + 1);
+  const bonus = ECON.LOSS_BONUS[state.lossStreak - 1];
+  state.money       = Math.min(ECON.MAX_MONEY, (state.money || 0) + bonus);
+  state.loadout     = new Set(ECON.DEFAULT_LOADOUT);
+  state.weapon      = 'pistol';
+  state.freezeUntil = Date.now() + ECON.FREEZE_MS;
+  state.buyUntil    = state.freezeUntil + ECON.BUY_TIME_MS;
   io.of('/shooter').to(sid).emit('buy_open', {
     money: state.money, loadout: [...state.loadout],
-    buyUntil: state.buyUntil, delta: ECON.LOSS_BONUS, reason: 'respawn',
+    buyUntil: state.buyUntil, freezeUntil: state.freezeUntil,
+    delta: bonus, reason: 'round_loss',
   });
+  return state.freezeUntil;
 }
 
 // Emit a one-shot invuln event to all players in a match so they can
@@ -924,17 +945,17 @@ function tickThrowables(io, match) {
               else { state.weapons[k].ammo = WEAPONS[k].mag; state.weapons[k].reloading = false; }
             }
             refillThrowables(state);
-            respawnEconomy(io, match, sid, state);   // CS economy: loss bonus + rebuy
+            const freezeUntil = respawnEconomy(io, match, sid, state);   // CS economy: loss bonus + rebuy
             state.position = spawn;
             state.lastPosition = { ...spawn };
             state.positionHistory = [];
             state.respawning = false;
             state.lastMoveAt = Date.now();
             state.lastSpeed = 0;
-            const invulnUntil = Date.now() + SPAWN_INVULN_MS;
+            const invulnUntil = freezeUntil ? freezeUntil + 500 : Date.now() + SPAWN_INVULN_MS;
             state.invulnUntil = invulnUntil;
             state.streakKills = 0;
-            ns.to(sid).emit('respawn', { position: spawn, health: MAX_HEALTH, invulnUntil });
+            ns.to(sid).emit('respawn', { position: spawn, health: MAX_HEALTH, invulnUntil, freezeUntil });
             const otherSock = match.playerIds.find(x => x !== sid);
             if (otherSock) ns.to(otherSock).emit('opponent_respawn', { position: spawn, invulnUntil });
             emitInvulnStart(io, match, sid, invulnUntil);
@@ -2563,6 +2584,13 @@ function attach(io) {
       const state = match.gameState[socket.id];
       if (!state || state.respawning) return;
 
+      // CS buy freeze: pin the player to their spawn — no movement allowed.
+      // (The client also locks input; this is the server-side safety net.)
+      if (econFrozen(state)) {
+        socket.emit('position_correction', { position: state.lastPosition });
+        return;
+      }
+
       // Basic schema check.
       if (!position || typeof position.x !== 'number' || typeof position.z !== 'number') {
         return noteSuspicious(match, socket.id, 'invalid_position');
@@ -2737,6 +2765,8 @@ function attach(io) {
       if (!match || match.status !== 'active') return;
       const state = match.gameState[socket.id];
       if (!state || state.respawning) return;
+      // CS buy freeze: can't fire while frozen at spawn.
+      if (econFrozen(state)) return;
 
       const wKey = state.weapon || DEFAULT_WEAPON;
       const W = WEAPONS[wKey];
@@ -3104,15 +3134,15 @@ function attach(io) {
             oppState.respawning = false;
             oppState.lastMoveAt = Date.now();
             oppState.lastSpeed  = 0;
-            // Spawn invulnerability — fresh respawn gets SPAWN_INVULN_MS of grace.
-            const invulnUntil = Date.now() + SPAWN_INVULN_MS;
-            oppState.invulnUntil = invulnUntil;
             // Refill throwables on respawn so molotov/smoke counts reset.
             refillThrowables(oppState);
-            // CS economy: loss bonus + reset loadout + reopen buy window.
-            respawnEconomy(io, match, oppSock, oppState);
+            // CS economy: loss bonus + reset loadout + reopen the buy freeze.
+            const freezeUntil = respawnEconomy(io, match, oppSock, oppState);
+            // Invuln covers the buy freeze (economy) or the normal grace.
+            const invulnUntil = freezeUntil ? freezeUntil + 500 : Date.now() + SPAWN_INVULN_MS;
+            oppState.invulnUntil = invulnUntil;
             Replay.log(match.id, 'player_spawn', { s: oppSock, p: spawn });
-            ns.to(oppSock).emit('respawn', { position: spawn, health: MAX_HEALTH, invulnUntil });
+            ns.to(oppSock).emit('respawn', { position: spawn, health: MAX_HEALTH, invulnUntil, freezeUntil });
             ns.to(socket.id).emit('opponent_respawn', { position: spawn, invulnUntil });
             emitInvulnStart(io, match, oppSock, invulnUntil);
           } catch (e) {
@@ -3150,6 +3180,7 @@ function attach(io) {
         const state = match.gameState[socket.id];
         if (!state) return cb?.({ error: 'no_state' });
         if (state.respawning) return cb?.({ error: 'respawning' });
+        if (econFrozen(state)) return cb?.({ error: 'frozen' });   // CS buy freeze
 
         const t = THROWABLE_TYPES.includes(type) ? type : state.selectedThrowable;
         if (!THROWABLE_TYPES.includes(t)) return cb?.({ error: 'bad_type' });
