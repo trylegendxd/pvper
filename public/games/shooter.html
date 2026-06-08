@@ -2399,8 +2399,11 @@ const WeaponAssets = {
     }
     // Hide existing fallback children but DON'T destroy them — they
     // remain as the safety net if the user reloads the page during the
-    // network swap, or if we ever want to flip back.
-    for (const child of group.children) child.visible = false;
+    // network swap, or if we ever want to flip back. The first-person arms
+    // are kept visible so they grip the imported model too.
+    for (const child of group.children) {
+      if (!child.userData?.isViewArms) child.visible = false;
+    }
 
     // Clone the imported model fresh — reset its transforms so we own
     // the entire framing. (The FBX source ships every weapon laid out
@@ -2724,7 +2727,11 @@ const GameEngine = {
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, logarithmicDepthBuffer: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.shadowMap.enabled = false;
+    // Real-time soft shadows for proper grounding. We keep the original
+    // (linear) colour pipeline so the hand-tuned sunny palette is preserved —
+    // the quality jump comes from shadows + a richer multi-light rig below.
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     this.raycaster = new THREE.Raycaster();
 
@@ -2741,15 +2748,33 @@ const GameEngine = {
 
   // ── Sunny-day lighting ─────────────────────────────────────────────────
   _buildLights() {
-    // Bright sun
-    const sun = new THREE.DirectionalLight(0xfff6e0, 1.3);
-    sun.position.set(12, 20, 8);
+    // Warm key sun — now casts soft shadows for real grounding + depth.
+    const sun = new THREE.DirectionalLight(0xfff3da, 1.45);
+    sun.position.set(20, 30, 14);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.near   = 1;
+    sun.shadow.camera.far    = 100;
+    sun.shadow.camera.left   = -50;
+    sun.shadow.camera.right  =  50;
+    sun.shadow.camera.top    =  50;
+    sun.shadow.camera.bottom = -50;
+    // Bias tuned to kill shadow acne without obvious peter-panning.
+    sun.shadow.bias       = -0.0004;
+    sun.shadow.normalBias =  0.025;
     this.scene.add(sun);
-    // Sky ambient (blue-tinted)
-    this.scene.add(new THREE.AmbientLight(0x9bc8f5, 0.65));
-    // Subtle fill from below (bounce light off ground)
-    const bounce = new THREE.HemisphereLight(0x87CEEB, 0x6a9f50, 0.3);
-    this.scene.add(bounce);
+    this._sun = sun;
+
+    // Sky/ground hemisphere — soft coloured fill so shadowed sides still
+    // read with form (warm bounce from the grass, cool from the sky).
+    this.scene.add(new THREE.HemisphereLight(0xbcd8ff, 0x586b39, 0.55));
+    // Low flat ambient so shadows stay deep and readable.
+    this.scene.add(new THREE.AmbientLight(0x8499b5, 0.32));
+    // Cool rim / back light — separates players from the background and
+    // gives the models a crisp lit edge. No shadow (cheap fill).
+    const rim = new THREE.DirectionalLight(0xaecbff, 0.6);
+    rim.position.set(-18, 14, -16);
+    this.scene.add(rim);
   },
 
   // ── Opponent mesh — humanoid soldier (cylinders + sized cubes) ────────
@@ -2942,6 +2967,8 @@ const GameEngine = {
       this._oppLegL = legL;
       this._oppLegR = legR;
     }
+    // Cast + receive the sun's soft shadows so players are grounded.
+    group.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
     return group;
   },
 
@@ -3104,8 +3131,13 @@ const GameEngine = {
 
   _buildWeaponModel(key) {
     const G = new THREE.Group();
-    const mat  = (hex) => new THREE.MeshLambertMaterial({ color:hex, depthTest:false, depthWrite:false });
-    const dark = mat(0x202020), wood = mat(0x4a2f15), metal = mat(0x2f2f2f), accent = mat(0x666666);
+    // Phong (vs flat Lambert) gives the metal parts a specular glint that
+    // slides across the gun as you look around — the gun is camera-parented —
+    // reading as real gunmetal. Wood/polymer parts keep a low shine.
+    const mat  = (hex, shininess = 30, specular = 0x2a2a2a) =>
+      new THREE.MeshPhongMaterial({ color:hex, specular, shininess, depthTest:false, depthWrite:false });
+    const dark = mat(0x202020, 55, 0x3a3a3a), wood = mat(0x4a2f15, 6, 0x120a04),
+          metal = mat(0x2f2f2f, 95, 0x6e6e6e), accent = mat(0x666666, 70, 0x565656);
     const box = (w,h,d,m) => { const x = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), m); x.renderOrder = 999; return x; };
 
     if (key === 'rifle') {
@@ -3162,7 +3194,60 @@ const GameEngine = {
       const bipR   = box(0.018, 0.11, 0.015, metal); bipR.position.set( 0.048, -0.055, -0.40); bipR.rotation.z = -0.28;
       G.add(recv, bar, hg, stk, grip, mag, scopeB, lensF, lensR, supp, bipL, bipR);
     }
+    // First-person arms gripping the weapon (skipped for the empty knife group).
+    if (key !== 'knife') this._addViewModelArms(G, key);
     return G;
+  },
+
+  // ── First-person view-model arms ─────────────────────────────────────────
+  // Two sleeved forearms + gloved hands that grip the held weapon. Parented to
+  // the weapon group so they recoil / sway / hide with it. Rendered always-on-
+  // top (depthTest off) to match the gun convention so they never clip walls.
+  _addViewModelArms(G, key) {
+    const sleeveMat = new THREE.MeshLambertMaterial({ color: 0x55602f, depthTest:false, depthWrite:false }); // olive sleeve
+    const gloveMat  = new THREE.MeshLambertMaterial({ color: 0x1b1b1b, depthTest:false, depthWrite:false }); // dark glove
+    const cuffMat   = new THREE.MeshLambertMaterial({ color: 0x39411f, depthTest:false, depthWrite:false }); // cuff band
+    const knuckMat  = new THREE.MeshLambertMaterial({ color: 0x111111, depthTest:false, depthWrite:false }); // knuckle plate
+
+    const UP = new THREE.Vector3(0, 1, 0);
+    // Build one arm: glove sits at `hand`, forearm trails toward `dir`.
+    const makeArm = (hand, dir) => {
+      const arm = new THREE.Group();
+      arm.userData.isViewArms = true;          // survive the FBX gun swap
+      const len = 0.36;
+      const d = new THREE.Vector3(dir.x, dir.y, dir.z).normalize();
+      const q = new THREE.Quaternion().setFromUnitVectors(UP, d);
+      const h = new THREE.Vector3(hand.x, hand.y, hand.z);
+
+      const glove = new THREE.Mesh(new THREE.BoxGeometry(0.088, 0.078, 0.115), gloveMat);
+      glove.position.copy(h); glove.quaternion.copy(q); glove.renderOrder = 1002;
+      const knuck = new THREE.Mesh(new THREE.BoxGeometry(0.092, 0.030, 0.085), knuckMat);
+      knuck.position.copy(h).addScaledVector(d, -0.005); knuck.position.y += 0.045;
+      knuck.quaternion.copy(q); knuck.renderOrder = 1003;
+      const fore  = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.066, len, 16), sleeveMat);
+      fore.position.copy(h).addScaledVector(d, len * 0.5); fore.quaternion.copy(q); fore.renderOrder = 1001;
+      const cuff  = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.05, 16), cuffMat);
+      cuff.position.copy(h).addScaledVector(d, len); cuff.quaternion.copy(q); cuff.renderOrder = 1001;
+
+      arm.add(fore, cuff, glove, knuck);
+      return arm;
+    };
+
+    let rightHand, leftHand, rDir, lDir;
+    if (key === 'pistol') {
+      rightHand = { x: 0.00, y: -0.105, z: 0.03 };
+      leftHand  = { x: -0.03, y: -0.12, z: 0.02 };   // support hand cupping
+      rDir = { x: 0.42, y: -0.84, z: 0.36 };
+      lDir = { x: -0.40, y: -0.86, z: 0.32 };
+    } else {
+      // rifle / shotgun / sniper — right on the grip, left on the handguard.
+      rightHand = { x: 0.02, y: -0.088, z: 0.06 };
+      leftHand  = { x: -0.01, y: -0.055, z: -0.19 };
+      rDir = { x: 0.5,  y: -0.8,  z: 0.42 };
+      lDir = { x: -0.55, y: -0.78, z: 0.30 };
+    }
+    G.add(makeArm(rightHand, rDir));
+    G.add(makeArm(leftHand,  lDir));
   },
 
   // ── Bullet holes ───────────────────────────────────────────────────────
@@ -3422,6 +3507,7 @@ const GameEngine = {
     const floorMat = new THREE.MeshLambertMaterial({ map: floorTex, color: 0xffffff });
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(arenaSize, arenaSize), floorMat);
     floor.rotation.x = -Math.PI / 2;
+    floor.receiveShadow = true;            // catches player + cover shadows
     add(floor);
 
     // ── BOUNDARY WALLS — brick texture, tiled by length.
@@ -3443,6 +3529,7 @@ const GameEngine = {
       m.material.map = t;
       m.material.needsUpdate = true;
       m.position.set(...pos);
+      m.castShadow = true; m.receiveShadow = true;
       add(m);
       this._addStaticBox(pos, size);
     });
@@ -3474,6 +3561,7 @@ const GameEngine = {
       const mat = new THREE.MeshLambertMaterial({ map: t, color: tint });
       const m   = new THREE.Mesh(new THREE.BoxGeometry(size.w, size.h, size.d), mat);
       m.position.set(position.x, size.h / 2, position.z);
+      m.castShadow = true; m.receiveShadow = true;
       add(m);
       this._addStaticBox([position.x, size.h / 2, position.z], [size.w, size.h, size.d]);
     });
@@ -4219,14 +4307,21 @@ const GameEngine = {
       // Re-set position with crouch sink applied (jump y already set above).
       this.opponentGroup.position.y = this._oppCurY - crouchSink;
 
-      // Leg-swing animation when opponent moves
+      // Leg-swing + a more alive body: stride bob, walking sway, a slight
+      // forward lean while running, and a gentle idle breathe when still.
       const moveSpeed = prev.distanceTo(this._oppCurPos) / Math.max(dt, 0.001);
       this._oppGait = (this._oppGait || 0) + dt * Math.min(moveSpeed * 1.6, 14);
-      const swing = moveSpeed > 0.2 ? Math.sin(this._oppGait) * 0.5 : 0;
+      const moving = moveSpeed > 0.2;
+      const swing = moving ? Math.sin(this._oppGait) * 0.6 : 0;
       if (this._oppLegL) this._oppLegL.rotation.x =  swing;
       if (this._oppLegR) this._oppLegR.rotation.x = -swing;
+      const nowS = performance.now() * 0.0016;
+      const bob  = moving ? Math.sin(this._oppGait * 2) * 0.032 : Math.sin(nowS) * 0.012;
+      this.opponentGroup.position.y = this._oppCurY - crouchSink + bob;
+      this.opponentGroup.rotation.z = moving ? Math.sin(this._oppGait) * 0.03 : 0;
+      this.opponentGroup.rotation.x = moving ? Math.min(moveSpeed * 0.012, 0.07) : 0;
       // Held-weapon bob + decaying knife-slash swing.
-      this._animateWeaponSocket(this.opponentGroup.userData.weaponSocket, moveSpeed > 0.2, this._oppGait, dt);
+      this._animateWeaponSocket(this.opponentGroup.userData.weaponSocket, moving, this._oppGait, dt);
 
       this._updateNameTag();
     }
@@ -4252,16 +4347,22 @@ const GameEngine = {
         e.group.position.set(e.curPos.x, e.curY, e.curPos.z);
         e.group.scale.set(1, sy, 1);
         e.group.rotation.y = e.curYaw + Math.PI;
-        // Leg-swing animation when the player is moving.
+        // Leg-swing + stride bob, walking sway, run lean, idle breathe.
         const moveSpeed = prev.distanceTo(e.curPos) / Math.max(dt, 0.001);
         e.gait = (e.gait || 0) + dt * Math.min(moveSpeed * 1.6, 14);
-        const swing = moveSpeed > 0.2 ? Math.sin(e.gait) * 0.5 : 0;
+        const moving = moveSpeed > 0.2;
+        const swing = moving ? Math.sin(e.gait) * 0.6 : 0;
         const lL = e.group.userData.legL;
         const lR = e.group.userData.legR;
         if (lL) lL.rotation.x =  swing;
         if (lR) lR.rotation.x = -swing;
+        const nowS = performance.now() * 0.0016;
+        const bob  = moving ? Math.sin(e.gait * 2) * 0.032 : Math.sin(nowS + e.curPos.x) * 0.012;
+        e.group.position.y = e.curY + bob;
+        e.group.rotation.z = moving ? Math.sin(e.gait) * 0.03 : 0;
+        e.group.rotation.x = moving ? Math.min(moveSpeed * 0.012, 0.07) : 0;
         // Held-weapon bob + decaying knife-slash swing.
-        this._animateWeaponSocket(e.group.userData.weaponSocket, moveSpeed > 0.2, e.gait, dt);
+        this._animateWeaponSocket(e.group.userData.weaponSocket, moving, e.gait, dt);
       }
     }
 
