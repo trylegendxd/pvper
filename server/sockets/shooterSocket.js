@@ -211,18 +211,31 @@ let _ioRef = null;
 // logged for an admin to read.
 const CHEAT_KICK_THRESHOLD = 30;
 
+// Reasons that are BENIGN client/server desyncs (reload + fire timing, ammo
+// races, the freeze/economy loadout races, weapon-switch cooldowns). These are
+// still rejected so they can't be exploited, but they must NEVER count toward
+// an auto-kick — they fire constantly for honest laggy players and were the
+// cause of false "cheat" kicks after reloading. Only the genuinely
+// cheat-shaped reasons (teleport, out-of-bounds, speed/accel) accumulate.
+const BENIGN_SUSPICIOUS = new Set([
+  'shot_while_reloading', 'reload_while_reloading', 'empty_mag',
+  'shot_after_switch', 'fire_rate', 'shot_time_drift', 'shot_direction',
+  'switch_cooldown', 'weapon_not_owned', 'switch_not_owned', 'time_drift',
+]);
+
 // Lightweight helper — logs a rejected action to the replay buffer, bumps
-// the per-player suspicious counter, and once the counter exceeds the
-// kick threshold forfeits the match and disconnects the offender.
+// the per-player suspicious counter (only for cheat-shaped reasons), and once
+// the counter exceeds the kick threshold forfeits the match.
 function noteSuspicious(match, socketId, reason, extra = {}) {
   if (!match) return;
   const st = match.gameState?.[socketId];
   if (!st) return;
-  st.suspiciousScore = (st.suspiciousScore || 0) + 1;
+  const weight = BENIGN_SUSPICIOUS.has(reason) ? 0 : 1;
+  st.suspiciousScore = (st.suspiciousScore || 0) + weight;
   Replay.log(match.id, 'suspicious_action_rejected', {
-    s: socketId, reason, score: st.suspiciousScore, ...extra,
+    s: socketId, reason, score: st.suspiciousScore, benign: weight === 0, ...extra,
   });
-  if (st.suspiciousScore > CHEAT_KICK_THRESHOLD && !st.cheatKicked) {
+  if (weight && st.suspiciousScore > CHEAT_KICK_THRESHOLD && !st.cheatKicked) {
     st.cheatKicked = true;
     kickForCheating(match, socketId, reason);
   }
@@ -2785,7 +2798,17 @@ function attach(io) {
       if (econActive(match) && state.loadout && !state.loadout.has(wKey)) {
         return noteSuspicious(match, socket.id, 'weapon_not_owned', { attempted: wKey });
       }
-      if (wState.reloading) return noteSuspicious(match, socket.id, 'shot_while_reloading');
+      if (wState.reloading) {
+        // The reload setTimeout may not have fired yet even though the reload
+        // time has actually elapsed (timer drift / lag). Finish it now so a
+        // legit post-reload shot isn't eaten + falsely flagged.
+        if (Date.now() - (wState.reloadStartedAt || 0) >= W.reloadMs - 120) {
+          wState.reloading = false;
+          wState.ammo = W.mag;
+        } else {
+          return noteSuspicious(match, socket.id, 'shot_while_reloading');
+        }
+      }
 
       const now = Date.now();
       const ts  = Number(timestamp) || now;

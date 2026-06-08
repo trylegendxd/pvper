@@ -7571,6 +7571,14 @@ const Economy = {
     if (typeof d.money === 'number') this.money = d.money;
     if (Array.isArray(d.loadout)) this.loadout = new Set(d.loadout);
     if (d.ok) {
+      // Server tops the bought weapon's mag off — mirror it client-side so the
+      // HUD shows full ammo and the client doesn't auto-reload into a desync.
+      try {
+        if (GameEngine.weapons[d.weapon]) {
+          GameEngine.weapons[d.weapon].ammo = WEAPONS[d.weapon].mag;
+          GameEngine.weapons[d.weapon].reloading = false;
+        }
+      } catch (_) {}
       try { AudioManager.playReload(); } catch (_) {}
       try { GameEngine.switchWeapon(d.weapon); } catch (_) {}   // auto-equip the buy
       this.flashMoney(0);

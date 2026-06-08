@@ -186,9 +186,11 @@ function attach(io) {
         capture(m, p);
         continue;
       }
-      if (tOwn !== -1) {
-        // Crossing another player's trail cuts them down.
-        killPlayer(m, m.players[tOwn], `cut by ${p.username}`);
+      if (tOwn !== -1 && tOwn !== p.idx) {
+        // Crossing ANOTHER player's trail cuts THEM down (never the crosser).
+        // Look the victim up by idx so the array order can never matter.
+        const victim = m.players.find(q => q.idx === tOwn);
+        if (victim && victim !== p) killPlayer(m, victim, `cut by ${p.username}`);
       }
       // body collision: stepping onto another live player's head
       const onHead = m.players.find(q => q.alive && q.idx !== p.idx && q.x === nx && q.y === ny);
