@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<title>Plinko · FPS Arena</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/styles.css">
+<style>
+.plinko-layout {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 20px;
+  align-items: start;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.ctrl-panel {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.ctrl-label {
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  color: var(--dim);
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.ctrl-panel input[type=number] {
+  width: 100%;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 10px 12px;
+  border-radius: 4px;
+  font-size: 18px;
+  font-family: var(--font);
+  font-weight: 600;
+  outline: none;
+}
+.ctrl-panel input[type=number]:focus { border-color: var(--accent); }
+
+.bet-quick { display:flex; gap:6px; margin-top:8px; }
+.bet-quick button {
+  flex:1; background:var(--bg3); border:1px solid var(--border); color:var(--dim);
+  border-radius:4px; padding:6px 0; font-size:12px; font-weight:600; cursor:pointer;
+  font-family:var(--font); transition:background .12s,color .12s,border-color .12s;
+}
+.bet-quick button:hover { background:#22223a; color:var(--text); border-color:var(--accent); }
+
+/* Segmented selectors (rows / risk) */
+.seg { display:flex; gap:6px; }
+.seg button {
+  flex:1; background:var(--bg3); border:1px solid var(--border); color:var(--dim);
+  border-radius:5px; padding:9px 0; font-size:13px; font-weight:700; cursor:pointer;
+  font-family:var(--font); letter-spacing:1px; transition:all .12s;
+}
+.seg button:hover:not(.active) { background:#22223a; color:var(--text); }
+.seg button.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+.seg button:disabled { opacity:.45; cursor:not-allowed; }
+.risk-low.active    { background:#1f8f4d; border-color:#1f8f4d; }
+.risk-medium.active { background:#d98a1f; border-color:#d98a1f; }
+.risk-high.active   { background:#d23b3b; border-color:#d23b3b; }
+
+.btn-drop {
+  background: var(--accent); color:#fff; width:100%; font-size:17px; letter-spacing:2px;
+  padding:14px 0;
+}
+.btn-drop:disabled { opacity:.55; cursor:not-allowed; }
+
+.stat-row { display:flex; justify-content:space-between; align-items:baseline; font-size:13px; }
+.stat-row .label { color: var(--dim); }
+.stat-row .value { font-weight:700; color: var(--gold); font-size:16px; }
+.stat-row .value.win  { color: var(--green); }
+.stat-row .value.lose { color: var(--red); }
+
+/* Board */
+.board-panel {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+#plinko-canvas {
+  width: 100%;
+  max-width: 540px;
+  height: auto;
+  display: block;
+  touch-action: manipulation;
+}
+.recent-strip {
+  display:flex; gap:6px; flex-wrap:wrap; justify-content:center; min-height:26px; width:100%;
+}
+.recent-chip {
+  font-size:12px; font-weight:700; padding:3px 9px; border-radius:4px;
+  color:#0c0f16; font-family:monospace; animation: chipIn .25s ease;
+}
+@keyframes chipIn { from{ transform:scale(.6); opacity:0;} to{ transform:scale(1); opacity:1;} }
+
+.maxpay { font-size:12px; color:var(--dim); text-align:center; }
+.maxpay b { color:var(--gold); }
+
+@media (max-width: 720px) {
+  .plinko-layout { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="topbar" id="topbar"></div>
+<div class="container">
+  <h1 class="page">PLINKO</h1>
+  <p class="subtitle">Drop the ball, watch it bounce, win the multiplier it lands on. More rows &amp; higher risk = bigger top prizes.</p>
+
+  <div class="plinko-layout">
+
+    <!-- Control panel -->
+    <div class="ctrl-panel">
+      <div>
+        <div class="ctrl-label">Bet Amount</div>
+        <input type="number" id="bet-input" value="50" min="1" step="1" placeholder="0">
+        <div class="bet-quick">
+          <button data-bet="half">½</button>
+          <button data-bet="double">2×</button>
+          <button data-bet="max">MAX</button>
+        </div>
+      </div>
+
+      <div>
+        <div class="ctrl-label">Rows</div>
+        <div class="seg" id="rows-seg"></div>
+      </div>
+
+      <div>
+        <div class="ctrl-label">Risk</div>
+        <div class="seg" id="risk-seg">
+          <button class="risk-low"    data-risk="low">LOW</button>
+          <button class="risk-medium" data-risk="medium">MED</button>
+          <button class="risk-high"   data-risk="high">HIGH</button>
+        </div>
+      </div>
+
+      <button class="btn btn-drop" id="btn-drop">DROP BALL</button>
+
+      <div class="stat-row">
+        <span class="label">Last result</span>
+        <span class="value" id="last-result">—</span>
+      </div>
+      <div class="stat-row">
+        <span class="label">Net profit</span>
+        <span class="value" id="net-profit">0 cr</span>
+      </div>
+
+      <div class="maxpay" id="maxpay">Max win this board: <b>—</b></div>
+
+      <p style="font-size:12px;color:var(--dim);text-align:center;line-height:1.5" id="status-msg">
+        Pick your bet, rows and risk — then drop.
+      </p>
+    </div>
+
+    <!-- Board panel -->
+    <div class="board-panel">
+      <canvas id="plinko-canvas" width="540" height="600"></canvas>
+      <div class="recent-strip" id="recent-strip"></div>
+    </div>
+
+  </div>
+</div>
+<div class="legal-footer">Credits are fictional play-money credits only and have no real-world monetary value.</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/auth.js"></script>
+<script>
+(async () => {
+  const user = await renderTopbar();
+  if (!user) return;
+
+  // ── State ───────────────────────────────────────────────────────────────
+  let CFG        = { rowsOptions: [8, 12, 16], risks: ['low','medium','high'], tables: {} };
+  let ROWS       = 16;
+  let RISK       = 'medium';
+  let MULTS      = [];               // current bin multipliers
+  let latestBalance = Number(user.balance) || 0;
+  let netProfit  = 0;
+  let activeBalls = 0;
+
+  const cv     = document.getElementById('plinko-canvas');
+  const ctx    = cv.getContext('2d');
+  const betInput = document.getElementById('bet-input');
+  const rowsSeg  = document.getElementById('rows-seg');
+  const riskSeg  = document.getElementById('risk-seg');
+  const btnDrop  = document.getElementById('btn-drop');
+  const statusEl = document.getElementById('status-msg');
+  const lastEl   = document.getElementById('last-result');
+  const profitEl = document.getElementById('net-profit');
+  const maxpayEl = document.getElementById('maxpay');
+  const recentEl = document.getElementById('recent-strip');
+
+  // Logical canvas size (CSS scales it down on small screens).
+  const W = 540, H = 600;
+  // Device-pixel-ratio crispness.
+  function fitDpr() {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    cv.width = W * dpr; cv.height = H * dpr;
+    cv.style.aspectRatio = `${W}/${H}`;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  fitDpr();
+
+  // Layout (recomputed when ROWS changes).
+  let cx, gap, topY, rowH, pegR, binTop, binH;
+  function layout() {
+    cx   = W / 2;
+    const padX = 26;
+    gap  = (W - 2 * padX) / ROWS;
+    topY = 54;
+    binH = 40;
+    binTop = H - binH - 12;
+    rowH = (binTop - topY - 8) / ROWS;
+    pegR = Math.max(2.4, Math.min(5, gap * 0.10));
+  }
+  layout();
+
+  // ── Multiplier bin colour (hot edges, cool centre — Stake-style) ─────────
+  function multColor(m) {
+    if (m >= 10)  return '#ff3b3b';
+    if (m >= 4)   return '#ff6a2a';
+    if (m >= 2)   return '#ff9420';
+    if (m >= 1.4) return '#ffb91f';
+    if (m >= 1)   return '#ffd24a';
+    if (m >= 0.5) return '#8a96ad';
+    return '#5d6981';
+  }
+
+  // ── Balls in flight ──────────────────────────────────────────────────────
+  // Each: { g:[], prog, speed, mult, bin, settled, onLand }
+  const balls = [];
+  const binFlash = {};   // binIndex → time remaining (ms) for the glow
+
+  function spawnBall(path, binIndex, mult) {
+    // Cumulative right-count per level (defines x at each level).
+    const g = [0];
+    for (let i = 0; i < path.length; i++) g.push(g[i] + path[i]);
+    balls.push({
+      g, prog: 0,
+      speed: 8.0 + Math.random() * 0.6,   // levels per second
+      mult, bin: binIndex, settled: false,
+    });
+    activeBalls++;
+    refreshLockState();
+  }
+
+  function ballPos(b, level) {
+    // level can be fractional. Interpolate g linearly between integer levels.
+    const L0 = Math.floor(level);
+    const L1 = Math.min(b.g.length - 1, L0 + 1);
+    const f  = level - L0;
+    const g0 = b.g[Math.min(L0, b.g.length - 1)];
+    const g1 = b.g[L1];
+    const gg = g0 + (g1 - g0) * f;
+    const x  = cx + (gg - level / 2) * gap;
+    let y    = topY + level * rowH;
+    // Little parabolic hop between pegs for bounce feel.
+    y -= Math.sin(f * Math.PI) * Math.min(rowH * 0.35, 9);
+    return { x, y };
+  }
+
+  // ── Render ───────────────────────────────────────────────────────────────
+  let lastT = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.05, (now - lastT) / 1000);
+    lastT = now;
+
+    ctx.clearRect(0, 0, W, H);
+
+    // Pegs.
+    ctx.fillStyle = 'rgba(255,255,255,0.82)';
+    for (let r = 1; r <= ROWS; r++) {
+      for (let i = 0; i <= r; i++) {
+        const px = cx + (i - r / 2) * gap;
+        const py = topY + r * rowH;
+        ctx.beginPath();
+        ctx.arc(px, py, pegR, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Bins.
+    const binW = gap * 0.92;
+    for (let b = 0; b <= ROWS; b++) {
+      const bxC = cx + (b - ROWS / 2) * gap;
+      const x = bxC - binW / 2;
+      const m = MULTS[b] ?? 0;
+      const col = multColor(m);
+      // Glow if a ball just landed here.
+      const glow = binFlash[b] || 0;
+      ctx.save();
+      if (glow > 0) {
+        ctx.shadowColor = col;
+        ctx.shadowBlur = 18 * (glow / 250);
+        binFlash[b] = Math.max(0, glow - dt * 1000);
+      }
+      roundRect(ctx, x, binTop, binW, binH, 5);
+      ctx.fillStyle = col;
+      ctx.globalAlpha = glow > 0 ? 1 : 0.92;
+      ctx.fill();
+      ctx.restore();
+      // Multiplier label.
+      ctx.fillStyle = '#0c0f16';
+      ctx.font = `700 ${Math.max(8, Math.min(12, binW * 0.34))}px Rajdhani, monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const label = m >= 100 ? Math.round(m) + '×' : m.toFixed(m >= 10 ? 0 : (m < 1 ? 1 : 1)) + '×';
+      ctx.fillText(label, bxC, binTop + binH / 2 + 1);
+    }
+
+    // Balls.
+    for (let i = balls.length - 1; i >= 0; i--) {
+      const b = balls[i];
+      b.prog += b.speed * dt;
+      const atEnd = b.prog >= ROWS;
+      const level = Math.min(ROWS, b.prog);
+      const p = ballPos(b, level);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, Math.max(4, pegR * 1.5), 0, Math.PI * 2);
+      const grd = ctx.createRadialGradient(p.x - 1.5, p.y - 1.5, 0.5, p.x, p.y, pegR * 1.6);
+      grd.addColorStop(0, '#fff3b0');
+      grd.addColorStop(1, '#f5a623');
+      ctx.fillStyle = grd;
+      ctx.shadowColor = 'rgba(245,166,35,0.6)';
+      ctx.shadowBlur = 8;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      if (atEnd && !b.settled) {
+        b.settled = true;
+        binFlash[b.bin] = 250;
+        balls.splice(i, 1);
+        activeBalls = Math.max(0, activeBalls - 1);
+        refreshLockState();
+        onBallLand(b);
+      }
+    }
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  function roundRect(c, x, y, w, h, r) {
+    c.beginPath();
+    c.moveTo(x + r, y);
+    c.arcTo(x + w, y, x + w, y + h, r);
+    c.arcTo(x + w, y + h, x, y + h, r);
+    c.arcTo(x, y + h, x, y, r);
+    c.arcTo(x, y, x + w, y, r);
+    c.closePath();
+  }
+
+  // ── Result handling ──────────────────────────────────────────────────────
+  function onBallLand(b) {
+    const mult = b.mult;
+    lastEl.textContent = mult.toFixed(2) + '×';
+    lastEl.className = 'value ' + (mult >= 1 ? 'win' : 'lose');
+    addRecent(mult);
+  }
+
+  function addRecent(mult) {
+    const chip = document.createElement('div');
+    chip.className = 'recent-chip';
+    chip.style.background = multColor(mult);
+    chip.textContent = (mult >= 100 ? Math.round(mult) : mult.toFixed(mult >= 10 ? 0 : 2)) + '×';
+    recentEl.prepend(chip);
+    while (recentEl.children.length > 14) recentEl.lastChild.remove();
+  }
+
+  // ── Rows / risk selectors ────────────────────────────────────────────────
+  function buildRowsSeg() {
+    rowsSeg.innerHTML = '';
+    for (const r of CFG.rowsOptions) {
+      const btn = document.createElement('button');
+      btn.textContent = r;
+      btn.dataset.rows = r;
+      btn.className = (r === ROWS) ? 'active' : '';
+      btn.addEventListener('click', () => {
+        if (activeBalls > 0) return;
+        ROWS = r;
+        syncBoard();
+      });
+      rowsSeg.appendChild(btn);
+    }
+  }
+
+  function syncBoard() {
+    MULTS = (CFG.tables[ROWS] && CFG.tables[ROWS][RISK]) || [];
+    layout();
+    // Active classes.
+    [...rowsSeg.children].forEach(b => b.classList.toggle('active', Number(b.dataset.rows) === ROWS));
+    [...riskSeg.children].forEach(b => b.classList.toggle('active', b.dataset.risk === RISK));
+    const maxM = MULTS.length ? Math.max(...MULTS) : 0;
+    maxpayEl.innerHTML = `Max win this board: <b>${maxM.toFixed(maxM >= 10 ? 0 : 2)}×</b>`;
+  }
+
+  riskSeg.querySelectorAll('button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (activeBalls > 0) return;
+      RISK = btn.dataset.risk;
+      syncBoard();
+    });
+  });
+
+  function refreshLockState() {
+    const lock = activeBalls > 0;
+    [...rowsSeg.children, ...riskSeg.children].forEach(b => { b.disabled = lock; });
+  }
+
+  // ── Bet quick buttons ────────────────────────────────────────────────────
+  document.querySelectorAll('.bet-quick button').forEach(b => {
+    b.addEventListener('click', () => {
+      let v = Math.max(1, Math.floor(Number(betInput.value) || 1));
+      if (b.dataset.bet === 'half')   v = Math.max(1, Math.floor(v / 2));
+      if (b.dataset.bet === 'double') v = v * 2;
+      if (b.dataset.bet === 'max')    v = Math.max(1, Math.floor(latestBalance));
+      betInput.value = v;
+    });
+  });
+
+  // ── Drop ─────────────────────────────────────────────────────────────────
+  let dropCooldown = false;
+  async function drop() {
+    if (dropCooldown) return;
+    const bet = Math.max(1, Math.floor(Number(betInput.value) || 1));
+    if (bet > latestBalance) { statusEl.textContent = 'Not enough credits for that bet.'; return; }
+
+    dropCooldown = true;
+    setTimeout(() => { dropCooldown = false; }, 130);   // throttle rapid-fire
+
+    try {
+      const res = await api('/api/games/plinko/drop', {
+        method: 'POST',
+        body: { betAmount: bet, rows: ROWS, risk: RISK },
+      });
+      // Server is authoritative — update balance + tables immediately.
+      latestBalance = res.balance;
+      const balEl = document.querySelector('.topbar .balance');
+      if (balEl) balEl.textContent = fmtCredits(res.balance);
+      if (Array.isArray(res.multipliers)) MULTS = res.multipliers;
+
+      netProfit += (res.payout - res.bet);
+      profitEl.textContent = (netProfit >= 0 ? '+' : '') + netProfit.toLocaleString() + ' cr';
+      profitEl.className = 'value ' + (netProfit >= 0 ? 'win' : 'lose');
+      statusEl.textContent = res.payout > 0
+        ? `Ball settling… ${res.multiplier.toFixed(2)}× → +${res.payout} cr`
+        : `Ball settling… ${res.multiplier.toFixed(2)}×`;
+
+      spawnBall(res.path, res.binIndex, res.multiplier);
+    } catch (e) {
+      statusEl.textContent = friendly(e.message);
+    }
+  }
+  btnDrop.addEventListener('click', drop);
+  window.addEventListener('keydown', e => {
+    if (e.target && e.target.tagName === 'INPUT') return;
+    if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); drop(); }
+  });
+
+  window.addEventListener('resize', () => { fitDpr(); layout(); });
+
+  function friendly(code) {
+    return ({
+      invalid_bet:          'Bet must be at least 1 credit.',
+      amount_too_large:     'That bet is too large.',
+      invalid_rows:         'Pick 8, 12, or 16 rows.',
+      invalid_risk:         'Pick a risk level.',
+      insufficient_balance: 'Not enough credits.',
+      drop_failed:          'Drop failed — try again.',
+    })[code] || code;
+  }
+
+  // ── Boot ─────────────────────────────────────────────────────────────────
+  try {
+    const cfg = await api('/api/games/plinko/tables');
+    CFG = { rowsOptions: cfg.rowsOptions, risks: cfg.risks, tables: cfg.tables };
+  } catch (_) {
+    statusEl.textContent = 'Could not load board config — refresh the page.';
+  }
+  if (!CFG.rowsOptions.includes(ROWS)) ROWS = CFG.rowsOptions[CFG.rowsOptions.length - 1];
+  buildRowsSeg();
+  syncBoard();
+})();
+</script>
+<script src="/js/music-player.js"></script>
+</body>
+</html>

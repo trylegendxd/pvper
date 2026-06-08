@@ -4,6 +4,7 @@ const requireAuth = require('../middleware/requireAuth');
 const roulette     = require('../games/roulette');
 const blackjack    = require('../games/blackjack');
 const mines        = require('../games/mines');
+const plinko       = require('../games/plinko');
 const ranking      = require('../games/shooterRanking');
 const achievements = require('../games/shooterAchievements');
 const { pool }     = require('../db');
@@ -267,6 +268,28 @@ router.post('/mines/cashout', requireAuth, async (req, res) => {
     res.json({ ok: true, ...result });
   } catch (e) {
     res.status(400).json({ error: e.message || 'cashout_failed' });
+  }
+});
+
+// ── PLINKO ──────────────────────────────────────────────────────────────────
+// Read the multiplier tables (for rendering the bins before the first drop).
+router.get('/plinko/tables', requireAuth, (_req, res) => {
+  res.json({
+    ok: true,
+    rowsOptions: plinko.ROWS_OPTIONS,
+    risks: plinko.RISKS,
+    tables: plinko.TABLES,
+  });
+});
+
+// Drop a ball: debits the bet, returns the server-decided path + payout.
+router.post('/plinko/drop', requireAuth, async (req, res) => {
+  try {
+    const { betAmount, rows, risk } = req.body || {};
+    const result = await plinko.drop(req.session.userId, betAmount, rows, risk);
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    res.status(400).json({ error: e.message || 'drop_failed' });
   }
 });
 
