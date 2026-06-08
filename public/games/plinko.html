@@ -246,6 +246,8 @@
   // Each: { g:[], prog, speed, mult, bin, settled, onLand }
   const balls = [];
   const binFlash = {};   // binIndex → time remaining (ms) for the glow
+  const MAX_BALLS = 10;  // most balls allowed in play (in-flight + falling)
+  let inFlight = 0;      // drop requests awaiting a server response
 
   function spawnBall(path, binIndex, mult) {
     // Cumulative right-count per level (defines x at each level).
@@ -253,7 +255,7 @@
     for (let i = 0; i < path.length; i++) g.push(g[i] + path[i]);
     balls.push({
       g, prog: 0,
-      speed: 8.0 + Math.random() * 0.6,   // levels per second
+      speed: 4.8 + Math.random() * 0.5,   // levels/sec — slower, floatier drop
       mult, bin: binIndex, settled: false,
     });
     activeBalls++;
@@ -270,8 +272,9 @@
     const gg = g0 + (g1 - g0) * f;
     const x  = cx + (gg - level / 2) * gap;
     let y    = topY + level * rowH;
-    // Little parabolic hop between pegs for bounce feel.
-    y -= Math.sin(f * Math.PI) * Math.min(rowH * 0.35, 9);
+    // Bounce arc between pegs — taller, with a flatter apex (pow < 1) so the
+    // ball floats at the top of each hop for a springier feel.
+    y -= Math.pow(Math.sin(f * Math.PI), 0.62) * Math.min(rowH * 0.6, 16);
     return { x, y };
   }
 
@@ -419,7 +422,10 @@
   });
 
   function refreshLockState() {
-    const lock = activeBalls > 0;
+    // Lock the board selectors while anything is pending OR falling, so the
+    // geometry can't change under a ball whose path was computed for the old
+    // row count.
+    const lock = (activeBalls + inFlight) > 0;
     [...rowsSeg.children, ...riskSeg.children].forEach(b => { b.disabled = lock; });
   }
 
@@ -438,12 +444,19 @@
   let dropCooldown = false;
   async function drop() {
     if (dropCooldown) return;
+    // Cap concurrent balls (those still falling + requests awaiting a result).
+    if (activeBalls + inFlight >= MAX_BALLS) {
+      statusEl.textContent = `Max ${MAX_BALLS} balls in play — let some land first.`;
+      return;
+    }
     const bet = Math.max(1, Math.floor(Number(betInput.value) || 1));
     if (bet > latestBalance) { statusEl.textContent = 'Not enough credits for that bet.'; return; }
 
     dropCooldown = true;
-    setTimeout(() => { dropCooldown = false; }, 130);   // throttle rapid-fire
+    setTimeout(() => { dropCooldown = false; }, 110);   // throttle rapid-fire
 
+    inFlight++;
+    refreshLockState();
     try {
       const res = await api('/api/games/plinko/drop', {
         method: 'POST',
@@ -465,6 +478,9 @@
       spawnBall(res.path, res.binIndex, res.multiplier);
     } catch (e) {
       statusEl.textContent = friendly(e.message);
+    } finally {
+      inFlight = Math.max(0, inFlight - 1);
+      refreshLockState();
     }
   }
   btnDrop.addEventListener('click', drop);
