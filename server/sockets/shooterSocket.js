@@ -39,11 +39,14 @@ const ECON = {
   DEFAULT_LOADOUT: ['knife', 'pistol'],         // free starting kit
   // CS:GO weapon prices (pistol/knife are the free kit).
   PRICES:   { knife: 0, pistol: 0, shotgun: 1100, rifle: 2700, sniper: 4750 },
-  // CS:GO kill rewards: rifles/pistols $300, AWP $100, shotgun $900, knife $1500.
-  KILL_REWARD: { knife: 1500, pistol: 300, shotgun: 900, rifle: 300, sniper: 100, molotov: 300, smoke: 300 },
-  ROUND_WIN_BONUS: 3250,                        // CS elimination-win reward (to the killer)
-  // CS:GO escalating loss bonus by consecutive rounds lost (capped at $3400).
-  LOSS_BONUS:      [1400, 1900, 2400, 2900, 3400],
+  // Kill rewards (kept modest): rifles/pistols $250, AWP $150, shotgun $400,
+  // knife $600. In this fast deathmatch a "round" is a single kill, so these
+  // are deliberately much smaller than CS's per-round economy.
+  KILL_REWARD: { knife: 600, pistol: 250, shotgun: 400, rifle: 250, sniper: 150, molotov: 250, smoke: 250 },
+  ROUND_WIN_BONUS: 250,                          // small win bonus on top of the kill reward
+  // Escalating loss bonus by consecutive deaths (capped) so a losing player
+  // can still slowly re-arm.
+  LOSS_BONUS:      [900, 1200, 1500, 1800, 2100],
 };
 // What the client needs to render the buy menu + HUD. Sent inside match_start.
 const ECON_PUBLIC = {

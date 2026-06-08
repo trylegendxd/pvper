@@ -4372,7 +4372,16 @@ const GameEngine = {
     }
 
     // === Player inputs only when pointer is locked ===
-    if (!this.pointerLocked || this._tabHidden) return;
+    if (!this.pointerLocked || this._tabHidden) {
+      // Keep the camera planted at the player so the view is correct while the
+      // pointer is released (buy menu / pause / pre-lock), instead of stranding
+      // it at a stale position — fixes the "spawned off the map" look.
+      this.camera.position.set(this.pos.x, this._currentEyeH || CFG.EYE_HEIGHT, this.pos.z);
+      this.camera.rotation.order = 'YXZ';
+      this.camera.rotation.y = this.yaw;
+      this.camera.rotation.x = this.pitch;
+      return;
+    }
     if (this.isDead) return;
 
     // Full-auto firing (only for auto-fire weapons while holding mouse button)
@@ -4655,6 +4664,15 @@ const GameEngine = {
     this.sprintFuel   = CFG.SPRINT_MAX_MS;
     this.crouching    = false;
     this._currentEyeH = CFG.EYE_HEIGHT;
+    // Reset vertical/floor state so a leftover floorY from the previous match
+    // can't float the camera up until the player moves.
+    this._floorY = 0; this._lastFloorY = 0;
+    this._yPos = 0; this._yVel = 0; this._grounded = true;
+    // Plant the camera at spawn NOW so the first frames (before pointer lock /
+    // during the buy freeze) show the correct grounded view, not the old one.
+    this.camera.position.set(spawnPos.x, CFG.EYE_HEIGHT, spawnPos.z);
+    this.camera.rotation.order = 'YXZ';
+    this.camera.rotation.set(0, this.yaw, 0);
     this._spread     = 0;
     this._keys       = {};
     this._gunRecoil  = 0;
@@ -4893,7 +4911,12 @@ const GameEngine = {
   setSpawn(pos) {
     this.pos.set(pos.x, 0, pos.z);
     this._yPos = 0; this._yVel = 0; this._grounded = true;
-    this.camera.position.set(pos.x, CFG.EYE_HEIGHT, pos.z);
+    // Recompute the floor at the new spawn so the eye height is correct
+    // immediately (spawns are on open ground → floorY 0).
+    this._floorY = 0; this._lastFloorY = 0;
+    try { this._refreshFloorY(); } catch (_) {}
+    this._currentEyeH = (this.crouching ? CFG.CROUCH_HEIGHT : CFG.EYE_HEIGHT) + (this._floorY || 0);
+    this.camera.position.set(pos.x, this._currentEyeH, pos.z);
   },
 
   setSensitivity(s) { this._sens = Math.max(0.1, +s || 1); },
