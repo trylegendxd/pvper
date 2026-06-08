@@ -69,6 +69,20 @@
 .risk-medium.active { background:#d98a1f; border-color:#d98a1f; }
 .risk-high.active   { background:#d23b3b; border-color:#d23b3b; }
 
+.balls-row { display:flex; align-items:center; gap:10px; }
+.balls-row input[type=range] {
+  flex:1; -webkit-appearance:none; appearance:none; height:6px;
+  background:var(--bg3); border-radius:3px; outline:none;
+}
+.balls-row input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance:none; width:18px; height:18px; border-radius:50%;
+  background:var(--accent); cursor:pointer; border:2px solid #fff;
+}
+.balls-row input[type=range]::-moz-range-thumb {
+  width:18px; height:18px; border-radius:50%; background:var(--accent); cursor:pointer; border:2px solid #fff;
+}
+.balls-val { font-size:20px; font-weight:700; color:var(--accent); min-width:30px; text-align:center; font-family:monospace; }
+
 .btn-drop {
   background: var(--accent); color:#fff; width:100%; font-size:17px; letter-spacing:2px;
   padding:14px 0;
@@ -150,6 +164,14 @@
         </div>
       </div>
 
+      <div>
+        <div class="ctrl-label">Balls per drop — <span id="balls-label">1</span></div>
+        <div class="balls-row">
+          <input type="range" id="balls-slider" min="1" max="10" value="1">
+          <div class="balls-val" id="balls-val">1</div>
+        </div>
+      </div>
+
       <button class="btn btn-drop" id="btn-drop">DROP BALL</button>
 
       <div class="stat-row">
@@ -193,10 +215,14 @@
   let latestBalance = Number(user.balance) || 0;
   let netProfit  = 0;
   let activeBalls = 0;
+  let ballsPerClick = 1;             // 1–10 balls dropped per click
 
   const cv     = document.getElementById('plinko-canvas');
   const ctx    = cv.getContext('2d');
   const betInput = document.getElementById('bet-input');
+  const ballsSlider = document.getElementById('balls-slider');
+  const ballsLabel  = document.getElementById('balls-label');
+  const ballsVal    = document.getElementById('balls-val');
   const rowsSeg  = document.getElementById('rows-seg');
   const riskSeg  = document.getElementById('risk-seg');
   const btnDrop  = document.getElementById('btn-drop');
@@ -246,8 +272,7 @@
   // Each: { g:[], prog, speed, mult, bin, settled, onLand }
   const balls = [];
   const binFlash = {};   // binIndex → time remaining (ms) for the glow
-  const MAX_BALLS = 10;  // most balls allowed in play (in-flight + falling)
-  let inFlight = 0;      // drop requests awaiting a server response
+  let inFlight = 0;      // drop requests awaiting a server response (no cap)
 
   function spawnBall(path, binIndex, mult) {
     // Cumulative right-count per level (defines x at each level).
@@ -440,20 +465,21 @@
     });
   });
 
-  // ── Drop ─────────────────────────────────────────────────────────────────
-  let dropCooldown = false;
-  async function drop() {
-    if (dropCooldown) return;
-    // Cap concurrent balls (those still falling + requests awaiting a result).
-    if (activeBalls + inFlight >= MAX_BALLS) {
-      statusEl.textContent = `Max ${MAX_BALLS} balls in play — let some land first.`;
-      return;
-    }
-    const bet = Math.max(1, Math.floor(Number(betInput.value) || 1));
-    if (bet > latestBalance) { statusEl.textContent = 'Not enough credits for that bet.'; return; }
+  // ── Balls-per-drop selector ───────────────────────────────────────────────
+  function syncBalls() {
+    ballsPerClick = Math.max(1, Math.min(10, Number(ballsSlider.value) || 1));
+    ballsLabel.textContent = ballsPerClick;
+    ballsVal.textContent   = ballsPerClick;
+    btnDrop.textContent    = ballsPerClick === 1 ? 'DROP BALL' : `DROP ${ballsPerClick} BALLS`;
+  }
+  ballsSlider.addEventListener('input', syncBalls);
+  syncBalls();
 
-    dropCooldown = true;
-    setTimeout(() => { dropCooldown = false; }, 110);   // throttle rapid-fire
+  // ── Drop ─────────────────────────────────────────────────────────────────
+  // One ball = one independent server bet. No cap on how many can be in the air.
+  async function dropOne() {
+    const bet = Math.max(1, Math.floor(Number(betInput.value) || 1));
+    if (bet > latestBalance) { statusEl.textContent = 'Not enough credits for that bet.'; return false; }
 
     inFlight++;
     refreshLockState();
@@ -468,20 +494,36 @@
       if (balEl) balEl.textContent = fmtCredits(res.balance);
       if (Array.isArray(res.multipliers)) MULTS = res.multipliers;
 
-      netProfit += (res.payout - res.bet);
+      netProfit = Math.round((netProfit + (res.payout - res.bet)) * 100) / 100;
       profitEl.textContent = (netProfit >= 0 ? '+' : '') + netProfit.toLocaleString() + ' cr';
       profitEl.className = 'value ' + (netProfit >= 0 ? 'win' : 'lose');
       statusEl.textContent = res.payout > 0
-        ? `Ball settling… ${res.multiplier.toFixed(2)}× → +${res.payout} cr`
-        : `Ball settling… ${res.multiplier.toFixed(2)}×`;
+        ? `${res.multiplier.toFixed(2)}× → +${res.payout} cr`
+        : `${res.multiplier.toFixed(2)}×`;
 
       spawnBall(res.path, res.binIndex, res.multiplier);
+      return true;
     } catch (e) {
       statusEl.textContent = friendly(e.message);
+      return false;
     } finally {
       inFlight = Math.max(0, inFlight - 1);
       refreshLockState();
     }
+  }
+
+  // A single click drops `ballsPerClick` balls, staggered so they cascade.
+  let dropCooldown = false;
+  function drop() {
+    if (dropCooldown) return;
+    dropCooldown = true;
+    setTimeout(() => { dropCooldown = false; }, 80);
+
+    const n   = Math.max(1, Math.min(10, ballsPerClick));
+    const bet = Math.max(1, Math.floor(Number(betInput.value) || 1));
+    if (bet > latestBalance) { statusEl.textContent = 'Not enough credits for that bet.'; return; }
+
+    for (let i = 0; i < n; i++) setTimeout(dropOne, i * 70);
   }
   btnDrop.addEventListener('click', drop);
   window.addEventListener('keydown', e => {
