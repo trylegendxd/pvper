@@ -68,11 +68,25 @@ body{font-family:'Rajdhani',system-ui,sans-serif;}
 .arena{position:relative;width:100%;max-width:560px;aspect-ratio:1/1;margin:0 auto;}
 .rr-table{position:absolute;inset:6% 16%;border-radius:50%;background:radial-gradient(circle at 50% 42%,#1c3848,#102532 70%,#0b1a24 100%);box-shadow:inset 0 0 60px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.04);}
 .rr-table .rim{position:absolute;inset:0;border-radius:50%;border:6px solid #102733;box-shadow:inset 0 0 0 2px rgba(255,255,255,.05);}
-.rr-table .felt-card{position:absolute;left:50%;top:34%;transform:translate(-50%,-50%);text-align:center;color:var(--rr-dim);font-size:11px;letter-spacing:2px;text-transform:uppercase;}
-.rr-beam{position:absolute;left:50%;top:50%;height:3px;width:26%;transform-origin:left center;background:linear-gradient(90deg,rgba(255,77,94,.95),rgba(255,77,94,0));filter:drop-shadow(0 0 8px rgba(255,77,94,.8));opacity:0;transition:opacity .2s;pointer-events:none;z-index:6;}
-.rr-beam.show{opacity:1;}
-.rr-revolver>svg{display:block;width:100%;height:auto;}
-.rr-revolver{position:absolute;left:50%;top:50%;width:34%;transform:translate(-50%,-50%) rotate(0deg);transform-origin:center center;z-index:5;filter:drop-shadow(0 8px 14px rgba(0,0,0,.6));will-change:transform;}
+/* Centre of the felt shows the current table card. */
+.felt-center{position:absolute;left:50%;top:42%;transform:translate(-50%,-50%);text-align:center;z-index:3;pointer-events:none;}
+.felt-big{width:62px;height:86px;margin:0 auto;border-radius:9px;background:#f5f7fb;color:#13202b;display:grid;place-items:center;font-family:Georgia,serif;font-weight:700;font-size:36px;box-shadow:0 6px 16px rgba(0,0,0,.55);border:2px solid var(--rr-gold);}
+.felt-big.A{color:#1f7fae;} .felt-big.K{color:#c0392b;} .felt-big.Q{color:#8e44ad;} .felt-big.none{color:#9fb1c0;border-color:var(--rr-line);background:#16313f;font-size:30px;}
+.felt-lab{margin-top:7px;color:var(--rr-dim);font-size:10px;letter-spacing:3px;text-transform:uppercase;}
+
+/* Each player's own revolver, resting on the table pointed at them. */
+.pgun{position:absolute;width:88px;z-index:6;pointer-events:none;}
+.pgun .gun-inner{position:relative;display:block;will-change:transform;}
+.pgun .gun-inner svg{display:block;width:100%;height:auto;filter:drop-shadow(0 4px 7px rgba(0,0,0,.55));}
+.pgun.aimed .gun-inner svg{filter:drop-shadow(0 0 10px rgba(255,77,94,.85)) drop-shadow(0 4px 7px rgba(0,0,0,.55));}
+.pgun .muzzle{position:absolute;left:97%;top:40%;width:30px;height:30px;border-radius:50%;background:radial-gradient(circle,#fff,rgba(255,206,74,.9) 45%,transparent 72%);transform:translate(-50%,-50%) scale(0);opacity:0;}
+.pgun.fire .gun-inner{animation:gunRecoil .5s cubic-bezier(.2,.8,.2,1);}
+.pgun.fire .muzzle{animation:muzzle .26s ease-out;}
+@keyframes gunRecoil{0%{transform:translateX(0) rotate(0);}18%{transform:translate(13%) rotate(-9deg);}100%{transform:translateX(0) rotate(0);}}
+@keyframes muzzle{0%{transform:translate(-50%,-50%) scale(.25);opacity:1;}100%{transform:translate(-50%,-50%) scale(1.9);opacity:0;}}
+.pgun.click .gun-inner{animation:gunClick .3s ease;}
+@keyframes gunClick{0%,100%{transform:translateX(0);}40%{transform:translateX(4%) rotate(-3deg);}}
+
 .rr-flash{position:absolute;left:50%;top:50%;width:0;height:0;border-radius:50%;background:radial-gradient(circle,#fff,rgba(255,206,74,.8) 40%,transparent 70%);transform:translate(-50%,-50%);z-index:8;opacity:0;pointer-events:none;}
 .rr-flash.bang{animation:bang .45s ease-out;} @keyframes bang{0%{width:0;height:0;opacity:1;}100%{width:60%;height:60%;opacity:0;}}
 
@@ -196,25 +210,11 @@ body{font-family:'Rajdhani',system-ui,sans-serif;}
 
       <div class="arena-wrap">
         <div class="arena" id="arena">
-          <div class="rr-table"><div class="rim"></div><div class="felt-card" id="feltCard"></div></div>
-          <div class="rr-beam" id="beam"></div>
-          <div class="rr-flash" id="flash"></div>
-          <div class="rr-revolver" id="revolver">
-          <svg viewBox="0 0 360 170" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-            <rect x="110" y="104" width="50" height="18" fill="#20242b"/><rect x="104" y="120" width="50" height="18" fill="#20242b"/>
-            <rect x="98" y="136" width="48" height="18" fill="#20242b"/><rect x="94" y="152" width="44" height="16" fill="#20242b"/>
-            <rect x="114" y="108" width="42" height="14" fill="#7a4a28"/><rect x="108" y="124" width="42" height="14" fill="#7a4a28"/>
-            <rect x="102" y="140" width="40" height="14" fill="#7a4a28"/><rect x="98" y="156" width="36" height="10" fill="#7a4a28"/>
-            <rect x="140" y="46" width="66" height="78" fill="#20242b"/><rect x="144" y="50" width="58" height="70" fill="#9aa6b6"/><rect x="196" y="50" width="6" height="70" fill="#5b6470"/>
-            <rect x="190" y="54" width="150" height="40" fill="#20242b"/><rect x="194" y="58" width="142" height="32" fill="#9aa6b6"/><rect x="194" y="58" width="138" height="7" fill="#d7dde6"/><rect x="194" y="84" width="142" height="6" fill="#5b6470"/>
-            <rect x="326" y="62" width="12" height="24" fill="#5b6470"/><rect x="332" y="66" width="6" height="16" fill="#20242b"/>
-            <rect x="150" y="56" width="50" height="56" fill="#20242b"/><rect x="153" y="59" width="44" height="50" fill="#6b7682"/><rect x="153" y="59" width="44" height="9" fill="#aab4c1"/>
-            <rect x="166" y="78" width="14" height="14" fill="#20242b"/><rect x="169" y="81" width="8" height="8" fill="#aab4c1"/>
-            <rect x="156" y="64" width="8" height="8" fill="#20242b"/><rect x="183" y="64" width="8" height="8" fill="#20242b"/><rect x="150" y="80" width="8" height="8" fill="#20242b"/><rect x="189" y="80" width="8" height="8" fill="#20242b"/><rect x="156" y="98" width="8" height="8" fill="#20242b"/><rect x="183" y="98" width="8" height="8" fill="#20242b"/>
-            <rect x="124" y="40" width="22" height="18" fill="#20242b"/><rect x="127" y="43" width="16" height="12" fill="#5b6470"/>
-            <rect x="144" y="120" width="52" height="10" fill="#20242b"/><rect x="148" y="122" width="44" height="6" fill="#5b6470"/><rect x="162" y="124" width="8" height="18" fill="#20242b"/><rect x="164" y="126" width="4" height="14" fill="#9aa6b6"/>
-          </svg>
+          <div class="rr-table"><div class="rim"></div>
+            <div class="felt-center"><div class="felt-big none" id="feltBig">?</div><div class="felt-lab">Table Card</div></div>
           </div>
+          <div class="rr-flash" id="flash"></div>
+          <!-- Each player's seat card AND their own revolver are injected by JS. -->
         </div>
       </div>
 
@@ -270,7 +270,7 @@ const BUYINS={2:[{name:'Quick Bluff',fee:50},{name:'Cold Stare',fee:250},{name:'
               4:[{name:'Full House',fee:50},{name:'Midnight Table',fee:25},{name:'Death Circle',fee:100}]};
 const CHAMBERS=6;
 const C={ size:4, bet:50, socket:null, inMatch:false, searching:false, yourSeat:null,
-  st:null, events:[], selected:new Set(), pendingAct:false, lastGunSeat:null };
+  st:null, events:[], selected:new Set(), pendingAct:false };
 
 function fmtCr(n){ return Number(n||0).toLocaleString()+' cr'; }
 function avFor(seat,name){ const [a,b]=AV[seat%AV.length]; return {bg:`linear-gradient(135deg,${a},${b})`,ch:(name||'?')[0].toUpperCase()}; }
@@ -300,10 +300,9 @@ function renderHUD(){
   $('#roundV').textContent = st?`${st.round}`:'—';
   $('#potV').textContent = fmtCr(st?st.pot:C.bet*C.size);
   $('#perV').textContent = fmtCr(st?st.bet:C.bet)+' per player';
-  const tc=$('#tableCard');
-  if(st&&st.tableCard){ tc.textContent=st.tableCard; tc.className='tablecard '+st.tableCard; }
-  else { tc.textContent='?'; tc.className='tablecard'; }
-  $('#feltCard').textContent = st&&st.tableCard?`Table card: ${cardName(st.tableCard)}`:'';
+  const tc=$('#tableCard'), fb=$('#feltBig');
+  if(st&&st.tableCard){ tc.textContent=st.tableCard; tc.className='tablecard '+st.tableCard; fb.textContent=st.tableCard; fb.className='felt-big '+st.tableCard; }
+  else { tc.textContent='?'; tc.className='tablecard'; fb.textContent='?'; fb.className='felt-big none'; }
 }
 function renderGameInfo(){
   const st=C.st, size=st?st.size:C.size, fee=st?st.bet:C.bet, pot=st?st.pot:fee*size;
@@ -323,6 +322,7 @@ function placeSeat(seat,size,html){
 }
 function renderSeatsIdle(){
   $$('[data-seatwrap]',$('#arena')).forEach(e=>e.remove());
+  $$('[data-gun]',$('#arena')).forEach(e=>e.remove());     // clear table revolvers
   const arena=$('#arena');
   for(let s=0;s<C.size;s++){
     const me=s===0; const name=me?'You':'Waiting…'; const av=avFor(s,me?'You':'W');
@@ -379,6 +379,7 @@ function renderHand(){
         const i=+el.dataset.idx;
         if(C.selected.has(i)) C.selected.delete(i);
         else { if(C.selected.size>=3){ toast('Up to 3 cards'); return; } C.selected.add(i); }
+        try{ Snd.flip(); }catch(_){}
         renderHand(); renderActions();
       }));
     }
@@ -412,22 +413,65 @@ function renderReveal(){
     <div class="rv-cards">${r.cards.map(revealCardHTML).join('')}</div>${verdict}`;
   host.classList.add('show');
 }
-let revAngle=0;
-function pointGun(seat,ms=2200){ if(seat==null||!C.st)return; const ang=SLOTS[C.st.size][seat];
-  const rev=$('#revolver'); const cur=((revAngle%360)+360)%360; let d=((ang-cur)+360)%360; revAngle+=360*2+d;
-  rev.style.transition='none'; void rev.offsetWidth; rev.style.transition=`transform ${ms}ms cubic-bezier(.16,.84,.24,1)`;
-  rev.style.transform=`translate(-50%,-50%) rotate(${revAngle}deg)`; }
-function showBeam(seat){ if(!C.st)return; const b=$('#beam'); b.style.transform=`rotate(${SLOTS[C.st.size][seat]}deg)`; b.classList.add('show'); }
-function hideBeam(){ $('#beam').classList.remove('show'); }
+/* Every player gets their OWN revolver on the table, barrel pointed at them. */
+const GUN_SVG=`<div class="gun-inner"><svg viewBox="0 0 360 170" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <rect x="110" y="104" width="50" height="18" fill="#20242b"/><rect x="104" y="120" width="50" height="18" fill="#20242b"/>
+  <rect x="98" y="136" width="48" height="18" fill="#20242b"/><rect x="94" y="152" width="44" height="16" fill="#20242b"/>
+  <rect x="114" y="108" width="42" height="14" fill="#7a4a28"/><rect x="108" y="124" width="42" height="14" fill="#7a4a28"/>
+  <rect x="102" y="140" width="40" height="14" fill="#7a4a28"/><rect x="98" y="156" width="36" height="10" fill="#7a4a28"/>
+  <rect x="140" y="46" width="66" height="78" fill="#20242b"/><rect x="144" y="50" width="58" height="70" fill="#9aa6b6"/><rect x="196" y="50" width="6" height="70" fill="#5b6470"/>
+  <rect x="190" y="54" width="150" height="40" fill="#20242b"/><rect x="194" y="58" width="142" height="32" fill="#9aa6b6"/><rect x="194" y="58" width="138" height="7" fill="#d7dde6"/><rect x="194" y="84" width="142" height="6" fill="#5b6470"/>
+  <rect x="326" y="62" width="12" height="24" fill="#5b6470"/><rect x="332" y="66" width="6" height="16" fill="#20242b"/>
+  <rect x="150" y="56" width="50" height="56" fill="#20242b"/><rect x="153" y="59" width="44" height="50" fill="#6b7682"/><rect x="153" y="59" width="44" height="9" fill="#aab4c1"/>
+  <rect x="166" y="78" width="14" height="14" fill="#20242b"/><rect x="169" y="81" width="8" height="8" fill="#aab4c1"/>
+  <rect x="156" y="64" width="8" height="8" fill="#20242b"/><rect x="183" y="64" width="8" height="8" fill="#20242b"/><rect x="150" y="80" width="8" height="8" fill="#20242b"/><rect x="189" y="80" width="8" height="8" fill="#20242b"/><rect x="156" y="98" width="8" height="8" fill="#20242b"/><rect x="183" y="98" width="8" height="8" fill="#20242b"/>
+  <rect x="124" y="40" width="22" height="18" fill="#20242b"/><rect x="127" y="43" width="16" height="12" fill="#5b6470"/>
+  <rect x="144" y="120" width="52" height="10" fill="#20242b"/><rect x="148" y="122" width="44" height="6" fill="#5b6470"/><rect x="162" y="124" width="8" height="18" fill="#20242b"/><rect x="164" y="126" width="4" height="14" fill="#9aa6b6"/>
+</svg><div class="muzzle"></div></div>`;
+function renderGuns(){
+  $$('[data-gun]',$('#arena')).forEach(e=>e.remove());
+  const st=C.st; if(!st)return;
+  const arena=$('#arena'), rad=0.385;
+  st.players.forEach(p=>{
+    const isShot=st.shot&&st.shot.seat===p.seat;
+    if(!p.alive&&!isShot) return;                  // dead players' guns leave the table
+    const ang=SLOTS[st.size][p.seat];
+    const x=50+rad*50*Math.cos(ang*Math.PI/180), y=50+rad*50*Math.sin(ang*Math.PI/180);
+    const aimed = st.shot? isShot : (p.seat===st.active&&p.alive);
+    const el=document.createElement('div');
+    el.className='pgun'+(aimed?' aimed':''); el.dataset.gun=p.seat;
+    // SVG barrel points right (0°); rotate so it aims outward at its owner.
+    el.style.cssText=`left:${x}%;top:${y}%;transform:translate(-50%,-50%) rotate(${ang}deg);`;
+    el.innerHTML=GUN_SVG; arena.appendChild(el);
+  });
+}
+function fireGun(seat,fired){ const el=$(`[data-gun="${seat}"]`,$('#arena')); if(!el)return;
+  el.classList.remove('fire','click'); void el.offsetWidth; el.classList.add(fired?'fire':'click'); }
 function bang(){ const f=$('#flash'); f.classList.remove('bang'); void f.offsetWidth; f.classList.add('bang'); }
+
+/* ── Sounds — synthesized via Web Audio, plus one gunshot sample ─────────── */
+let _ac=null; function audioCtx(){ try{ if(!_ac)_ac=new (window.AudioContext||window.webkitAudioContext)(); if(_ac.state==='suspended')_ac.resume(); }catch(_){} return _ac; }
+const Snd={
+  tone(freq,dur,gain=.16,type='sine',slideTo){ const ac=audioCtx(); if(!ac)return; const t=ac.currentTime;
+    const o=ac.createOscillator(),g=ac.createGain(); o.type=type; o.frequency.setValueAtTime(freq,t);
+    if(slideTo) o.frequency.exponentialRampToValueAtTime(Math.max(20,slideTo),t+dur);
+    g.gain.setValueAtTime(.0001,t); g.gain.exponentialRampToValueAtTime(gain,t+.012); g.gain.exponentialRampToValueAtTime(.0001,t+dur);
+    o.connect(g).connect(ac.destination); o.start(t); o.stop(t+dur+.03); },
+  noise(dur,hp,gain=.3){ const ac=audioCtx(); if(!ac)return; const n=Math.max(1,Math.floor(ac.sampleRate*dur));
+    const b=ac.createBuffer(1,n,ac.sampleRate),d=b.getChannelData(0); for(let i=0;i<n;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/n,3);
+    const s=ac.createBufferSource(); s.buffer=b; const f=ac.createBiquadFilter(); f.type='highpass'; f.frequency.value=hp;
+    const g=ac.createGain(); g.gain.value=gain; s.connect(f).connect(g).connect(ac.destination); s.start(); },
+  deal(){ for(let i=0;i<4;i++) setTimeout(()=>this.noise(.05,1100,.16),i*70); },
+  play(){ this.noise(.06,600,.22); this.tone(170,.09,.1,'square'); },
+  flip(){ this.noise(.07,2000,.16); },
+  liar(){ this.tone(330,.5,.15,'sawtooth',90); setTimeout(()=>this.tone(110,.4,.13,'square'),120); },
+  cock(){ this.noise(.04,2400,.42); setTimeout(()=>this.noise(.04,2400,.42),110); },   // double mechanical click
+  click(){ this.noise(.05,1700,.5); },
+  win(){ [523,659,784,1047].forEach((f,i)=>setTimeout(()=>this.tone(f,.22,.16,'triangle'),i*120)); },
+  lose(){ this.tone(300,.5,.16,'sawtooth',110); },
+};
 let _shotSfx=null;
-function playShot(){ try{ if(!_shotSfx){ _shotSfx=new Audio('/audio/gunshot_rifle.mp3'); _shotSfx.preload='auto'; _shotSfx.volume=0.6; } _shotSfx.pause(); _shotSfx.currentTime=0; _shotSfx.play().catch(()=>{}); }catch(_){} }
-let _ac=null; function audioCtx(){ try{ if(!_ac) _ac=new (window.AudioContext||window.webkitAudioContext)(); }catch(_){} return _ac; }
-function playClick(){ const ac=audioCtx(); if(!ac)return; try{ if(ac.state==='suspended')ac.resume();
-  const dur=0.06,n=Math.floor(ac.sampleRate*dur); const buf=ac.createBuffer(1,n,ac.sampleRate),d=buf.getChannelData(0);
-  for(let i=0;i<n;i++){ d[i]=(Math.random()*2-1)*Math.pow(1-i/n,4); }
-  const src=ac.createBufferSource(); src.buffer=buf; const f=ac.createBiquadFilter(); f.type='highpass'; f.frequency.value=1700;
-  const g=ac.createGain(); g.gain.value=0.55; src.connect(f).connect(g).connect(ac.destination); src.start(); }catch(_){} }
+function playShot(){ try{ if(!_shotSfx){ _shotSfx=new Audio('/audio/gunshot_rifle.mp3'); _shotSfx.preload='auto'; _shotSfx.volume=0.6; } _shotSfx.pause(); _shotSfx.currentTime=0; _shotSfx.play().catch(()=>{}); }catch(_){} try{ Snd.tone(70,.35,.32,'sine',38); }catch(_){} }
 function addEvent(ev){ if(!ev)return; const t=new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});
   C.events.unshift({...ev,t}); if(C.events.length>60)C.events.pop();
   $('#events').innerHTML=C.events.map(e=>`<div class="ev ${e.kind}"><span class="dot"></span><span class="txt">${e.text}</span><span class="time">${e.t}</span></div>`).join(''); }
@@ -438,15 +482,20 @@ function applyState(st){
   C.st=st; C.yourSeat=st.yourSeat; C.pendingAct=false;
   if(st.phase==='play') C.selected.clear();        // new turn/round → clear selection
   if(st.event) addEvent(st.event);
-  renderHUD(); renderGameInfo(); renderSeats(); renderHand(); renderActions(); renderReveal();
+  // Event-driven sounds.
+  if(st.event){ const k=st.event.kind;
+    if(k==='deal') Snd.deal();
+    else if(k==='play') Snd.play();
+    else if(k==='lie'||k==='truth'){ Snd.flip(); setTimeout(()=>Snd.liar(),140); }
+  }
+  renderHUD(); renderGameInfo(); renderSeats(); renderGuns(); renderHand(); renderActions(); renderReveal();
   if(st.shot){
-    pointGun(st.shot.seat,900); showBeam(st.shot.seat);
-    if(st.shot.fired){ setTimeout(()=>{ bang(); playShot(); },500); }
-    else setTimeout(playClick,520);
-    setTimeout(hideBeam,1400);
-  } else {
-    hideBeam();
-    if(st.active!=null && st.active!==C.lastGunSeat){ pointGun(st.active); C.lastGunSeat=st.active; }
+    Snd.cock();                                    // cock the cylinder…
+    setTimeout(()=>{                               // …then pull the trigger
+      fireGun(st.shot.seat, st.shot.fired);
+      if(st.shot.fired){ bang(); playShot(); }
+      else Snd.click();
+    }, 540);
   }
   setStatus(st);
 }
@@ -485,7 +534,7 @@ function connect(){
   s.on('lb_error',d=>{ toast(friendly(d.error)); C.searching=false; setSearchUI(false); });
   s.on('lb_match_start',d=>{
     C.inMatch=true; C.searching=false; setSearchUI(false);
-    C.yourSeat=d.yourSeat; C.selected.clear(); revAngle=0; C.lastGunSeat=null;
+    C.yourSeat=d.yourSeat; C.selected.clear();
     try{ window.MenuMusic && window.MenuMusic.pause(); }catch(_){}
     $('#chat').innerHTML='<div class="empty">Say hi to your table…</div>'; $('#reveal').classList.remove('show');
     addEvent({text:`Match found — you are seat ${d.yourSeat+1}. Pot ${fmtCr(d.pot)}.`,kind:'deal'});
@@ -495,8 +544,9 @@ function connect(){
   s.on('lb_state',applyState);
   s.on('lb_chat',addChat);
   s.on('lb_match_end',d=>{
-    C.inMatch=false; hideBeam(); $('#reveal').classList.remove('show'); Voice.stop();
+    C.inMatch=false; $('#reveal').classList.remove('show'); Voice.stop();
     try{ window.MenuMusic && window.MenuMusic.resume(); }catch(_){}
+    try{ d.youWon?Snd.win():Snd.lose(); }catch(_){}
     if(typeof d.newBalance==='number'){ const tb=document.querySelector('.topbar .balance'); if(tb&&window.fmtCredits)tb.textContent=fmtCredits(d.newBalance); }
     if(d.youWon){ addEvent({text:`🏆 You win the pot ${fmtCr(d.pot)}!`,kind:'win'}); $('#statusLine').innerHTML=`<b>You win ${fmtCr(d.pot)}!</b> 🏆`; toast(`You win ${fmtCr(d.pot)}!`); }
     else if(d.winnerName){ addEvent({text:`🏆 ${d.winnerName} wins the pot.`,kind:'win'}); $('#statusLine').innerHTML=`${escapeHtml(d.winnerName)} wins. Try again?`; }
