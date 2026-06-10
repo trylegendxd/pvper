@@ -38,8 +38,11 @@ async function adjustBalance(userId, amount, reason, opts = {}) {
 
     const current = round2(wrows[0].balance);
     const delta   = round2(amount);
+    // Never let a non-finite amount (NaN/Infinity from a bad caller) reach the
+    // balance — that could corrupt it or bypass the negative check below.
+    if (!Number.isFinite(delta)) throw new Error('invalid_amount');
     const next    = round2(current + delta);
-    if (next < 0) throw new Error('insufficient_balance');
+    if (!Number.isFinite(next) || next < 0) throw new Error('insufficient_balance');
 
     await client.query(
       'UPDATE wallets SET balance = $1, updated_at = NOW() WHERE user_id = $2',

@@ -133,7 +133,9 @@ async function updateProfile(userId, updates = {}) {
     if (updates.display_name === null || updates.display_name === '') {
       push('display_name', null);
     } else {
-      const dn = String(updates.display_name).trim();
+      // Strip angle brackets so the value can never inject markup, even if a
+      // renderer somewhere forgets to escape it (defense-in-depth XSS guard).
+      const dn = String(updates.display_name).replace(/[<>]/g, '').trim();
       if (dn.length < 1 || dn.length > 32) {
         const e = new Error('invalid_display_name'); e.status = 400; throw e;
       }
@@ -144,7 +146,7 @@ async function updateProfile(userId, updates = {}) {
     if (updates.bio === null || updates.bio === '') {
       push('bio', null);
     } else {
-      const b = String(updates.bio);
+      const b = String(updates.bio).replace(/[<>]/g, '');
       if (b.length > 280) {
         const e = new Error('invalid_bio'); e.status = 400; throw e;
       }

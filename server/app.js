@@ -24,9 +24,54 @@ const app = express();
 app.set('trust proxy', 1);
 
 app.use(helmet({
-  contentSecurityPolicy: false,        // Three.js CDN + inline shooter script
+  // The app relies on inline scripts/styles + several CDNs, so a strict
+  // script-src CSP isn't practical to retrofit safely. We still set the
+  // directives that add protection WITHOUT restricting where scripts/styles
+  // load from: no framing (clickjacking), no <object>/<embed> injection,
+  // and a locked <base>/form target. (useDefaults:false → no default-src,
+  // so scripts/styles/connect stay unrestricted and nothing breaks.)
+  contentSecurityPolicy: {
+    useDefaults: false,
+    directives: {
+      // No default-src → scripts/styles/connect stay unrestricted (CDNs,
+      // inline code and sockets keep working); we only add the safe guards.
+      defaultSrc:        helmet.contentSecurityPolicy.dangerouslyDisableDefaultSrc,
+      'frame-ancestors': ["'none'"],
+      'object-src':      ["'none'"],
+      'base-uri':        ["'self'"],
+      'form-action':     ["'self'"],
+    },
+  },
   crossOriginEmbedderPolicy: false,
+  frameguard: { action: 'deny' },       // X-Frame-Options: DENY (older browsers)
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
 }));
+
+// ── CSRF defense-in-depth: same-origin guard for state-changing API calls ───
+// Cookies are SameSite=lax (already blocks the cookie on cross-site POST), but
+// we also reject any state-changing /api request whose Origin/Referer is a
+// DIFFERENT host. A genuine cross-site CSRF attempt always carries a foreign
+// Origin, so this stops it; same-origin XHR/fetch always sends a matching
+// Origin, and the rare no-Origin case (non-browser clients) is allowed.
+function sameOriginGuard(req, res, next) {
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
+  const host = req.headers.host;
+  const allowedOrigin = process.env.CORS_ORIGIN || null;
+  const origin = req.get('origin');
+  const hostOf = (u) => { try { return new URL(u).host; } catch (_) { return null; } };
+  if (origin) {
+    if (host && hostOf(origin) === host) return next();
+    if (allowedOrigin && origin === allowedOrigin) return next();
+    return res.status(403).json({ error: 'bad_origin' });
+  }
+  const ref = req.get('referer');
+  if (ref) {
+    if (host && hostOf(ref) === host) return next();
+    if (allowedOrigin && hostOf(ref) === hostOf(allowedOrigin)) return next();
+    return res.status(403).json({ error: 'bad_origin' });
+  }
+  return next();   // no Origin/Referer (non-browser client) — allow
+}
 
 if (process.env.CORS_ORIGIN) {
   app.use(cors({ origin: process.env.CORS_ORIGIN, credentials: true }));
@@ -91,7 +136,8 @@ const cryptoLimiter = rateLimit({
   message: { error: 'rate_limited' },
 });
 
-// API routes
+// API routes — guarded against cross-origin state-changing requests.
+app.use('/api', sameOriginGuard);
 app.use('/api/auth',         authRoutes);
 app.use('/api/wallet',       walletRoutes);
 app.use('/api/games',        gamesLimiter, gameRoutes);

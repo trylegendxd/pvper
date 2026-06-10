@@ -13,11 +13,24 @@ const authLimiter = rateLimit({
   message: { error: 'rate_limited' },
 });
 
+// Regenerate the session ID before associating it with the authenticated
+// user — defeats session fixation (an attacker who planted a session cookie
+// can't reuse it once the victim logs in). Promisified for async/await.
+function establishSession(req, userId) {
+  return new Promise((resolve, reject) => {
+    req.session.regenerate((err) => {
+      if (err) return reject(err);
+      req.session.userId = userId;
+      req.session.save((err2) => err2 ? reject(err2) : resolve());
+    });
+  });
+}
+
 router.post('/register', authLimiter, async (req, res) => {
   try {
     const { username, password } = req.body || {};
     const user = await auth.register(username, password);
-    req.session.userId = user.id;
+    await establishSession(req, user.id);
     res.json({ ok: true, user: { id: user.id, username: user.username, is_admin: user.is_admin } });
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message || 'register_failed' });
@@ -28,7 +41,7 @@ router.post('/login', authLimiter, async (req, res) => {
   try {
     const { username, password } = req.body || {};
     const user = await auth.login(username, password);
-    req.session.userId = user.id;
+    await establishSession(req, user.id);
     res.json({ ok: true, user });
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message || 'login_failed' });
