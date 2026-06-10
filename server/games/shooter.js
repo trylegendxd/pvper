@@ -45,10 +45,23 @@ const MAX_SHOT_DIRECTION_DEVIATION = 0.6; // dot-product floor between shot dir 
 const WEAPONS = {
   rifle:   { fireMs: 105,  mag: 30,  dmg: 22, headDmg: 100, reloadMs: 2000, pellets: 1, spread: 0.0,  melee: false, maxRange: 80,
              falloffStart: 25, falloffEnd: 55, minMult: 0.55 },
+  // M4-style rifle: faster + smoother than the AK, but headshots DON'T
+  // one-shot (84) — the classic AK/M4 trade-off.
+  m4:      { fireMs: 90,   mag: 30,  dmg: 19, headDmg: 84,  reloadMs: 1900, pellets: 1, spread: 0.0,  melee: false, maxRange: 80,
+             falloffStart: 28, falloffEnd: 60, minMult: 0.6 },
+  // SMG: weak per-bullet but very fast fire + best accuracy on the move.
+  smg:     { fireMs: 70,   mag: 25,  dmg: 13, headDmg: 39,  reloadMs: 1700, pellets: 1, spread: 0.0,  melee: false, maxRange: 80,
+             falloffStart: 12, falloffEnd: 30, minMult: 0.4 },
   pistol:  { fireMs: 180,  mag: 12,  dmg: 34, headDmg: 100, reloadMs: 1500, pellets: 1, spread: 0.0,  melee: false, maxRange: 80,
              falloffStart: 14, falloffEnd: 38, minMult: 0.35 },
+  // Heavy pistol: 7 rounds, huge body damage, one-shot headshot up close.
+  deagle:  { fireMs: 400,  mag: 7,   dmg: 48, headDmg: 100, reloadMs: 2200, pellets: 1, spread: 0.0,  melee: false, maxRange: 80,
+             falloffStart: 18, falloffEnd: 45, minMult: 0.45 },
   shotgun: { fireMs: 700,  mag: 6,   dmg: 16, headDmg: 60,  reloadMs: 2500, pellets: 6, spread: 0.10, melee: false, maxRange: 80,
              falloffStart: 8,  falloffEnd: 22, minMult: 0.20 },
+  // Light sniper: cheaper + faster than the AWP-style sniper, 2-shot body.
+  scout:   { fireMs: 1250, mag: 10,  dmg: 70, headDmg: 100, reloadMs: 2600, pellets: 1, spread: 0.0,  melee: false, maxRange: 80,
+             falloffStart: 80, falloffEnd: 80, minMult: 1.0 },
   sniper:  { fireMs: 1500, mag: 5,   dmg: 50, headDmg: 100, reloadMs: 3500, pellets: 1, spread: 0.0,  melee: false, maxRange: 80,
              falloffStart: 80, falloffEnd: 80, minMult: 1.0 },
   // Knife is a melee weapon: infinite "ammo", short reach. The server
@@ -325,6 +338,46 @@ function csDepotMap() {
   ];
 }
 
+// ── Midline — 60m mid-control map ──────────────────────────────────────
+// Rotationally symmetric around the centre: a tall mid wall with two
+// "double-door" gaps, crate stacks on both flanks, an open sniper alley
+// down the right edge and a tight crate maze on the left. Every box is
+// mirrored (x,z) → (-x,-z) so neither spawn has an angle the other lacks.
+function csMidMap() {
+  const half = [
+    // Mid wall (north half) with a door gap between x -3..3
+    { position:{x:-10.5, y:0, z:0},  size:{w:15, h:3.2, d:1.6} },
+    // Door frame crates beside the gap
+    { position:{x:-3.6, y:0, z:1.6}, size:{w:1.6, h:2.2, d:1.6} },
+    // Mid boxes for peeking the door
+    { position:{x:0, y:0, z:6},     size:{w:3, h:1.4, d:2} },
+    // LEFT side — crate maze
+    { position:{x:-15, y:0, z:8},   size:{w:4, h:2.4, d:4} },
+    { position:{x:-21, y:0, z:3},   size:{w:3, h:1.6, d:3} },
+    { position:{x:-12, y:0, z:15},  size:{w:3, h:2.0, d:3} },
+    { position:{x:-20, y:0, z:13},  size:{w:5, h:2.8, d:2} },
+    { position:{x:-25, y:0, z:20},  size:{w:3, h:1.2, d:3} },
+    // RIGHT side — long sniper alley wall + low hops
+    { position:{x:16, y:0, z:6},    size:{w:2, h:3.0, d:12} },
+    { position:{x:23, y:0, z:12},   size:{w:3, h:1.0, d:3} },   // hop crate
+    { position:{x:22, y:0, z:3},    size:{w:3, h:1.8, d:3} },
+    // Spawn cover
+    { position:{x:0, y:0, z:24},    size:{w:8, h:2.4, d:2} },
+    { position:{x:-9, y:0, z:25},   size:{w:3, h:2.0, d:3} },
+    { position:{x:9, y:0, z:25},    size:{w:3, h:2.0, d:3} },
+    // Catwalk steps up to a mid-overlook platform (left of door)
+    { position:{x:-7, y:0, z:4.6},  size:{w:1.8, h:0.5, d:1.5} },
+    { position:{x:-7, y:0, z:3.2},  size:{w:1.8, h:1.0, d:1.5} },
+    { position:{x:-7, y:0, z:1.8},  size:{w:1.8, h:1.5, d:1.5} },
+  ];
+  // Mirror every box through the centre for perfect rotational symmetry.
+  const out = half.slice();
+  for (const b of half) {
+    out.push({ position:{x:-b.position.x, y:0, z:-b.position.z}, size:{...b.size} });
+  }
+  return out;
+}
+
 // Map of mapType → { mapType, mapName, arenaSize, coverBoxes, spawnPoints }.
 // Adding a new map only needs an entry here and a vote button on the
 // client. The match start path reads everything else dynamically.
@@ -335,6 +388,13 @@ function buildMapByType(mapType) {
     arenaSize: 70,
     coverBoxes: csDepotMap(),
     spawnPoints: [ { x: 0, y: 0, z: 31 }, { x: 0, y: 0, z: -31 } ],
+  };
+  if (mapType === 'cs_mid') return {
+    mapType: 'cs_mid',
+    mapName: 'Midline',
+    arenaSize: 60,
+    coverBoxes: csMidMap(),
+    spawnPoints: [ { x: 0, y: 0, z: 26 }, { x: 0, y: 0, z: -26 } ],
   };
   if (mapType === 'random') return {
     mapType: 'random',
@@ -354,7 +414,7 @@ function buildMapByType(mapType) {
 
 // All valid map vote values. Keep in sync with vote_map socket handler
 // and the frontend voting buttons.
-const MAP_TYPES = ['symmetrical', 'random', 'cs_depot'];
+const MAP_TYPES = ['symmetrical', 'random', 'cs_depot', 'cs_mid'];
 
 function resolveMapType(votes) {
   const v = Object.values(votes).filter(x => MAP_TYPES.includes(x));
@@ -678,7 +738,7 @@ module.exports = {
   rayHitDistance, playerBox, headBox, coverAabb, arenaWalls, positionAtTime,
   COVER_PENETRABLE_MIN, COVER_PENETRATION_DAMAGE_MULT,
   damageMultiplier,
-  symmetricalMap, randomMap, csDepotMap, buildMapByType,
+  symmetricalMap, randomMap, csDepotMap, csMidMap, buildMapByType,
   MAP_TYPES, resolveMapType, lobbySnapshot,
   WEAPON_MODES, ROUND_OPTIONS, resolveWeaponMode, resolveRounds,
   TEAM_SIZES, privateLobbies, privateLobbiesByCode,

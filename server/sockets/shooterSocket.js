@@ -38,11 +38,12 @@ const ECON = {
   FREEZE_MS:       3500,                        // CS buy-freeze: can buy, can't move/shoot
   DEFAULT_LOADOUT: ['knife', 'pistol'],         // free starting kit
   // CS:GO weapon prices (pistol/knife are the free kit).
-  PRICES:   { knife: 0, pistol: 0, shotgun: 1100, rifle: 2700, sniper: 4750 },
-  // Kill rewards (kept modest): rifles/pistols $250, AWP $150, shotgun $400,
-  // knife $600. In this fast deathmatch a "round" is a single kill, so these
-  // are deliberately much smaller than CS's per-round economy.
-  KILL_REWARD: { knife: 600, pistol: 250, shotgun: 400, rifle: 250, sniper: 150, molotov: 250, smoke: 250 },
+  PRICES:   { knife: 0, pistol: 0, deagle: 700, shotgun: 1100, smg: 1250, scout: 1700, rifle: 2700, m4: 3100, sniper: 4750 },
+  // Kill rewards (kept modest): rifles/pistols $250, snipers less, SMG/shotgun
+  // more (CS-style eco-weapon bonus), knife $600. In this fast deathmatch a
+  // "round" is a single kill, so these are deliberately much smaller than
+  // CS's per-round economy.
+  KILL_REWARD: { knife: 600, pistol: 250, deagle: 250, smg: 500, shotgun: 400, rifle: 250, m4: 250, scout: 250, sniper: 150, molotov: 250, smoke: 250 },
   ROUND_WIN_BONUS: 250,                          // small win bonus on top of the kill reward
   // Escalating loss bonus by consecutive deaths (capped) so a losing player
   // can still slowly re-arm.

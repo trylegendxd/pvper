@@ -907,6 +907,7 @@ input:focus { border-color:var(--accent); }
           <button data-map="symmetrical" onclick="App.mmVoteMap('symmetrical')">⬛ Symmetrical</button>
           <button data-map="random"      onclick="App.mmVoteMap('random')">🔀 Random</button>
           <button data-map="cs_depot"    onclick="App.mmVoteMap('cs_depot')">🏭 Depot</button>
+          <button data-map="cs_mid"      onclick="App.mmVoteMap('cs_mid')">🌉 Midline</button>
         </div>
         <div id="mm-map-tally" class="mm-vote-tally"></div>
       </div>
@@ -976,6 +977,7 @@ input:focus { border-color:var(--accent); }
         <button id="vote-sym"   onclick="App.voteMap('symmetrical')">⬛ Symmetrical</button>
         <button id="vote-rand"  onclick="App.voteMap('random')">🔀 Random</button>
         <button id="vote-depot" onclick="App.voteMap('cs_depot')">🏭 Depot</button>
+        <button id="vote-mid" onclick="App.voteMap('cs_mid')">🌉 Midline</button>
       </div>
       <div class="vote-result" id="vote-result">Waiting for votes...</div>
 
@@ -1188,7 +1190,7 @@ input:focus { border-color:var(--accent); }
       </div>
       <div class="buy-grid" id="buy-grid"><!-- cards injected by Economy.renderMenu() --></div>
       <div class="buy-foot">
-        <span><b>1–4</b> buy · <b>B</b>/<b>Esc</b> close</span>
+        <span><b>1–7</b> buy · <b>B</b>/<b>Esc</b> close</span>
         <span class="buy-note">Round cash — separate from your credits</span>
       </div>
     </div>
@@ -1316,6 +1318,18 @@ const CFG = {
   BOT_AGGRO_DIST:    18,
 };
 
+// Source-engine movement constants converted to metres (CS:GO's 250 u/s top
+// speed ≈ 4.76 m/s, friction 5.2, sv_accelerate 5.5, airaccel 12 with the
+// famous 30 u/s (≈0.57 m/s) air-speed cap). These give the game momentum:
+// ~150 ms to reach top speed, ~200 ms friction stop, ~90 ms counter-strafe.
+const MOVE = {
+  ACCEL:      7.0,    // ground acceleration (× wishspeed / sec) — snappy starts
+  FRICTION:   5.2,    // ground friction (× speed / sec)
+  STOP_SPEED: 1.5,    // friction floor — low speeds bleed off fast
+  AIR_ACCEL:  12,     // air acceleration rate
+  AIR_CAP:    0.57,   // max speed gainable mid-air (m/s)
+};
+
 // Weapon configs — MUST match server.js WEAPONS
 // `moveSpeed` is the top walking speed (m/s) while holding that
 // weapon — CS2-style: lighter guns walk faster, heavier guns slower.
@@ -1325,10 +1339,18 @@ const CFG = {
 const WEAPONS = {
   rifle:   { name:'AK-47',   fireMode:'auto',  fireMs:105,  mag:30,  dmg:22, headDmg:100, reloadMs:2000, pellets:1, spread:0.022, spreadMove:0.35, spreadDecay:4,   moveSpeed: 4.6, maxRange: 80,
              falloffStart: 25, falloffEnd: 55, minMult: 0.55 },
+  m4:      { name:'M4 CARBINE', fireMode:'auto', fireMs:90, mag:30,  dmg:19, headDmg:84,  reloadMs:1900, pellets:1, spread:0.018, spreadMove:0.30, spreadDecay:4.5, moveSpeed: 4.7, maxRange: 80,
+             falloffStart: 28, falloffEnd: 60, minMult: 0.6 },
+  smg:     { name:'SMG-9',   fireMode:'auto',  fireMs:70,   mag:25,  dmg:13, headDmg:39,  reloadMs:1700, pellets:1, spread:0.030, spreadMove:0.16, spreadDecay:6,   moveSpeed: 5.4, maxRange: 80,
+             falloffStart: 12, falloffEnd: 30, minMult: 0.4 },
   pistol:  { name:'PISTOL',  fireMode:'semi',  fireMs:180,  mag:12,  dmg:34, headDmg:100, reloadMs:1500, pellets:1, spread:0.014, spreadMove:0.20, spreadDecay:5,   moveSpeed: 5.2, maxRange: 80,
              falloffStart: 14, falloffEnd: 38, minMult: 0.35 },
+  deagle:  { name:'HAND CANNON', fireMode:'semi', fireMs:400, mag:7, dmg:48, headDmg:100, reloadMs:2200, pellets:1, spread:0.010, spreadMove:0.45, spreadDecay:2.5, moveSpeed: 5.0, maxRange: 80,
+             falloffStart: 18, falloffEnd: 45, minMult: 0.45 },
   shotgun: { name:'SHOTGUN', fireMode:'semi',  fireMs:700,  mag:6,   dmg:16, headDmg:60,  reloadMs:2500, pellets:6, spread:0.10,  spreadMove:0.50, spreadDecay:3,   moveSpeed: 4.8, maxRange: 80,
              falloffStart: 8,  falloffEnd: 22, minMult: 0.20 },
+  scout:   { name:'SCOUT',   fireMode:'semi',  fireMs:1250, mag:10,  dmg:70, headDmg:100, reloadMs:2600, pellets:1, spread:0.004, spreadMove:0.30, spreadDecay:2,   moveSpeed: 4.9, maxRange: 80,
+             falloffStart: 80, falloffEnd: 80, minMult: 1.0 },
   sniper:  { name:'M40A3',   fireMode:'semi',  fireMs:1500, mag:5,   dmg:50, headDmg:100, reloadMs:3500, pellets:1, spread:0.003, spreadMove:0.28, spreadDecay:1.5, moveSpeed: 4.2, maxRange: 80,
              falloffStart: 80, falloffEnd: 80, minMult: 1.0 },
   // Knife — fastest move speed, infinite "ammo", short reach. Server
@@ -1369,9 +1391,23 @@ const RECOIL = {
   rifle:   { pitch: 0.020, pitchRamp: 0.0042, yaw: 0.014, decay: 7.5, resetMs: 350,
              yawPattern: [0, 0, 0, 0, -1.0, -1.2, -1.0, 1.0, 1.2, 0.8, 0.6,
                           -0.4, 0.5, -0.3, 0.4, -0.3, 0.3] },
+  // M4: gentler kick, tighter pattern that drifts RIGHT first (mirror of
+  // the AK's left "T") — controllable, rewards a steady down-left pull.
+  m4:      { pitch: 0.016, pitchRamp: 0.0034, yaw: 0.011, decay: 8.0, resetMs: 330,
+             yawPattern: [0, 0, 0, 0.6, 0.8, 1.0, -0.8, -1.0, -0.7, 0.5,
+                          -0.4, 0.4, -0.3, 0.3] },
+  // SMG: tiny per-shot kick but rapid alternating jitter — sprays wide
+  // at range, laser up close.
+  smg:     { pitch: 0.011, pitchRamp: 0.0022, yaw: 0.013, decay: 10.0, resetMs: 280,
+             yawPattern: [0, 0, -0.6, 0.8, -0.9, 1.0, -0.8, 0.7, -0.5, 0.5, -0.4, 0.4] },
   pistol:  { pitch: 0.014, pitchRamp: 0.002, yaw: 0.008, decay: 9.5, resetMs: 400,
              yawPattern: [0, 0, -0.8, 1.0, -1.0, 0.8, -0.5, 0.5, -0.3, 0.3] },
+  // Deagle: huge single kick — follow-up shots punish spamming hard.
+  deagle:  { pitch: 0.034, pitchRamp: 0.0040, yaw: 0.010, decay: 6.5, resetMs: 500,
+             yawPattern: [0, -0.6, 0.8, -0.8, 0.6] },
   shotgun: { pitch: 0.050, pitchRamp: 0.000, yaw: 0.000, decay: 5.0, resetMs: 800,
+             yawPattern: [0] },
+  scout:   { pitch: 0.045, pitchRamp: 0.000, yaw: 0.000, decay: 3.5, resetMs: 1100,
              yawPattern: [0] },
   sniper:  { pitch: 0.060, pitchRamp: 0.000, yaw: 0.000, decay: 3.0, resetMs: 1500,
              yawPattern: [0] },
@@ -1387,36 +1423,36 @@ const FIRST_SHOT_THRESHOLD_MS = 350;
 const FIRST_SHOT_SPREAD_MULT  = 0.15;  // 85% spread reduction
 const FIRST_SHOT_KICK_MULT    = 0.20;  // 80% recoil-kick reduction
 
-// Movement-based spread multipliers — applied to the per-pellet jitter
-// in _shoot(). Matches CS muscle memory: standing still is best,
-// crouching is even better, walking is bad, jumping is terrible.
+// Accuracy is driven by your ACTUAL velocity, not which keys are held —
+// exactly like CS:GO. Below ~34% of the weapon's max speed you shoot
+// accurately; above it inaccuracy ramps up hard. Because the movement
+// model has real momentum (accel + friction), tapping the opposite key
+// (counter-strafing) kills your velocity in ~90ms and instantly restores
+// accuracy — the core CS movement-shooting skill.
+const ACCURATE_SPEED_RATIO = 0.34;
 function movementSpreadMultiplier(engine) {
-  if (!engine._grounded) return 4.5;           // airborne
-  if (engine.crouching)  return 0.40;          // crouched
-  const keys = engine._keys || {};
-  const moving = keys['KeyW'] || keys['KeyS'] || keys['KeyA'] || keys['KeyD'];
-  if (moving && engine.silentWalking) return 1.5;
-  if (moving)                          return 2.5;
-  return 1.0;                                   // standing still
+  if (!engine._grounded) return 5.0;           // airborne — terrible
+  const maxSpd = WEAPONS[engine.currentWeapon]?.moveSpeed || 4.6;
+  const ratio  = Math.min(1, (engine._velMag || 0) / maxSpd);
+  const crouch = engine.crouching ? 0.40 : 1.0;
+  if (ratio <= ACCURATE_SPEED_RATIO) return crouch;          // slow = accurate
+  const k = (ratio - ACCURATE_SPEED_RATIO) / (1 - ACCURATE_SPEED_RATIO);
+  return crouch * (1.0 + Math.pow(k, 1.4) * 3.2);            // ramps to ~4.2×
 }
 
 /**
- * Returns true when the player's next shot qualifies as a "first shot"
- * — i.e. it has been idle for >= FIRST_SHOT_THRESHOLD_MS AND the player
- * is on the ground, not moving and not crouched (crouch already enjoys
- * its own spread bonus). Snipers and shotguns get this bonus too, where
- * it mostly amounts to "the very first shot is dead-on" which is exactly
- * what tap-fire feel demands.
+ * "First shot" = idle ≥ FIRST_SHOT_THRESHOLD_MS, grounded, and moving
+ * slower than the accurate-speed threshold. Velocity-based, so a clean
+ * counter-strafe earns the tap-fire bonus the instant you stop.
  */
 function isFirstShotReady(engine) {
   if (!engine._grounded) return false;
   const now = performance.now();
   if ((now - (engine._lastRecoilShotAt || 0)) < FIRST_SHOT_THRESHOLD_MS) return false;
-  const keys = engine._keys || {};
-  if (keys['KeyW'] || keys['KeyS'] || keys['KeyA'] || keys['KeyD']) return false;
-  return true;
+  const maxSpd = WEAPONS[engine.currentWeapon]?.moveSpeed || 4.6;
+  return (engine._velMag || 0) <= maxSpd * ACCURATE_SPEED_RATIO;
 }
-const WEAPON_ORDER = ['rifle', 'pistol', 'shotgun', 'sniper', 'knife'];
+const WEAPON_ORDER = ['rifle', 'm4', 'smg', 'pistol', 'deagle', 'shotgun', 'scout', 'sniper', 'knife'];
 
 // ══════════════════════════════════════════════════════════════
 //  HELPERS
@@ -2016,6 +2052,18 @@ const AudioManager = {
     setTimeout(() => this._chirp(880, 0.10, 0.22, 'square'), 70);
   },
   playReload() { this._beep(220, 0.06, 0.13, 'square'); },
+  // Crisp two-tone snick for weapon switches (distinct from reload).
+  playSwitch() {
+    this._beep(950, 0.025, 0.10, 'triangle');
+    setTimeout(() => this._beep(640, 0.03, 0.08, 'triangle'), 35);
+  },
+  // Dry-fire click on an empty mag.
+  playDryFire() { this._beep(1400, 0.02, 0.16, 'square'); },
+  // The CS:GO headshot "dink" — bright metallic two-tone ping.
+  playDink() {
+    this._beep(1180, 0.05, 0.22, 'triangle');
+    setTimeout(() => this._beep(1760, 0.08, 0.16, 'triangle'), 14);
+  },
 
   // Two-note golden chime for achievement_unlocked.
   playAchievement() {
@@ -2555,6 +2603,8 @@ const WeaponAssets = {
       const k = GameEngine.currentWeapon;
       const t = WEAPON_TUNING[k];
       document.getElementById('wt-key').textContent = k;
+      // New weapons have no imported-FBX tuning entry — procedural only.
+      if (!t) { document.getElementById('wt-vals').textContent = '(procedural model — no FBX tuning)'; return; }
       document.getElementById('wt-vals').textContent =
         `pos [${t.pos.map(n => n.toFixed(2)).join(', ')}]\n` +
         `rot [${t.rot.map(n => (n / Math.PI).toFixed(2) + 'π').join(', ')}]\n` +
@@ -2577,6 +2627,7 @@ const WeaponAssets = {
         const act = btn.dataset.act;
         const dir = parseInt(btn.dataset.dir || '1', 10);
         const t = WEAPON_TUNING[GameEngine.currentWeapon];
+        if (!t) return;   // procedural-only weapon — nothing to tune
         if (act.startsWith('pos')) {
           const i = { posX: 0, posY: 1, posZ: 2 }[act];
           t.pos[i] = +(t.pos[i] + dir * POS_STEP).toFixed(3);
@@ -3087,7 +3138,10 @@ const GameEngine = {
     if (!playerGroup || !playerGroup.userData) return;
     const socket = playerGroup.userData.weaponSocket;
     if (!socket) return;
-    const key = (typeof WEAPONS !== 'undefined' && WEAPONS[weaponKey]) ? weaponKey : 'rifle';
+    let key = (typeof WEAPONS !== 'undefined' && WEAPONS[weaponKey]) ? weaponKey : 'rifle';
+    // New weapons reuse the closest third-person silhouette (the first-person
+    // view is where each gun's identity lives; at range these read fine).
+    key = { m4: 'rifle', smg: 'rifle', deagle: 'pistol', scout: 'sniper' }[key] || key;
     if (playerGroup.userData.currentWeapon === key && socket.children.length) return;
     // Remove + dispose the previously held weapon.
     for (let i = socket.children.length - 1; i >= 0; i--) {
@@ -3197,6 +3251,63 @@ const GameEngine = {
       const bipL   = box(0.018, 0.11, 0.015, metal); bipL.position.set(-0.048, -0.055, -0.40); bipL.rotation.z = 0.28;
       const bipR   = box(0.018, 0.11, 0.015, metal); bipR.position.set( 0.048, -0.055, -0.40); bipR.rotation.z = -0.28;
       G.add(recv, bar, hg, stk, grip, mag, scopeB, lensF, lensR, supp, bipL, bipR);
+    } else if (key === 'm4') {
+      // Modern carbine: railed flat-top receiver, carry-handle sight,
+      // straighter dark furniture than the wooden AK.
+      G.position.set(0.20, -0.20, -0.48);
+      G.rotation.y = 0.06;
+      const recv = box(0.06, 0.062, 0.32, dark);
+      const rail = box(0.05, 0.018, 0.30, metal);  rail.position.set(0, 0.04, -0.04);
+      const bar  = box(0.036, 0.036, 0.32, dark);  bar.position.set(0, 0.012, -0.31);
+      const hg   = box(0.062, 0.052, 0.20, accent);hg.position.set(0, -0.01, -0.19);
+      const stk  = box(0.05, 0.062, 0.17, dark);   stk.position.set(0, -0.008, 0.21);
+      const stkP = box(0.056, 0.08, 0.03, dark);   stkP.position.set(0, -0.012, 0.30);
+      const grip = box(0.046, 0.10, 0.04, dark);   grip.position.set(0, -0.082, 0.05);
+      const mag  = box(0.046, 0.11, 0.05, accent); mag.position.set(0, -0.10, -0.03); mag.rotation.x = 0.12;
+      const sight= box(0.016, 0.034, 0.05, metal); sight.position.set(0, 0.066, -0.02);
+      const fs   = box(0.012, 0.028, 0.012, metal);fs.position.set(0, 0.045, -0.44);
+      G.add(recv, rail, bar, hg, stk, stkP, grip, mag, sight, fs);
+    } else if (key === 'smg') {
+      // Compact SMG: stubby barrel, boxy body, forward vertical grip,
+      // side-folded stock silhouette.
+      G.position.set(0.19, -0.19, -0.40);
+      G.rotation.y = 0.05;
+      const body = box(0.06, 0.075, 0.26, dark);
+      const bar  = box(0.03, 0.03, 0.12, metal);  bar.position.set(0, 0.012, -0.18);
+      const shr  = box(0.052, 0.05, 0.10, accent);shr.position.set(0, 0.005, -0.13);
+      const mag  = box(0.04, 0.13, 0.05, dark);   mag.position.set(0, -0.115, -0.01);
+      const grip = box(0.046, 0.09, 0.042, dark); grip.position.set(0, -0.075, 0.07);
+      const vfg  = box(0.04, 0.08, 0.04, dark);   vfg.position.set(0, -0.07, -0.12);
+      const stk  = box(0.022, 0.05, 0.14, metal); stk.position.set(0, 0.0, 0.18);
+      const fs   = box(0.012, 0.024, 0.012, metal);fs.position.set(0, 0.05, -0.22);
+      G.add(body, bar, shr, mag, grip, vfg, stk, fs);
+    } else if (key === 'deagle') {
+      // Heavy pistol: long slab slide, big bore, chunky grip.
+      G.position.set(0.18, -0.18, -0.38);
+      G.rotation.y = 0.04;
+      const slide = box(0.056, 0.075, 0.30, metal);
+      const vent  = box(0.058, 0.02, 0.10, dark);   vent.position.set(0, 0.034, -0.10);
+      const bore  = box(0.028, 0.028, 0.05, dark);  bore.position.set(0, 0.018, -0.17);
+      const frame = box(0.05, 0.04, 0.24, dark);    frame.position.set(0, -0.05, 0.0);
+      const grip  = box(0.052, 0.14, 0.075, dark);  grip.position.set(0, -0.115, 0.075); grip.rotation.x = 0.18;
+      const trig  = box(0.022, 0.034, 0.03, metal); trig.position.set(0, -0.055, 0.0);
+      const fs    = box(0.012, 0.024, 0.012, accent);fs.position.set(0, 0.062, -0.14);
+      G.add(slide, vent, bore, frame, grip, trig, fs);
+    } else if (key === 'scout') {
+      // Light bolt-action: slim wooden stock, thin barrel, small scope —
+      // visibly nimbler than the heavy sniper.
+      G.position.set(0.20, -0.18, -0.54);
+      G.rotation.y = 0.04;
+      const recv  = box(0.055, 0.055, 0.40, wood);
+      const bar   = box(0.028, 0.028, 0.50, dark);  bar.position.set(0, 0.012, -0.46);
+      const stk   = box(0.05, 0.065, 0.22, wood);   stk.position.set(0, -0.012, 0.27);
+      const grip  = box(0.04, 0.09, 0.04, wood);    grip.position.set(0, -0.075, 0.08);
+      const mag   = box(0.042, 0.07, 0.05, dark);   mag.position.set(0, -0.075, -0.03);
+      const scopeB= box(0.032, 0.032, 0.20, accent);scopeB.position.set(0, 0.055, -0.10);
+      const lensF = box(0.046, 0.046, 0.024, metal);lensF.position.set(0, 0.055, -0.22);
+      const lensR = box(0.04, 0.04, 0.024, metal);  lensR.position.set(0, 0.055, 0.02);
+      const bolt  = box(0.05, 0.018, 0.018, metal); bolt.position.set(0.045, 0.012, 0.06); bolt.rotation.z = -0.5;
+      G.add(recv, bar, stk, grip, mag, scopeB, lensF, lensR, bolt);
     } else if (key === 'knife') {
       // Combat knife held UPRIGHT in the right hand — blade pointing straight
       // up. Only a tiny yaw so it isn't perfectly edge-on to the camera.
@@ -3254,13 +3365,13 @@ const GameEngine = {
     }
 
     let rightHand, leftHand, rDir, lDir;
-    if (key === 'pistol') {
+    if (key === 'pistol' || key === 'deagle') {
       rightHand = { x: 0.00,  y: -0.12, z: 0.0 };    // firing hand on the grip
       leftHand  = { x: -0.05, y: -0.145, z: -0.02 }; // support hand under
       rDir = { x: 0.2,  y: -0.94, z: 0.28 };
       lDir = { x: -0.3, y: -0.92, z: 0.26 };
     } else {
-      // rifle / shotgun / sniper — right on the grip, left on the handguard.
+      // long guns — right on the grip, left on the handguard.
       rightHand = { x: 0.02,  y: -0.105, z: 0.06 };
       leftHand  = { x: -0.02, y: -0.075, z: -0.18 };
       rDir = { x: 0.24,  y: -0.93, z: 0.27 };
@@ -3831,7 +3942,7 @@ const GameEngine = {
       // While the menu is open, number keys buy slots and B/Esc close it.
       if (typeof Economy !== 'undefined' && Economy.menuOpen) {
         if (e.code === 'KeyB' || e.code === 'Escape') { e.preventDefault(); Economy.closeMenu(); return; }
-        if (['Digit1','Digit2','Digit3','Digit4'].includes(e.code)) {
+        if (/^Digit[1-7]$/.test(e.code)) {
           e.preventDefault(); Economy.buyByKey(e.code.slice(-1)); return;
         }
       }
@@ -3842,11 +3953,14 @@ const GameEngine = {
       if (GAME_KEYS.has(e.code)) e.preventDefault();
       this._keys[e.code] = true;
       if (e.code === 'KeyR') this._startReload();
-      if (e.code === 'Digit1') this.switchWeapon('rifle');
-      if (e.code === 'Digit2') this.switchWeapon('pistol');
-      if (e.code === 'Digit3') this.switchWeapon('shotgun');
-      if (e.code === 'Digit4') this.switchWeapon('sniper');
-      if (e.code === 'KeyQ')   this.switchWeapon('knife');   // melee
+      // CS:GO slot layout: 1 = primary (cycles owned long guns), 2 =
+      // secondary (pistol/deagle), 3 = knife, 4 = swap grenade, Q = last
+      // weapon (the AWP quick-switch).
+      if (e.code === 'Digit1') this.cycleSlot('primary');
+      if (e.code === 'Digit2') this.cycleSlot('secondary');
+      if (e.code === 'Digit3') this.switchWeapon('knife');
+      if (e.code === 'Digit4') Throwables.select(Throwables.selected === 'molotov' ? 'smoke' : 'molotov');
+      if (e.code === 'KeyQ')   this.quickSwitch();
       // Throwable selection + throw.
       if (e.code === 'Digit5') Throwables.select('molotov');
       if (e.code === 'Digit6') Throwables.select('smoke');
@@ -4033,6 +4147,7 @@ const GameEngine = {
     if (this._wState().reloading) return;
     // Unscope on any weapon change.
     if (this._scoped) this.setScoped(false);
+    this._lastWeapon = this.currentWeapon;   // for Q quick-switch
     this.currentWeapon = name;
     // Swap visible gun model
     if (this._gunModels) {
@@ -4045,10 +4160,30 @@ const GameEngine = {
     const wS = this._wState();
     UIManager.updateAmmo(wS.ammo, w.mag, w.name);
     UIManager.showReloadIndicator(wS.reloading);
-    AudioManager.playReload();
+    AudioManager.playSwitch();
     this._spread = 0;
     UIManager.setCrosshairSpread(0);
     if (!App.trainingMode) NetworkManager.sendSwitchWeapon(name);
+  },
+
+  // CS:GO slot cycling. Primary = long guns, secondary = pistols. Only
+  // weapons you can actually equip (mode vote + economy loadout) count.
+  SLOT_PRIMARY:   ['rifle', 'm4', 'smg', 'shotgun', 'scout', 'sniper'],
+  SLOT_SECONDARY: ['pistol', 'deagle'],
+  cycleSlot(slot) {
+    const list = (slot === 'primary' ? this.SLOT_PRIMARY : this.SLOT_SECONDARY).filter(k =>
+      (!this.weaponMode || this.weaponMode === 'all' || this.weaponMode === k) &&
+      (typeof Economy === 'undefined' || Economy.owns(k))
+    );
+    if (!list.length) return;
+    const i = list.indexOf(this.currentWeapon);
+    this.switchWeapon(i < 0 ? list[0] : list[(i + 1) % list.length]);
+  },
+  // Q — swap to the previously held weapon (the classic AWP quick-switch).
+  quickSwitch() {
+    const last = this._lastWeapon;
+    if (last && last !== this.currentWeapon && WEAPONS[last]) this.switchWeapon(last);
+    else this.switchWeapon('knife');   // nothing to swap to yet → knife
   },
 
   // ── Weapon ─────────────────────────────────────────────────────────────
@@ -4064,7 +4199,7 @@ const GameEngine = {
     const now = performance.now();
     if (now - this._lastShotTime < w.fireMs) return;
     if (wS.reloading) return;
-    if (wS.ammo <= 0) { this._startReload(); return; }
+    if (wS.ammo <= 0) { AudioManager.playDryFire(); this._startReload(); return; }
 
     this._lastShotTime = now;
     wS.ammo--;
@@ -4076,8 +4211,12 @@ const GameEngine = {
     if (!isMelee && this._muzzleFlash) {
       const muzzlePos = {
         rifle:   { x: 0.20, y: -0.18,  z: -1.00 },
+        m4:      { x: 0.20, y: -0.18,  z: -1.00 },
+        smg:     { x: 0.19, y: -0.18,  z: -0.68 },
         pistol:  { x: 0.18, y: -0.165, z: -0.55 },
+        deagle:  { x: 0.18, y: -0.16,  z: -0.60 },
         shotgun: { x: 0.22, y: -0.18,  z: -1.10 },
+        scout:   { x: 0.20, y: -0.165, z: -1.30 },
         sniper:  { x: 0.20, y: -0.165, z: -1.45 },
       }[this.currentWeapon] || { x: 0.20, y: -0.18, z: -1.00 };
       this._muzzleFlash.position.set(muzzlePos.x, muzzlePos.y, muzzlePos.z);
@@ -4422,14 +4561,14 @@ const GameEngine = {
     UIManager.updateSilentWalk(this.silentWalking);
 
     const baseSpeed = WEAPONS[this.currentWeapon]?.moveSpeed || CFG.PLAYER_SPEED;
-    // Speed = base × stance × tag. Stance is crouch (slowest) or silent
+    // Wish speed = base × stance × tag. Stance is crouch (slowest) or silent
     // walk (slower than walk) or 1 (normal walk). Tag-on-hit halves
     // speed for ~0.4s after being shot, CS-style.
     const stanceMul = this.crouching     ? CFG.CROUCH_SPEED_MULT
                     : this.silentWalking ? 0.55
                     : 1;
     const tagMul    = ((this._taggedUntil || 0) > performance.now()) ? 0.5 : 1;
-    const speed = baseSpeed * stanceMul * tagMul;
+    const wishspeed = baseSpeed * stanceMul * tagMul;
     let mx = 0, mz = 0;
     if (this._keys['KeyW']) mz -= 1;
     if (this._keys['KeyS']) mz += 1;
@@ -4438,20 +4577,57 @@ const GameEngine = {
     // CS buy freeze: pinned in place (can still look around + shop).
     if (typeof Economy !== 'undefined' && Economy.isFrozen()) { mx = 0; mz = 0; }
 
+    // ── Source-style velocity model ─────────────────────────────────────
+    // Real momentum: ground friction + capped acceleration toward the wish
+    // direction, tiny air control while jumping. Counter-strafing (tapping
+    // the opposite key) decelerates ~2.5× faster than just releasing —
+    // exactly the CS:GO stop-shoot rhythm. Constants are CS:GO's Source
+    // values converted to metres (250u/s ≈ 4.76 m/s).
+    const v = this._vel || (this._vel = { x: 0, z: 0 });
+    let wx = 0, wz = 0;
     if (mx !== 0 || mz !== 0) {
       const len  = Math.hypot(mx, mz);
       const nmx  = mx / len, nmz = mz / len;
       const cosY = Math.cos(this.yaw), sinY = Math.sin(this.yaw);
-      const worldX = nmx * cosY + nmz * sinY;
-      const worldZ = -nmx * sinY + nmz * cosY;
+      wx = nmx * cosY + nmz * sinY;
+      wz = -nmx * sinY + nmz * cosY;
+    }
+    if (this._grounded) {
+      // Friction (always on the ground, even mid-input — input fights it).
+      const sp = Math.hypot(v.x, v.z);
+      if (sp > 1e-4) {
+        const drop = Math.max(sp, MOVE.STOP_SPEED) * MOVE.FRICTION * dt;
+        const ns = Math.max(0, sp - drop);
+        const k = ns / sp; v.x *= k; v.z *= k;
+      } else { v.x = 0; v.z = 0; }
+      if (wx !== 0 || wz !== 0) {
+        const cur = v.x * wx + v.z * wz;             // speed along wish dir
+        const add = Math.min(MOVE.ACCEL * wishspeed * dt, wishspeed - cur);
+        if (add > 0) { v.x += wx * add; v.z += wz * add; }
+      }
+    } else if (wx !== 0 || wz !== 0) {
+      // Air control: hard 0.57 m/s cap on gained air speed (Source's 30u).
+      const capped = Math.min(wishspeed, MOVE.AIR_CAP);
+      const cur = v.x * wx + v.z * wz;
+      const add = Math.min(MOVE.AIR_ACCEL * wishspeed * dt, capped - cur);
+      if (add > 0) { v.x += wx * add; v.z += wz * add; }
+    }
+    this._velMag = Math.hypot(v.x, v.z);
 
-      const newX = this.pos.x + worldX * speed * dt;
-      const newZ = this.pos.z + worldZ * speed * dt;
+    if (this._velMag > 1e-4) {
+      const newX = this.pos.x + v.x * dt;
+      const newZ = this.pos.z + v.z * dt;
+      // Per-axis collision; hitting a wall kills that axis' momentum.
+      if (!this._collides(newX, this.pos.z)) this.pos.x = newX; else v.x = 0;
+      if (!this._collides(this.pos.x, newZ)) this.pos.z = newZ; else v.z = 0;
+    }
 
-      if (!this._collides(newX, this.pos.z)) this.pos.x = newX;
-      if (!this._collides(this.pos.x, newZ)) this.pos.z = newZ;
-
-      if (this._spread < 0.32) { this._spread = 0.32; UIManager.setCrosshairSpread(this._spread); }
+    // Crosshair tracks REAL velocity, so it visibly snaps tight the moment
+    // a counter-strafe lands.
+    const velRatio = Math.min(1, this._velMag / Math.max(0.1, baseSpeed));
+    if (velRatio > ACCURATE_SPEED_RATIO) {
+      const floor = 0.12 + (velRatio - ACCURATE_SPEED_RATIO) * 0.55;
+      if (this._spread < floor) { this._spread = floor; UIManager.setCrosshairSpread(this._spread); }
     }
 
     // Clamp player inside the arena. Half-side minus 0.5m so they
@@ -4474,9 +4650,20 @@ const GameEngine = {
       // _yPos is RELATIVE to floor; once it reaches 0 (or below) we're
       // grounded on the current floor.
       if (this._yPos <= 0) {
+        // Landing impact: camera dip, soft thud, and an accuracy penalty
+        // scaled by fall speed — jumping around has a real cost, CS-style.
+        const impact = Math.min(1, Math.abs(this._yVel) / 7);
         this._yPos = 0;
         this._yVel = 0;
         this._grounded = true;
+        if (impact > 0.22) {
+          this._landDip = Math.max(this._landDip || 0, impact * 0.13);
+          if (this._spread < impact * 1.1) {
+            this._spread = impact * 1.1;
+            UIManager.setCrosshairSpread(this._spread);
+          }
+          try { AudioManager.playLand(); } catch (_) {}
+        }
       }
     } else {
       // While grounded, gradual drop if floor dropped beneath us
@@ -4489,11 +4676,10 @@ const GameEngine = {
     }
     this._lastFloorY = this._floorY || 0;
 
-    // Footsteps — only when grounded + moving + NOT silent-walking
-    // (Shift) and NOT crouching. Cadence tracks actual walk speed so
-    // a slow heavy weapon plays slower steps than the fast pistol.
-    if (moving && this._grounded && !this.silentWalking && !this.crouching) {
-      this._footT += dt * (speed * 0.55);
+    // Footsteps track ACTUAL velocity (not keys) so they stop the moment a
+    // counter-strafe kills your momentum, and pace with real speed.
+    if (this._velMag > 1.2 && this._grounded && !this.silentWalking && !this.crouching) {
+      this._footT += dt * (this._velMag * 0.55);
       if (this._footT >= 1) { this._footT = 0; AudioManager.playFootstep(); }
     } else {
       this._footT = 0;
@@ -4501,10 +4687,11 @@ const GameEngine = {
 
     // Update camera (crouch lowers eye height smoothly).
     // Eye height = base + jump offset + current floor offset (for
-    // standing on cover boxes / stair platforms).
+    // standing on cover boxes / stair platforms) − the landing dip.
+    this._landDip = Math.max(0, (this._landDip || 0) - dt * 0.7);
     const baseEye   = (this.crouching ? CFG.CROUCH_HEIGHT : CFG.EYE_HEIGHT);
     const floorY    = this._floorY || 0;
-    const targetEyeH = baseEye + this._yPos + floorY;
+    const targetEyeH = baseEye + this._yPos + floorY - (this._landDip || 0);
     this._currentEyeH = this._currentEyeH !== undefined
       ? this._currentEyeH + (targetEyeH - this._currentEyeH) * Math.min(1, dt * 14)
       : targetEyeH;
@@ -4569,18 +4756,39 @@ const GameEngine = {
     // Per-weapon home position
     const home = {
       rifle:   { x: 0.20, y: -0.20, z: -0.48 },
+      m4:      { x: 0.20, y: -0.20, z: -0.48 },
+      smg:     { x: 0.19, y: -0.19, z: -0.40 },
       pistol:  { x: 0.18, y: -0.18, z: -0.36 },
+      deagle:  { x: 0.18, y: -0.18, z: -0.38 },
       shotgun: { x: 0.22, y: -0.22, z: -0.50 },
+      scout:   { x: 0.20, y: -0.18, z: -0.54 },
       sniper:  { x: 0.20, y: -0.18, z: -0.56 },
       knife:   { x: 0.20, y: -0.22, z: -0.30 },
     }[this.currentWeapon] || { x: 0.20, y: -0.20, z: -0.48 };
 
-    if (moving && this.pointerLocked) {
-      this._gunBobT += dt * (this.sprinting ? 13 : 9);
+    // Look-lag weapon sway: the gun trails your mouse slightly and eases
+    // back — the classic CS view-model drag that makes flicks feel weighty.
+    {
+      const yawD = this.yaw   - (this._swayPrevYaw   ?? this.yaw);
+      const pitD = this.pitch - (this._swayPrevPitch ?? this.pitch);
+      this._swayPrevYaw = this.yaw; this._swayPrevPitch = this.pitch;
+      const tx = Math.max(-0.035, Math.min(0.035, -yawD * 0.9));
+      const ty = Math.max(-0.030, Math.min(0.030, -pitD * 0.9));
+      const k = Math.min(1, dt * 11);
+      this._swayX = (this._swayX || 0) + (tx - (this._swayX || 0)) * k;
+      this._swayY = (this._swayY || 0) + (ty - (this._swayY || 0)) * k;
     }
-    const bobAmt = moving ? (this.sprinting ? 0.006 : 0.0035) : 0;
-    const bobX   = Math.sin(this._gunBobT) * bobAmt;
-    const bobY   = Math.abs(Math.cos(this._gunBobT * 2)) * bobAmt * -0.5;
+
+    // Bob speed/amplitude tracks REAL velocity so the gun settles the
+    // instant a counter-strafe stops you.
+    const velRatio = Math.min(1, (this._velMag || 0) / 5.0);
+    if (velRatio > 0.1 && this.pointerLocked) {
+      this._gunBobT += dt * (6 + velRatio * 5);
+    }
+    const bobAmt = velRatio > 0.1 ? 0.0042 * velRatio : 0;
+    const bobX   = Math.sin(this._gunBobT) * bobAmt + (this._swayX || 0);
+    const bobY   = Math.abs(Math.cos(this._gunBobT * 2)) * bobAmt * -0.5 + (this._swayY || 0)
+                 - (this._landDip || 0) * 0.35;   // gun dips with the landing
 
     this._gunRecoil  = Math.max(0, this._gunRecoil  - dt * 9);
     this._knifeSwing = Math.max(0, this._knifeSwing - dt * 4); // ~250 ms swing
@@ -4688,6 +4896,7 @@ const GameEngine = {
     // can't float the camera up until the player moves.
     this._floorY = 0; this._lastFloorY = 0;
     this._yPos = 0; this._yVel = 0; this._grounded = true;
+    this._vel = { x: 0, z: 0 }; this._velMag = 0; this._landDip = 0;
     // Plant the camera at spawn NOW so the first frames (before pointer lock /
     // during the buy freeze) show the correct grounded view, not the old one.
     this.camera.position.set(spawnPos.x, CFG.EYE_HEIGHT, spawnPos.z);
@@ -4931,6 +5140,7 @@ const GameEngine = {
   setSpawn(pos) {
     this.pos.set(pos.x, 0, pos.z);
     this._yPos = 0; this._yVel = 0; this._grounded = true;
+    this._vel = { x: 0, z: 0 }; this._velMag = 0; this._landDip = 0;
     // Recompute the floor at the new spawn so the eye height is correct
     // immediately (spawns are on open ground → floorY 0).
     this._floorY = 0; this._lastFloorY = 0;
@@ -4951,13 +5161,14 @@ const GameEngine = {
     this._scopeFovBase = this._fov;
     if (on) {
       const target = (w === 'sniper') ? 22
-                   : (w === 'rifle')  ? Math.max(45, this._fov - 12)
+                   : (w === 'scout')  ? 30          // lighter zoom than the AWP
+                   : (w === 'rifle' || w === 'm4') ? Math.max(45, this._fov - 12)
                    : Math.max(48, this._fov - 10);
       this._scopeFovTarget = target;
     } else {
       this._scopeFovTarget = this._fov; // restore base
     }
-    UIManager.showScopeOverlay(on && w === 'sniper');
+    UIManager.showScopeOverlay(on && (w === 'sniper' || w === 'scout'));
   },
 
   setFOV(f) {
@@ -5421,6 +5632,8 @@ const UIManager = {
     document.getElementById('vote-rand').className  = v === 'random'      ? 'active-rand' : '';
     const depot = document.getElementById('vote-depot');
     if (depot) depot.className = v === 'cs_depot' ? 'active-sym' : '';
+    const mid = document.getElementById('vote-mid');
+    if (mid) mid.className = v === 'cs_mid' ? 'active-sym' : '';
   },
 
   // 10-second pre-match countdown so players have time to vote on the map.
@@ -7431,21 +7644,24 @@ const Economy = {
   roundWinBonus: 250,
   lossStreak: 0,
   lossBonus: [900, 1200, 1500, 1800, 2100],
-  killReward: { knife: 600, pistol: 250, shotgun: 400, rifle: 250, sniper: 150, molotov: 250, smoke: 250 },
-  prices: { knife: 0, pistol: 0, shotgun: 1100, rifle: 2700, sniper: 4750 },
+  killReward: { knife: 600, pistol: 250, deagle: 250, smg: 500, shotgun: 400, rifle: 250, m4: 250, scout: 250, sniper: 150, molotov: 250, smoke: 250 },
+  prices: { knife: 0, pistol: 0, deagle: 700, shotgun: 1100, smg: 1250, scout: 1700, rifle: 2700, m4: 3100, sniper: 4750 },
   loadout: new Set(['knife', 'pistol']),
   menuOpen: false,
   _timer: null,
   _freezeTimer: null,
 
-  // Buy-menu rows. Hotkeys match the in-game weapon-slot keys (1 rifle,
-  // 2 pistol, 3 shotgun, 4 sniper) so the same number means the same gun
-  // whether you're buying or quick-switching. Pistol/knife are free.
+  // Buy-menu rows, cheap → expensive. While the menu is open, the number
+  // keys buy these slots; the server-sent price list overrides the defaults.
   SLOTS: [
-    { key: 'rifle',   hotkey: '1' },
-    { key: 'pistol',  hotkey: '2' },
-    { key: 'shotgun', hotkey: '3' },
-    { key: 'sniper',  hotkey: '4' },
+    { key: 'deagle',  hotkey: '1' },
+    { key: 'shotgun', hotkey: '2' },
+    { key: 'smg',     hotkey: '3' },
+    { key: 'scout',   hotkey: '4' },
+    { key: 'rifle',   hotkey: '5' },
+    { key: 'm4',      hotkey: '6' },
+    { key: 'sniper',  hotkey: '7' },
+    { key: 'pistol',  hotkey: ''  },
     { key: 'knife',   hotkey: ''  },
   ],
 
@@ -7847,7 +8063,7 @@ const NetworkManager = {
       if (d.hit) {
         try { UIManager.showDamageNumber(d.damage, !!d.headshot, !!d.penetrated); } catch (_) {}
         UIManager.flashHitMarker(!!d.headshot);
-        if (d.headshot) AudioManager.playKill();
+        if (d.headshot) AudioManager.playDink();   // CS:GO headshot "dink"
         else            AudioManager.playHit();
       }
       // sync ammo if server tells us
