@@ -261,6 +261,10 @@ input:focus { border-color:var(--accent); }
 /* ═══ GAME SCREEN ════════════════════════════════════════════════════════ */
 #screen-game { background:#000;padding:0; }
 #game-canvas { position:absolute;inset:0;width:100%;height:100%;display:block; }
+/* Soft photographic vignette — darkens the frame edges so the centre
+   (where the action is) pops. Sits under the HUD, ignores the mouse. */
+#fx-vignette { position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(ellipse at center, transparent 58%, rgba(4,8,16,0.18) 82%, rgba(2,5,12,0.38) 100%); }
 .hud-el { position:absolute;pointer-events:none;font-family:'Arial',monospace; }
 
 /* Score bar */
@@ -1010,6 +1014,8 @@ input:focus { border-color:var(--accent); }
 <!-- ═══ GAME ════════════════════════════════════════════════════════════════ -->
 <div id="screen-game" class="screen">
   <canvas id="game-canvas"></canvas>
+  <!-- Subtle photographic vignette over the 3D view (under the HUD). -->
+  <div id="fx-vignette"></div>
 
   <!-- HUD -->
   <div class="hud-el" id="hud-score">
@@ -2798,6 +2804,31 @@ const GameEngine = {
 
     this.raycaster = new THREE.Raycaster();
 
+    // Gradient sky dome — deep zenith blue down to a warm hazy horizon,
+    // far richer than the old flat-colour background. Sits inside the
+    // camera far plane (100) and ignores fog/depth so it always paints
+    // behind everything.
+    {
+      const c = document.createElement('canvas');
+      c.width = 4; c.height = 256;
+      const g = c.getContext('2d');
+      const gr = g.createLinearGradient(0, 0, 0, 256);
+      gr.addColorStop(0.00, '#3f8fdc');   // zenith
+      gr.addColorStop(0.45, '#7cc1ef');
+      gr.addColorStop(0.62, '#aadcf6');   // horizon haze
+      gr.addColorStop(0.70, '#cfeaf2');
+      gr.addColorStop(1.00, '#cfeaf2');   // below horizon (unseen)
+      g.fillStyle = gr; g.fillRect(0, 0, 4, 256);
+      const skyTex = new THREE.CanvasTexture(c);
+      const sky = new THREE.Mesh(
+        new THREE.SphereGeometry(90, 24, 16),
+        new THREE.MeshBasicMaterial({ map: skyTex, side: THREE.BackSide, fog: false, depthWrite: false })
+      );
+      sky.name = 'skyDome';
+      this.scene.add(sky);
+      this._skyDome = sky;
+    }
+
     this._buildLights();
     this._buildOpponentMesh();
     this._buildGun();
@@ -3088,7 +3119,12 @@ const GameEngine = {
     // aiming — crucial for reading an AWPer holding an angle above you.
     if (ud.headGrp) ud.headGrp.rotation.x = aim * 0.55;
     if (ud.weaponSocket) {
-      ud.weaponSocket.rotation.x = aim * 0.8 - (ud.weaponSocket.userData._slash || 0) * 0.9;
+      // Remote reload: tip the gun down with a small working wobble for the
+      // duration the server reported (positive x tilts the +z barrel down).
+      const now = performance.now();
+      const rl = ud.weaponSocket.userData._reloadUntil || 0;
+      const reloadTilt = rl > now ? 0.48 + Math.sin(now * 0.018) * 0.06 : 0;
+      ud.weaponSocket.rotation.x = aim * 0.8 - (ud.weaponSocket.userData._slash || 0) * 0.9 + reloadTilt;
     }
   },
 
@@ -3281,6 +3317,7 @@ const GameEngine = {
       const fs   = box(0.012, 0.024, 0.012, metal); fs.position.set(0, 0.04, -0.43);
       const rs   = box(0.022, 0.012, 0.012, metal); rs.position.set(0, 0.04, -0.06);
       G.add(recv, bar, hg, stk, grip, mag1, fs, rs);
+      G.userData.magMesh = mag1; G.userData.magHome = mag1.position.clone();
     } else if (key === 'pistol') {
       G.position.set(0.18, -0.18, -0.36);
       G.rotation.y = 0.04;
@@ -3322,6 +3359,7 @@ const GameEngine = {
       const bipL   = box(0.018, 0.11, 0.015, metal); bipL.position.set(-0.048, -0.055, -0.40); bipL.rotation.z = 0.28;
       const bipR   = box(0.018, 0.11, 0.015, metal); bipR.position.set( 0.048, -0.055, -0.40); bipR.rotation.z = -0.28;
       G.add(recv, bar, hg, stk, grip, mag, scopeB, lensF, lensR, supp, bipL, bipR);
+      G.userData.magMesh = mag; G.userData.magHome = mag.position.clone();
     } else if (key === 'm4') {
       // Modern carbine: railed flat-top receiver, carry-handle sight,
       // straighter dark furniture than the wooden AK.
@@ -3338,6 +3376,7 @@ const GameEngine = {
       const sight= box(0.016, 0.034, 0.05, metal); sight.position.set(0, 0.066, -0.02);
       const fs   = box(0.012, 0.028, 0.012, metal);fs.position.set(0, 0.045, -0.44);
       G.add(recv, rail, bar, hg, stk, stkP, grip, mag, sight, fs);
+      G.userData.magMesh = mag; G.userData.magHome = mag.position.clone();
     } else if (key === 'smg') {
       // Compact SMG: stubby barrel, boxy body, forward vertical grip,
       // side-folded stock silhouette.
@@ -3352,6 +3391,7 @@ const GameEngine = {
       const stk  = box(0.022, 0.05, 0.14, metal); stk.position.set(0, 0.0, 0.18);
       const fs   = box(0.012, 0.024, 0.012, metal);fs.position.set(0, 0.05, -0.22);
       G.add(body, bar, shr, mag, grip, vfg, stk, fs);
+      G.userData.magMesh = mag; G.userData.magHome = mag.position.clone();
     } else if (key === 'deagle') {
       // Heavy pistol: long slab slide, big bore, chunky grip.
       G.position.set(0.18, -0.18, -0.38);
@@ -3379,6 +3419,7 @@ const GameEngine = {
       const lensR = box(0.04, 0.04, 0.024, metal);  lensR.position.set(0, 0.055, 0.02);
       const bolt  = box(0.05, 0.018, 0.018, metal); bolt.position.set(0.045, 0.012, 0.06); bolt.rotation.z = -0.5;
       G.add(recv, bar, stk, grip, mag, scopeB, lensF, lensR, bolt);
+      G.userData.magMesh = mag; G.userData.magHome = mag.position.clone();
     } else if (key === 'knife') {
       // Combat knife held UPRIGHT in the right hand — blade pointing straight
       // up. Only a tiny yaw so it isn't perfectly edge-on to the camera.
@@ -3529,6 +3570,12 @@ const GameEngine = {
   _ensureArenaTextures() {
     if (this._arenaTex) return this._arenaTex;
 
+    // Higher-fidelity procedural textures: 4x the old resolution, smooth
+    // (linear) filtering with mipmaps, and anisotropy so the ground stays
+    // sharp at grazing angles. Painters bake in simple lighting (bevels,
+    // ambient-occlusion edges, streaks) so surfaces read as material, not
+    // flat colour.
+    const maxAniso = this.renderer?.capabilities?.getMaxAnisotropy?.() || 4;
     const mkCanvasTex = (w, h, repeat, paint) => {
       const c = document.createElement('canvas');
       c.width = w; c.height = h;
@@ -3536,170 +3583,280 @@ const GameEngine = {
       const t = new THREE.CanvasTexture(c);
       t.wrapS = t.wrapT = THREE.RepeatWrapping;
       t.repeat.set(repeat, repeat);
-      t.magFilter = THREE.NearestFilter;
-      t.minFilter = THREE.NearestMipmapLinearFilter;
+      t.magFilter = THREE.LinearFilter;
+      t.minFilter = THREE.LinearMipmapLinearFilter;
+      t.anisotropy = maxAniso;
       return t;
     };
-
-    // GRASS — bright green with darker tufts (low-poly look matches the
-    // rest of the game). Tile size deliberately small so it tessellates
-    // visibly without looking like a photo.
-    const grass = mkCanvasTex(64, 64, 1, (g, W, H) => {
-      g.fillStyle = '#6cc04b';
-      g.fillRect(0, 0, W, H);
-      // Tuft dots
-      for (let i = 0; i < 220; i++) {
-        const x = Math.random() * W, y = Math.random() * H;
-        const s = 1 + Math.random() * 2;
-        g.fillStyle = ['#5fb83e', '#4e9e34', '#79cc58'][Math.floor(Math.random() * 3)];
-        g.fillRect(x | 0, y | 0, s, s);
+    // Fine per-pixel speckle — breaks up flat fills everywhere.
+    const speckle = (g, W, H, n, dark = 0.10, light = 0.08) => {
+      for (let i = 0; i < n; i++) {
+        const a = Math.random();
+        g.fillStyle = a < 0.5
+          ? `rgba(0,0,0,${(Math.random() * dark).toFixed(3)})`
+          : `rgba(255,255,255,${(Math.random() * light).toFixed(3)})`;
+        g.fillRect((Math.random() * W) | 0, (Math.random() * H) | 0, 1 + (Math.random() * 2 | 0), 1);
       }
-      // Lighter highlights
-      for (let i = 0; i < 35; i++) {
-        const x = Math.random() * W, y = Math.random() * H;
-        g.fillStyle = '#9bdb7a';
-        g.fillRect(x | 0, y | 0, 1, 2);
-      }
-    });
-
-    // BRICK / SAND WALL — rows of tan blocks with grout lines.
-    const wall = mkCanvasTex(128, 64, 1, (g, W, H) => {
-      g.fillStyle = '#c8a967';
+    };
+    // Shared brick painter (wall + graffiti base): bevelled bricks with
+    // corner AO and per-brick tone/speckle.
+    const paintBricks = (g, W, H, rows, cols) => {
+      g.fillStyle = '#7a5d2c';                       // grout base
       g.fillRect(0, 0, W, H);
-      const rows = 4, cols = 8;
       const cw = W / cols, ch = H / rows;
-      for (let r = 0; r < rows; r++) {
-        const offset = (r % 2) * (cw / 2);
-        for (let c = 0; c < cols + 1; c++) {
-          const x = c * cw + offset - cw / 2;
-          const y = r * ch;
-          // Each brick slightly varied shade.
-          const shade = ['#d2b573', '#b89858', '#caa666', '#bf9c5d'][(r * 7 + c) % 4];
-          g.fillStyle = shade;
-          g.fillRect(x + 1, y + 1, cw - 2, ch - 2);
-        }
-      }
-      // Dark grout lines on top.
-      g.strokeStyle = '#7a5d2c';
-      g.lineWidth = 1.5;
-      for (let r = 0; r <= rows; r++) {
-        g.beginPath(); g.moveTo(0, r * ch); g.lineTo(W, r * ch); g.stroke();
-      }
-    });
-
-    // WOOD CRATE — vertical planks with grain.
-    const wood = mkCanvasTex(64, 64, 1, (g, W, H) => {
-      g.fillStyle = '#a47042';
-      g.fillRect(0, 0, W, H);
-      const planks = 4;
-      const pw = W / planks;
-      for (let p = 0; p < planks; p++) {
-        const shade = ['#b07c4c', '#9a6539', '#a47042', '#8e5d33'][p % 4];
-        g.fillStyle = shade;
-        g.fillRect(p * pw, 0, pw - 1, H);
-        // Grain lines
-        g.strokeStyle = 'rgba(60,35,15,0.4)';
-        g.lineWidth = 1;
-        for (let i = 0; i < 4; i++) {
-          const lx = p * pw + 3 + i * (pw / 5) + (Math.random() * 2 - 1);
-          g.beginPath();
-          g.moveTo(lx, 0);
-          g.lineTo(lx + (Math.random() * 2 - 1), H);
-          g.stroke();
-        }
-      }
-      // Plank seams (vertical dark lines).
-      g.strokeStyle = '#4a2d14';
-      g.lineWidth = 1.5;
-      for (let p = 1; p < planks; p++) {
-        g.beginPath(); g.moveTo(p * pw, 0); g.lineTo(p * pw, H); g.stroke();
-      }
-      // Top/bottom nail row.
-      g.fillStyle = '#3a2a18';
-      for (let p = 0; p < planks; p++) {
-        g.fillRect(p * pw + pw / 2 - 1, 2, 2, 2);
-        g.fillRect(p * pw + pw / 2 - 1, H - 4, 2, 2);
-      }
-    });
-
-    // METAL CONTAINER — ribbed shipping-container panels.
-    const metal = mkCanvasTex(64, 64, 1, (g, W, H) => {
-      g.fillStyle = '#506478';
-      g.fillRect(0, 0, W, H);
-      // Vertical ribs
-      const ribs = 6;
-      const rw = W / ribs;
-      for (let i = 0; i < ribs; i++) {
-        const x = i * rw;
-        g.fillStyle = '#465a6e';
-        g.fillRect(x, 0, 1, H);
-        g.fillStyle = '#5e7388';
-        g.fillRect(x + rw / 2, 0, 2, H);
-      }
-      // Rust streaks
-      g.fillStyle = 'rgba(150,75,30,0.25)';
-      for (let i = 0; i < 5; i++) {
-        const x = Math.random() * W;
-        const y = Math.random() * H;
-        g.fillRect(x, y, 2, 6 + Math.random() * 10);
-      }
-    });
-
-    // GENERIC PLATED CRATE for the other palette colours — kept solid
-    // but with a subtle highlight + bevel so it doesn't look flat.
-    const platedFor = (hex) => mkCanvasTex(32, 32, 1, (g, W, H) => {
-      g.fillStyle = '#' + hex.toString(16).padStart(6, '0');
-      g.fillRect(0, 0, W, H);
-      // Inner panel border
-      g.strokeStyle = 'rgba(0,0,0,0.25)';
-      g.lineWidth = 2;
-      g.strokeRect(3, 3, W - 6, H - 6);
-      // Corner studs
-      g.fillStyle = 'rgba(0,0,0,0.35)';
-      for (const [x, y] of [[2,2],[W-4,2],[2,H-4],[W-4,H-4]]) {
-        g.fillRect(x, y, 2, 2);
-      }
-    });
-
-    // GRAFFITI WALL — a brick texture with bright spray-paint shapes
-    // and tags on top. Painted onto the warehouse interior walls of
-    // the Depot map so the route reads like a real industrial site.
-    const graffiti = mkCanvasTex(256, 128, 1, (g, W, H) => {
-      // Brick base.
-      g.fillStyle = '#c8a967';
-      g.fillRect(0, 0, W, H);
-      const rows = 5, cols = 12;
-      const cw = W / cols, ch = H / rows;
+      const tones = ['#d2b573', '#b89858', '#caa666', '#bf9c5d', '#c4a05f'];
       for (let r = 0; r < rows; r++) {
         const off = (r % 2) * (cw / 2);
-        for (let c = 0; c < cols + 1; c++) {
-          const x = c * cw + off - cw / 2;
-          const y = r * ch;
-          g.fillStyle = ['#caa666', '#b89858', '#d2b573', '#bf9c5d'][(r * 7 + c) % 4];
-          g.fillRect(x + 1, y + 1, cw - 2, ch - 2);
+        for (let c = -1; c < cols + 1; c++) {
+          const x = c * cw + off, y = r * ch;
+          g.fillStyle = tones[((r * 7 + c) % tones.length + tones.length) % tones.length];
+          g.fillRect(x + 2, y + 2, cw - 4, ch - 4);
+          // Bevel: light top edge, dark bottom edge.
+          g.fillStyle = 'rgba(255,255,255,0.18)';
+          g.fillRect(x + 2, y + 2, cw - 4, 2);
+          g.fillStyle = 'rgba(0,0,0,0.22)';
+          g.fillRect(x + 2, y + ch - 4, cw - 4, 2);
+          // Corner AO blobs.
+          g.fillStyle = 'rgba(0,0,0,0.12)';
+          g.fillRect(x + 2, y + 2, 3, 3);
+          g.fillRect(x + cw - 5, y + ch - 5, 3, 3);
+          // Occasional crack.
+          if (((r * 13 + c * 7) % 9) === 0) {
+            g.strokeStyle = 'rgba(60,40,15,0.5)'; g.lineWidth = 1;
+            g.beginPath();
+            g.moveTo(x + cw * 0.3, y + 3);
+            g.lineTo(x + cw * 0.45, y + ch * 0.5);
+            g.lineTo(x + cw * 0.35, y + ch - 3);
+            g.stroke();
+          }
         }
       }
-      // Spray paint blob 1 — magenta cloud.
-      g.fillStyle = 'rgba(220,60,180,0.7)';
-      for (let i = 0; i < 18; i++) {
-        const x = 50 + Math.random() * 80;
-        const y = 30 + Math.random() * 50;
-        const s = 8 + Math.random() * 12;
-        g.fillRect(x, y, s, s);
+      speckle(g, W, H, (W * H) / 28);
+    };
+
+    // GRASS — layered turf: soft tonal patches, dense blade strokes,
+    // dirt scrapes and a few pebbles.
+    const grass = mkCanvasTex(256, 256, 1, (g, W, H) => {
+      g.fillStyle = '#69bd49';
+      g.fillRect(0, 0, W, H);
+      // Large soft light/dark patches so tiling reads organic.
+      for (let i = 0; i < 14; i++) {
+        const x = Math.random() * W, y = Math.random() * H, r = 30 + Math.random() * 60;
+        const gr = g.createRadialGradient(x, y, 0, x, y, r);
+        const dark = Math.random() < 0.5;
+        gr.addColorStop(0, dark ? 'rgba(58,118,40,0.35)' : 'rgba(140,214,108,0.30)');
+        gr.addColorStop(1, 'rgba(0,0,0,0)');
+        g.fillStyle = gr;
+        g.fillRect(x - r, y - r, r * 2, r * 2);
       }
-      // Tag text "PVP" in cyan.
+      // Dirt scrapes.
+      for (let i = 0; i < 6; i++) {
+        const x = Math.random() * W, y = Math.random() * H, r = 12 + Math.random() * 22;
+        const gr = g.createRadialGradient(x, y, 0, x, y, r);
+        gr.addColorStop(0, 'rgba(125,96,55,0.55)');
+        gr.addColorStop(0.7, 'rgba(125,96,55,0.20)');
+        gr.addColorStop(1, 'rgba(0,0,0,0)');
+        g.fillStyle = gr;
+        g.fillRect(x - r, y - r, r * 2, r * 2);
+      }
+      // Blade strokes — short angled ticks in varied greens.
+      const greens = ['#5fb83e', '#4e9e34', '#79cc58', '#8fdb6c', '#3f8c2b'];
+      for (let i = 0; i < 1100; i++) {
+        const x = Math.random() * W, y = Math.random() * H;
+        g.strokeStyle = greens[(Math.random() * greens.length) | 0];
+        g.lineWidth = 1;
+        g.beginPath();
+        g.moveTo(x, y);
+        g.lineTo(x + (Math.random() * 3 - 1.5), y - (2 + Math.random() * 3));
+        g.stroke();
+      }
+      // Pebbles.
+      for (let i = 0; i < 22; i++) {
+        const x = Math.random() * W, y = Math.random() * H, s = 1 + Math.random() * 2.5;
+        g.fillStyle = 'rgba(150,150,140,0.7)';
+        g.fillRect(x, y, s, s);
+        g.fillStyle = 'rgba(255,255,255,0.25)';
+        g.fillRect(x, y, s, 1);
+      }
+      speckle(g, W, H, 1800, 0.08, 0.06);
+    });
+
+    // BRICK / SAND WALL.
+    const wall = mkCanvasTex(512, 256, 1, (g, W, H) => paintBricks(g, W, H, 8, 16));
+
+    // WOOD CRATE — planks with wavy grain, knots and nailed batten edges.
+    const wood = mkCanvasTex(256, 256, 1, (g, W, H) => {
+      g.fillStyle = '#a47042';
+      g.fillRect(0, 0, W, H);
+      const planks = 5, pw = W / planks;
+      for (let p = 0; p < planks; p++) {
+        const shade = ['#b07c4c', '#9a6539', '#a47042', '#8e5d33', '#aa764a'][p % 5];
+        g.fillStyle = shade;
+        g.fillRect(p * pw, 0, pw - 2, H);
+        // Wavy grain lines.
+        g.strokeStyle = 'rgba(60,35,15,0.35)';
+        g.lineWidth = 1;
+        for (let i = 0; i < 7; i++) {
+          const lx = p * pw + 4 + i * (pw / 8);
+          g.beginPath();
+          g.moveTo(lx, 0);
+          g.bezierCurveTo(lx + 3, H * 0.3, lx - 3, H * 0.6, lx + 2, H);
+          g.stroke();
+        }
+        // A knot on some planks.
+        if (p % 2 === 0) {
+          const kx = p * pw + pw / 2, ky = 40 + (p * 67) % (H - 80);
+          for (let rr = 6; rr > 0; rr -= 2) {
+            g.strokeStyle = `rgba(60,35,15,${0.55 - rr * 0.05})`;
+            g.beginPath(); g.ellipse(kx, ky, rr, rr * 1.6, 0, 0, Math.PI * 2); g.stroke();
+          }
+          g.fillStyle = 'rgba(45,26,10,0.8)';
+          g.beginPath(); g.ellipse(kx, ky, 2, 3.2, 0, 0, Math.PI * 2); g.fill();
+        }
+        // Plank bevel: light left edge, dark seam right.
+        g.fillStyle = 'rgba(255,255,255,0.10)';
+        g.fillRect(p * pw, 0, 2, H);
+        g.fillStyle = 'rgba(30,18,8,0.55)';
+        g.fillRect(p * pw + pw - 3, 0, 3, H);
+      }
+      // Horizontal battens top + bottom with nail heads.
+      for (const by of [4, H - 22]) {
+        g.fillStyle = 'rgba(0,0,0,0.16)';
+        g.fillRect(0, by + 16, W, 3);                 // batten drop shadow
+        g.fillStyle = '#8e5d33';
+        g.fillRect(0, by, W, 16);
+        g.fillStyle = 'rgba(255,255,255,0.10)';
+        g.fillRect(0, by, W, 2);
+        for (let p = 0; p < planks; p++) {
+          const nx = p * pw + pw / 2;
+          g.fillStyle = '#3a2a18'; g.fillRect(nx - 2, by + 6, 4, 4);
+          g.fillStyle = 'rgba(255,255,255,0.5)'; g.fillRect(nx - 2, by + 6, 2, 2);
+        }
+      }
+      speckle(g, W, H, 1400);
+    });
+
+    // METAL CONTAINER — shaded corrugation, weld seams, rivets and rust.
+    const metal = mkCanvasTex(256, 256, 1, (g, W, H) => {
+      g.fillStyle = '#506478';
+      g.fillRect(0, 0, W, H);
+      // Corrugated ribs — each rib gets a highlight→shadow gradient.
+      const ribs = 8, rw = W / ribs;
+      for (let i = 0; i < ribs; i++) {
+        const x = i * rw;
+        const gr = g.createLinearGradient(x, 0, x + rw, 0);
+        gr.addColorStop(0.0, '#42566a');
+        gr.addColorStop(0.35, '#64798e');
+        gr.addColorStop(0.5, '#6e8398');
+        gr.addColorStop(0.65, '#5a6f84');
+        gr.addColorStop(1.0, '#3e5266');
+        g.fillStyle = gr;
+        g.fillRect(x, 0, rw, H);
+      }
+      // Horizontal weld seams.
+      for (const sy of [H * 0.25, H * 0.75]) {
+        g.fillStyle = 'rgba(0,0,0,0.25)';
+        g.fillRect(0, sy, W, 3);
+        g.fillStyle = 'rgba(255,255,255,0.12)';
+        g.fillRect(0, sy - 2, W, 2);
+        // Rivets along the seam.
+        for (let x = rw / 2; x < W; x += rw) {
+          g.fillStyle = '#2e3e4e'; g.beginPath(); g.arc(x, sy + 1, 3, 0, Math.PI * 2); g.fill();
+          g.fillStyle = 'rgba(255,255,255,0.45)'; g.beginPath(); g.arc(x - 1, sy, 1.2, 0, Math.PI * 2); g.fill();
+        }
+      }
+      // Rust drips bleeding down from the rivet seams.
+      for (let i = 0; i < 9; i++) {
+        const x = Math.random() * W, y = (Math.random() < 0.5 ? H * 0.25 : H * 0.75) + 2;
+        const len = 10 + Math.random() * 30, w2 = 2 + Math.random() * 3;
+        const gr = g.createLinearGradient(0, y, 0, y + len);
+        gr.addColorStop(0, 'rgba(150,75,30,0.5)');
+        gr.addColorStop(1, 'rgba(150,75,30,0)');
+        g.fillStyle = gr;
+        g.fillRect(x, y, w2, len);
+      }
+      // Scratches.
+      for (let i = 0; i < 10; i++) {
+        const x = Math.random() * W, y = Math.random() * H;
+        g.strokeStyle = `rgba(220,228,235,${0.10 + Math.random() * 0.15})`;
+        g.lineWidth = 1;
+        g.beginPath();
+        g.moveTo(x, y);
+        g.lineTo(x + 8 + Math.random() * 26, y + (Math.random() * 8 - 4));
+        g.stroke();
+      }
+      speckle(g, W, H, 1200);
+    });
+
+    // GENERIC PLATED CRATE for the other palette colours — brushed panel
+    // with a bevelled border and corner bolts.
+    const platedFor = (hex) => mkCanvasTex(128, 128, 1, (g, W, H) => {
+      const base = '#' + hex.toString(16).padStart(6, '0');
+      g.fillStyle = base;
+      g.fillRect(0, 0, W, H);
+      // Brushed diagonal strokes.
+      for (let i = 0; i < 240; i++) {
+        const x = Math.random() * W, y = Math.random() * H;
+        g.strokeStyle = Math.random() < 0.5 ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.06)';
+        g.lineWidth = 1;
+        g.beginPath(); g.moveTo(x, y); g.lineTo(x + 8, y + 8); g.stroke();
+      }
+      // Bevelled border: light top/left, dark bottom/right.
+      g.fillStyle = 'rgba(255,255,255,0.22)';
+      g.fillRect(0, 0, W, 3); g.fillRect(0, 0, 3, H);
+      g.fillStyle = 'rgba(0,0,0,0.30)';
+      g.fillRect(0, H - 3, W, 3); g.fillRect(W - 3, 0, 3, H);
+      // Inner panel line.
+      g.strokeStyle = 'rgba(0,0,0,0.28)';
+      g.lineWidth = 2;
+      g.strokeRect(10, 10, W - 20, H - 20);
+      g.strokeStyle = 'rgba(255,255,255,0.10)';
+      g.strokeRect(12, 12, W - 24, H - 24);
+      // Corner bolts with highlights.
+      for (const [x, y] of [[7, 7], [W - 7, 7], [7, H - 7], [W - 7, H - 7]]) {
+        g.fillStyle = 'rgba(0,0,0,0.45)';
+        g.beginPath(); g.arc(x, y, 3.4, 0, Math.PI * 2); g.fill();
+        g.fillStyle = 'rgba(255,255,255,0.4)';
+        g.beginPath(); g.arc(x - 1, y - 1, 1.2, 0, Math.PI * 2); g.fill();
+      }
+    });
+
+    // GRAFFITI WALL — the upgraded brick base with soft spray-paint art.
+    const graffiti = mkCanvasTex(512, 256, 1, (g, W, H) => {
+      paintBricks(g, W, H, 8, 16);
+      // Soft spray blobs (radial gradients, not hard squares).
+      const blob = (x, y, r, rgba) => {
+        const gr = g.createRadialGradient(x, y, 0, x, y, r);
+        gr.addColorStop(0, rgba.replace('A)', '0.65)'));
+        gr.addColorStop(1, rgba.replace('A)', '0)'));
+        g.fillStyle = gr;
+        g.fillRect(x - r, y - r, r * 2, r * 2);
+      };
+      for (let i = 0; i < 10; i++) blob(120 + Math.random() * 120, 60 + Math.random() * 100, 18 + Math.random() * 26, 'rgba(220,60,180,A)');
+      for (let i = 0; i < 6; i++)  blob(330 + Math.random() * 90, 80 + Math.random() * 90, 14 + Math.random() * 22, 'rgba(40,200,120,A)');
+      // Paint drips under the magenta piece.
+      for (let i = 0; i < 7; i++) {
+        const x = 130 + Math.random() * 110, y = 130 + Math.random() * 30;
+        const len = 8 + Math.random() * 22;
+        const gr = g.createLinearGradient(0, y, 0, y + len);
+        gr.addColorStop(0, 'rgba(220,60,180,0.55)');
+        gr.addColorStop(1, 'rgba(220,60,180,0)');
+        g.fillStyle = gr;
+        g.fillRect(x, y, 2.5, len);
+      }
+      // "PVP" tag — dark outline + cyan fill.
+      g.font = 'bold 72px sans-serif';
+      g.lineWidth = 8; g.strokeStyle = 'rgba(10,30,40,0.85)';
+      g.strokeText('PVP', 150, 150);
       g.fillStyle = '#1ad6f0';
-      g.font = 'bold 36px sans-serif';
-      g.fillText('PVP', 78, 75);
-      // Yellow accent strokes.
-      g.strokeStyle = '#ffd84a';
-      g.lineWidth = 4;
-      g.beginPath();
-      g.moveTo(35, 88); g.lineTo(165, 92); g.stroke();
-      // Star tag (red).
+      g.fillText('PVP', 150, 150);
+      // Yellow underline swash.
+      g.strokeStyle = '#ffd84a'; g.lineWidth = 7; g.lineCap = 'round';
+      g.beginPath(); g.moveTo(80, 178); g.quadraticCurveTo(W / 2, 196, 350, 182); g.stroke();
+      // Red star.
       g.fillStyle = '#e63946';
       g.beginPath();
-      const cx = 200, cy = 60, R = 18, r2 = 8;
+      const cx = 420, cy = 90, R = 34, r2 = 15;
       for (let i = 0; i < 10; i++) {
         const a = (Math.PI / 5) * i;
         const rr = (i % 2) ? r2 : R;
@@ -3707,14 +3864,16 @@ const GameEngine = {
         const py = cy + Math.sin(a - Math.PI / 2) * rr;
         if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
       }
-      g.closePath();
-      g.fill();
+      g.closePath(); g.fill();
+      // Small white stencil tag.
+      g.font = 'bold 26px monospace';
+      g.fillStyle = 'rgba(245,245,245,0.85)';
+      g.fillText('EZ', 52, 70);
     });
 
     this._arenaTex = { grass, wall, wood, metal, graffiti, plated: platedFor };
     return this._arenaTex;
   },
-
   buildArena(coverBoxes, arenaSize = 40, spawnPoints = null) {
     // Clear bullet holes from previous match
     // Holes share one geometry/material (see addBulletHole) — only unhook
@@ -3735,9 +3894,9 @@ const GameEngine = {
     const floorTex = tex.grass.clone();
     floorTex.needsUpdate = true;
     floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
-    floorTex.repeat.set(arenaSize / 2, arenaSize / 2);
-    floorTex.magFilter = THREE.NearestFilter;
-    floorTex.minFilter = THREE.NearestMipmapLinearFilter;
+    // Tile every 4m (the upgraded 256px grass carries enough detail per
+    // tile) — smooth filtering + anisotropy are inherited from the source.
+    floorTex.repeat.set(arenaSize / 4, arenaSize / 4);
     const floorMat = new THREE.MeshLambertMaterial({ map: floorTex, color: 0xffffff });
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(arenaSize, arenaSize), floorMat);
     floor.rotation.x = -Math.PI / 2;
@@ -4898,6 +5057,63 @@ const GameEngine = {
     // Throwables tick is driving the in-hand position instead.
     if (typeof Throwables !== 'undefined' && Throwables._inHand) return;
 
+    // ── Reload animation ────────────────────────────────────────────────
+    // Procedural, driven purely by reload progress so it always matches the
+    // real reload time: tilt the gun down-left, drop the magazine, seat the
+    // fresh one, then rack the charging handle as the gun comes back up.
+    const wSr = this._wState();
+    if (wSr?.reloading && this._reloadStartedAt && this.currentWeapon !== 'knife') {
+      const wCfg = this._wCfg();
+      const t = Math.min(1, (performance.now() - this._reloadStartedAt) / (wCfg.reloadMs || 1500));
+      const ease = (s) => { s = Math.max(0, Math.min(1, s)); return s * s * (3 - 2 * s); };
+      // Down-and-back envelope: eases in over the first 22%, holds, eases
+      // out over the last 22%.
+      const down = ease(t / 0.22) * (1 - ease((t - 0.78) / 0.22));
+      // Magazine: out at 18–35%, back in at 55–75%.
+      const magOut = ease((t - 0.18) / 0.17) * (1 - ease((t - 0.55) / 0.20));
+      // Charging-handle rack near the end.
+      const rack = t > 0.84 ? Math.sin(Math.min(1, (t - 0.84) / 0.16) * Math.PI) : 0;
+      // Shotgun loads shell-by-shell instead of swapping a mag — rock the
+      // receiver once per shell while it's held low.
+      const shellRock = this.currentWeapon === 'shotgun'
+        ? Math.sin(t * Math.PI * 2 * 4) * 0.018 * down : 0;
+
+      this.gunGroup.position.set(
+        home.x + bobX - down * 0.05,
+        home.y + bobY - down * 0.11 + shellRock,
+        home.z + down * 0.07 + rack * 0.045
+      );
+      this.gunGroup.rotation.x = down * 0.34 - rack * 0.12;
+      this.gunGroup.rotation.y = down * 0.10;
+      this.gunGroup.rotation.z = down * 0.38;
+      // Animate the magazine mesh (when this weapon has one) sliding out
+      // and snapping back in.
+      const magMesh = this.gunGroup.userData?.magMesh;
+      const magHome = this.gunGroup.userData?.magHome;
+      if (magMesh && magHome) {
+        magMesh.position.set(magHome.x, magHome.y - magOut * 0.16, magHome.z + magOut * 0.05);
+        magMesh.rotation.x = magOut * 0.4;
+      }
+      // Phase-synced foley: mag-out click, mag-in click, charging rack.
+      const ph = (t >= 0.86) ? 3 : (t >= 0.58) ? 2 : (t >= 0.20) ? 1 : 0;
+      if (ph !== this._reloadSndPhase) {
+        this._reloadSndPhase = ph;
+        try {
+          if (ph === 1 || ph === 2) AudioManager.playSwitch();
+          if (ph === 3) AudioManager.playDryFire();
+        } catch (_) {}
+      }
+      return;
+    }
+    // Reload finished/idle — make sure the mag mesh is seated back home.
+    this._reloadSndPhase = 0;
+    const magMesh0 = this.gunGroup.userData?.magMesh;
+    const magHome0 = this.gunGroup.userData?.magHome;
+    if (magMesh0 && magHome0 && magMesh0.position.y !== magHome0.y) {
+      magMesh0.position.copy(magHome0);
+      magMesh0.rotation.x = 0;
+    }
+
     if (this.currentWeapon === 'knife') {
       // Slash arc: position + rotation peak at swing midpoint via sin(πx),
       // so the blade sweeps out and returns to home in a single motion.
@@ -4941,6 +5157,9 @@ const GameEngine = {
     // Keep the Web Audio listener glued to the camera so remote_shot
     // PannerNodes can pan/attenuate against the player's actual POV.
     try { AudioManager.updateListener?.(this.camera); } catch (_) {}
+    // Sky dome rides with the camera so its surface stays a constant 90m
+    // away — always inside the far plane, no seams at arena corners.
+    if (this._skyDome) this._skyDome.position.copy(this.camera.position);
     // Fade out any active bullet tracers.
     this._tickTracers(dt);
     // Pulse / fade the spawn-invuln aura on any invulnerable opponent.
@@ -5191,6 +5410,13 @@ const GameEngine = {
   onRemoteMelee({ shooterId } = {}) {
     const socket = this._remotePlayerGroup(shooterId)?.userData?.weaponSocket;
     if (socket) socket.userData._slash = 1;
+  },
+
+  // A remote player started reloading — tip their held weapon down for the
+  // reload duration (driven per-frame by _poseSoldier). Cosmetic only.
+  onRemoteReload({ socketId, reloadMs } = {}) {
+    const socket = this._remotePlayerGroup(socketId)?.userData?.weaponSocket;
+    if (socket) socket.userData._reloadUntil = performance.now() + (Number(reloadMs) || 1500);
   },
 
   // Subtle held-weapon motion: a vertical bob while the player is moving,
@@ -8194,6 +8420,7 @@ const NetworkManager = {
     s.on('buy_open',            d => Economy.onBuyOpen(d));
     s.on('match_end',           d => App.onMatchEnd(d));
     s.on('reload_complete',     d => GameEngine.finishReload(d?.weapon));
+    s.on('remote_reload',       d => GameEngine.onRemoteReload(d));
     s.on('position_correction', d => GameEngine.onPositionCorrection(d));
     s.on('disconnect',          () => App.onDisconnect());
   },

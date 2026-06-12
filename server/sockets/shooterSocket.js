@@ -3308,6 +3308,11 @@ function attach(io) {
       wState.reloading = true;
       wState.reloadStartedAt = Date.now();
       Replay.log(match.id, 'reload_start', { s: socket.id, w: wKey });
+      // Tell everyone else so their third-person model of this player can
+      // play the reload animation (purely cosmetic).
+      for (const sid of match.playerIds) {
+        if (sid !== socket.id) ns.to(sid).emit('remote_reload', { socketId: socket.id, weapon: wKey, reloadMs: W.reloadMs });
+      }
       setTimeout(() => {
         if (!matches.has(match.id) || match.ended) return;
         wState.ammo = W.mag;
