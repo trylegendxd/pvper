@@ -1535,11 +1535,11 @@ const AudioManager = {
   //   pistol — gun6.mp3 trimmed to one round (~250 ms)
   //   shotgun— gun8.mp3 trimmed to first big bang (~550 ms)
   //   sniper — same gun4.mp3 single-shot trim as the rifle (per spec)
-  _shotClipSec: { rifle: 0.18, pistol: 0.25, shotgun: 0.55, sniper: 0.18, _default: 0.25 },
+  _shotClipSec: { rifle: 0.18, m4: 0.15, smg: 0.11, pistol: 0.25, deagle: 0.32, shotgun: 0.55, scout: 0.20, sniper: 0.18, _default: 0.25 },
   // Per-weapon playback gain (0..1) for local shots — kept low so the
   // mp3 samples (which are normalised near 0 dBFS) don't blow the mix.
   // Sniper == rifle since they share the same sound.
-  _shotGain:    { rifle: 0.32, pistol: 0.36, shotgun: 0.45, sniper: 0.32, _default: 0.35 },
+  _shotGain:    { rifle: 0.32, m4: 0.28, smg: 0.24, pistol: 0.36, deagle: 0.46, shotgun: 0.45, scout: 0.34, sniper: 0.32, _default: 0.35 },
   // Spatial (remote) shots get a touch more headroom because the
   // PannerNode's distance attenuation cuts most volume on long shots.
   _spatialShotGain: { rifle: 0.40, pistol: 0.45, shotgun: 0.55, sniper: 0.40, _default: 0.45 },
@@ -1789,7 +1789,11 @@ const AudioManager = {
   // Return the right gunshot buffer for a given weapon name, falling
   // back to the generic gunshot, then to null (caller will synthesise).
   _gunshotBufFor(weapon) {
-    return (weapon && this._gunshotBufs?.[weapon]) || this._gunshotBuf || null;
+    // New weapons borrow the closest family's sample (their clip length +
+    // gain entries below still differentiate the report).
+    const alias = { m4: 'rifle', smg: 'rifle', deagle: 'pistol', scout: 'sniper' };
+    const k = alias[weapon] || weapon;
+    return (k && this._gunshotBufs?.[k]) || this._gunshotBuf || null;
   },
 
   resume() { if (this.ctx?.state === 'suspended') this.ctx.resume(); },
@@ -2714,8 +2718,12 @@ const GameEngine = {
   // "Train vs Bot" or starting a real match did nothing).
   weapons: {
     rifle:   { ammo: 30,  reloading: false },
+    m4:      { ammo: 30,  reloading: false },
+    smg:     { ammo: 25,  reloading: false },
     pistol:  { ammo: 12,  reloading: false },
+    deagle:  { ammo: 7,   reloading: false },
     shotgun: { ammo: 6,   reloading: false },
+    scout:   { ammo: 10,  reloading: false },
     sniper:  { ammo: 5,   reloading: false },
     knife:   { ammo: 999, reloading: false },
   },
@@ -2842,6 +2850,12 @@ const GameEngine = {
   // assignToOpp: when true (only for the 1v1 path) the function also
   //              writes _oppLegL/_oppLegR so the existing leg-swing
   //              animation finds them.
+  // Articulated soldier rig. Joints are real pivot groups so the per-frame
+  // pose code can drive them like a skeleton:
+  //   headGrp (neck)            — aim pitch
+  //   armL / armR (shoulders)   — held-weapon pose + gait counter-sway
+  //   legL / legR (HIPS)        — stride swing (old rig pivoted at the FEET)
+  //   kneeL / kneeR (knees)     — bend during the back-swing + jumps
   _buildPlayerMesh(team = null, assignToOpp = false) {
     const accent = team === 'a' ? 0x4a8cff
                  : team === 'b' ? 0xff5a5a
@@ -2853,165 +2867,172 @@ const GameEngine = {
     const group = new THREE.Group();
     group.visible = false;
 
-    // Palette — vest, helmet, shoulder pads use the team accent.
+    // Palette — cloth stays matte (Lambert); helmet/armour plates get a
+    // slight Phong sheen so they catch the sun + rim light.
     const skin     = new THREE.MeshLambertMaterial({ color: 0xd9a173 });
     const stubble  = new THREE.MeshLambertMaterial({ color: 0x6b4a32 });
     const eyeWhite = new THREE.MeshLambertMaterial({ color: 0xffffff });
     const pupil    = new THREE.MeshLambertMaterial({ color: 0x101010 });
     const mouth    = new THREE.MeshLambertMaterial({ color: 0x501818 });
     const uniform  = new THREE.MeshLambertMaterial({ color: 0x6a7b3f });
+    const uniform2 = new THREE.MeshLambertMaterial({ color: 0x5b6a36 });   // sleeve/panel shade
     const vest     = new THREE.MeshLambertMaterial({ color: accent });
     const vestDark = new THREE.MeshLambertMaterial({ color: accentDark });
+    const plate    = new THREE.MeshPhongMaterial({ color: accentDark, specular: 0x444444, shininess: 28 });
+    const helmetM  = new THREE.MeshPhongMaterial({ color: accentDark, specular: 0x555555, shininess: 40 });
     const pouch    = new THREE.MeshLambertMaterial({ color: 0x2f3a18 });
     const pants    = new THREE.MeshLambertMaterial({ color: 0x3d4220 });
+    const pants2   = new THREE.MeshLambertMaterial({ color: 0x343a1b });
     const boots    = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
-    const helmetM  = new THREE.MeshLambertMaterial({ color: accentDark });
+    const metal    = new THREE.MeshPhongMaterial({ color: 0x2c2c2c, specular: 0x666666, shininess: 60 });
 
     const box = (w,h,d,mat) => new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat);
     const cyl = (rTop, rBot, h, segs, mat) =>
       new THREE.Mesh(new THREE.CylinderGeometry(rTop, rBot, h, segs || 12), mat);
 
-    // ── HEAD (smaller, slightly tall — more human-proportioned) ────
-    // Old head was 0.42³; new head is ~0.30 wide × 0.34 tall × 0.30 deep.
-    const head = box(0.30, 0.34, 0.30, skin);
-    head.position.y = 1.70;
-    // Neck — short cylinder bridging head and torso.
+    // ── HEAD GROUP — pivots at the neck so it can track aim pitch ────
+    const headGrp = new THREE.Group();
+    headGrp.position.set(0, 1.52, 0);
+    {
+      const head = box(0.30, 0.34, 0.30, skin);          head.position.y = 0.18;
+      const helmet = box(0.36, 0.17, 0.36, helmetM);     helmet.position.y = 0.40;
+      const helmTop = box(0.30, 0.05, 0.30, helmetM);    helmTop.position.y = 0.50;
+      const brim = box(0.38, 0.03, 0.40, helmetM);       brim.position.y = 0.30;
+      const strap = box(0.34, 0.03, 0.03, boots);        strap.position.set(0, 0.25, 0.16);
+      const visor = box(0.31, 0.085, 0.05, boots);       visor.position.set(0, 0.225, 0.16);
+      const stripe = box(0.38, 0.04, 0.04, vest);        stripe.position.set(0, 0.34, 0.18);
+      // NVG mount stub on the helmet front — instant "operator" read.
+      const nvg = box(0.07, 0.06, 0.05, metal);          nvg.position.set(0, 0.40, 0.20);
+      const eyeL = box(0.06, 0.04, 0.02, eyeWhite);      eyeL.position.set(-0.075, 0.22, 0.155);
+      const eyeR = box(0.06, 0.04, 0.02, eyeWhite);      eyeR.position.set( 0.075, 0.22, 0.155);
+      const pupL = box(0.025, 0.025, 0.02, pupil);       pupL.position.set(-0.075, 0.22, 0.161);
+      const pupR = box(0.025, 0.025, 0.02, pupil);       pupR.position.set( 0.075, 0.22, 0.161);
+      const browL = box(0.07, 0.02, 0.02, stubble);      browL.position.set(-0.075, 0.26, 0.155); browL.rotation.z = -0.2;
+      const browR = box(0.07, 0.02, 0.02, stubble);      browR.position.set( 0.075, 0.26, 0.155); browR.rotation.z =  0.2;
+      const nose = box(0.05, 0.07, 0.045, skin);         nose.position.set(0, 0.175, 0.165);
+      const mouthBg = box(0.12, 0.025, 0.02, mouth);     mouthBg.position.set(0, 0.11, 0.155);
+      const jaw = box(0.24, 0.05, 0.24, skin);           jaw.position.set(0, 0.025, 0.01);
+      const earL = box(0.03, 0.07, 0.07, skin);          earL.position.set(-0.16, 0.18, 0);
+      const earR = box(0.03, 0.07, 0.07, skin);          earR.position.set( 0.16, 0.18, 0);
+      // Headset cup + boom mic on the left ear.
+      const cupL = box(0.045, 0.09, 0.09, boots);        cupL.position.set(-0.175, 0.18, 0);
+      const micArm = box(0.02, 0.02, 0.12, boots);       micArm.position.set(-0.14, 0.13, 0.10); micArm.rotation.y = 0.35;
+      headGrp.add(head, helmet, helmTop, brim, strap, visor, stripe, nvg,
+                  eyeL, eyeR, pupL, pupR, browL, browR, nose, mouthBg, jaw,
+                  earL, earR, cupL, micArm);
+    }
     const neck = cyl(0.10, 0.12, 0.10, 10, skin);
     neck.position.y = 1.50;
 
-    // Helmet sized to the new smaller head.
-    const helmet = box(0.36, 0.17, 0.36, helmetM);
-    helmet.position.y = 1.92;
-    const brim = box(0.38, 0.03, 0.40, helmetM);
-    brim.position.y = 1.82;
-    const strap = box(0.34, 0.03, 0.03, boots);
-    strap.position.set(0, 1.77, 0.16);
-    // Dark visor band across the brow/eyes — reads as a helmeted soldier
-    // from medium distance, where the small facial features blur out.
-    const visor = box(0.31, 0.085, 0.05, boots);
-    visor.position.set(0, 1.745, 0.16);
-
-    // Eyes
-    const eyeL = box(0.06, 0.04, 0.02, eyeWhite);
-    eyeL.position.set(-0.075, 1.74, 0.155);
-    const eyeR = box(0.06, 0.04, 0.02, eyeWhite);
-    eyeR.position.set( 0.075, 1.74, 0.155);
-    const pupL = box(0.025, 0.025, 0.02, pupil);
-    pupL.position.set(-0.075, 1.74, 0.161);
-    const pupR = box(0.025, 0.025, 0.02, pupil);
-    pupR.position.set( 0.075, 1.74, 0.161);
-    // Eyebrows (subtle)
-    const browL = box(0.07, 0.02, 0.02, stubble);
-    browL.position.set(-0.075, 1.78, 0.155); browL.rotation.z = -0.2;
-    const browR = box(0.07, 0.02, 0.02, stubble);
-    browR.position.set( 0.075, 1.78, 0.155); browR.rotation.z =  0.2;
-    // Mouth — a single small slit, less cartoony.
-    const mouthBg = box(0.14, 0.03, 0.02, mouth);
-    mouthBg.position.set(0, 1.64, 0.155);
-    // Ears
-    const earL = box(0.03, 0.07, 0.07, skin);
-    earL.position.set(-0.16, 1.70, 0);
-    const earR = box(0.03, 0.07, 0.07, skin);
-    earR.position.set( 0.16, 1.70, 0);
-    // Stand-in placeholders so the cleanup loop below still runs.
-    const teethBar = box(0.01, 0.01, 0.01, mouth); teethBar.visible = false;
-    const div1 = teethBar.clone(), div2 = teethBar.clone(), div3 = teethBar.clone();
-
-    // ── TORSO — narrower at the waist via stacked cylinders + box ──
-    // Tapered shoulder/chest cylinder, then a slightly narrower waist
-    // block. This reads as a human silhouette rather than a chunky cube.
+    // ── TORSO ────────────────────────────────────────────────────────
     const chest = cyl(0.30, 0.34, 0.50, 14, uniform);
     chest.position.y = 1.22;
-    const tacVest = box(0.58, 0.44, 0.46, vest);
+    const tacVest = box(0.56, 0.44, 0.44, vest);
     tacVest.position.set(0, 1.18, 0.03);
+    // Front armour plate + two mag pouches + a grenade on the strap.
+    const chestPlate = box(0.36, 0.30, 0.05, plate);
+    chestPlate.position.set(0, 1.24, 0.265);
+    const magP1 = box(0.11, 0.14, 0.07, pouch);  magP1.position.set(-0.14, 1.03, 0.27);
+    const magP2 = box(0.11, 0.14, 0.07, pouch);  magP2.position.set( 0.02, 1.03, 0.27);
+    const nade  = box(0.07, 0.10, 0.07, uniform2); nade.position.set(0.18, 1.05, 0.26);
+    const nadeTop = box(0.03, 0.04, 0.03, metal);  nadeTop.position.set(0.18, 1.12, 0.26);
+    // Radio block on the left shoulder strap + antenna.
+    const radio = box(0.09, 0.13, 0.07, boots);  radio.position.set(-0.22, 1.33, 0.22);
+    const antenna = box(0.015, 0.16, 0.015, metal); antenna.position.set(-0.25, 1.47, 0.20);
     const waist = cyl(0.30, 0.26, 0.20, 14, uniform);
     waist.position.y = 0.93;
-    const pouchL = box(0.16, 0.12, 0.10, pouch);
-    pouchL.position.set(-0.16, 1.08, 0.26);
-    const pouchR = box(0.16, 0.12, 0.10, pouch);
-    pouchR.position.set( 0.16, 1.08, 0.26);
     const belt = box(0.62, 0.08, 0.36, boots);
     belt.position.y = 0.82;
-    const buckle = box(0.08, 0.06, 0.04, helmetM);
+    const buckle = box(0.08, 0.06, 0.04, metal);
     buckle.position.set(0, 0.82, 0.20);
-    // Backpack — a team-accent block on the back so the player's team is
-    // readable from behind and the silhouette is fuller. Sits inside the
-    // server z hitbox (±0.4).
+    // Holster on the right hip + canteen on the left.
+    const holster = box(0.10, 0.18, 0.12, boots); holster.position.set(0.27, 0.72, 0.08); holster.rotation.z = -0.08;
+    const canteen = box(0.10, 0.14, 0.09, uniform2); canteen.position.set(-0.27, 0.74, -0.04);
     const backpack = box(0.34, 0.46, 0.16, vestDark);
     backpack.position.set(0, 1.16, -0.26);
+    const packStrapL = box(0.05, 0.40, 0.03, boots); packStrapL.position.set(-0.16, 1.20, 0.255);
+    const packStrapR = box(0.05, 0.40, 0.03, boots); packStrapR.position.set( 0.16, 1.20, 0.255);
+    const bedroll = box(0.30, 0.10, 0.10, pants2);   bedroll.position.set(0, 0.92, -0.28);
 
-    // ── ARMS — cylinders for natural human shape ───────────────────
-    const lUpper = cyl(0.08, 0.10, 0.36, 12, uniform);
-    lUpper.position.set(-0.42, 1.22, 0);
-    const rUpper = cyl(0.08, 0.10, 0.36, 12, uniform);
-    rUpper.position.set( 0.42, 1.22, 0);
-    // Forearms slightly thinner, angled forward (held-rifle pose).
-    const lFore  = cyl(0.07, 0.09, 0.32, 12, uniform);
-    lFore.position.set(-0.34, 0.96, 0.18); lFore.rotation.x = 1.0;
-    const rFore  = cyl(0.07, 0.09, 0.32, 12, uniform);
-    rFore.position.set( 0.34, 0.96, 0.18); rFore.rotation.x = 1.0;
-    const lHand  = box(0.10, 0.10, 0.10, skin);
-    lHand.position.set(-0.30, 0.84, 0.36);
-    const rHand  = box(0.10, 0.10, 0.10, skin);
-    rHand.position.set( 0.30, 0.84, 0.36);
+    // Shoulder pads in the team accent (Phong plates).
+    const shoulderL = box(0.18, 0.10, 0.22, plate);
+    shoulderL.position.set(-0.40, 1.42, 0);
+    const shoulderR = box(0.18, 0.10, 0.22, plate);
+    shoulderR.position.set( 0.40, 1.42, 0);
 
-    // ── HELD WEAPON SOCKET ───────────────────────────────────
-    // A stable hand/weapon socket. The actual weapon model is attached
-    // separately via _attachThirdPersonWeapon() so it can change to match
-    // whatever the player is currently holding. Position/rotation match
-    // the old fixed rifle so the pose is unchanged.
+    // ── ARMS — shoulder-pivot groups in a two-handed weapon hold ─────
+    const mkArm = (side) => {                      // side: -1 left, +1 right
+      const arm = new THREE.Group();
+      arm.position.set(side * 0.34, 1.42, 0);      // shoulder joint
+      const upper = cyl(0.075, 0.092, 0.34, 12, uniform2);
+      upper.position.set(side * 0.075, -0.16, 0.05);
+      upper.rotation.set(0.32, 0, side * -0.30);   // down + slightly out/forward
+      const elbowPad = box(0.10, 0.10, 0.11, pouch);
+      elbowPad.position.set(side * 0.115, -0.30, 0.12);
+      const fore = cyl(0.06, 0.075, 0.32, 12, uniform2);
+      fore.position.set(side * 0.075, -0.42, 0.27);
+      fore.rotation.set(1.15, 0, side * -0.12);    // reach forward to the gun
+      const glove = box(0.095, 0.09, 0.10, boots);
+      glove.position.set(side * 0.055, -0.46, 0.44);
+      const watch = side < 0 ? box(0.07, 0.03, 0.075, metal) : null;
+      if (watch) watch.position.set(side * 0.075, -0.40, 0.36);
+      arm.add(upper, elbowPad, fore, glove);
+      if (watch) arm.add(watch);
+      return arm;
+    };
+    const armL = mkArm(-1);
+    const armR = mkArm(1);
+
+    // ── HELD WEAPON SOCKET (unchanged mount point) ───────────────────
     const weaponSocket = new THREE.Group();
     weaponSocket.name = 'weaponSocket';
     weaponSocket.position.set(0.00, 1.00, 0.55);
     weaponSocket.rotation.set(0, 0, 0);
 
-    // ── LEGS — cylinders give a much more humanoid silhouette ─────
-    const lThigh = cyl(0.11, 0.13, 0.46, 12, pants);
-    lThigh.position.set(-0.13, 0.52, 0);
-    const rThigh = cyl(0.11, 0.13, 0.46, 12, pants);
-    rThigh.position.set( 0.13, 0.52, 0);
-    const lShin  = cyl(0.09, 0.11, 0.32, 12, pants);
-    lShin.position.set(-0.13, 0.18, 0);
-    const rShin  = cyl(0.09, 0.11, 0.32, 12, pants);
-    rShin.position.set( 0.13, 0.18, 0);
-    const lBoot  = box(0.22, 0.10, 0.30, boots);
-    lBoot.position.set(-0.13, -0.02, 0.04);
-    const rBoot  = box(0.22, 0.10, 0.30, boots);
-    rBoot.position.set( 0.13, -0.02, 0.04);
-
-    // Shoulder pads — flat plates in the team accent colour. Pulled in a
-    // touch (±0.40) so the silhouette stays closer to the body hitbox.
-    const shoulderL = box(0.18, 0.10, 0.22, vest);
-    shoulderL.position.set(-0.40, 1.42, 0);
-    const shoulderR = box(0.18, 0.10, 0.22, vest);
-    shoulderR.position.set( 0.40, 1.42, 0);
-
-    // Helmet stripe — a thin band of team accent across the brow.
-    const stripe = box(0.38, 0.04, 0.04, vest);
-    stripe.position.set(0, 1.86, 0.18);
-
-    // Leg groups for swing animation.
-    const legL = new THREE.Group();
-    const legR = new THREE.Group();
-    legL.add(lThigh, lShin, lBoot);
-    legR.add(rThigh, rShin, rBoot);
+    // ── LEGS — HIP-pivot groups with nested knee joints ──────────────
+    const mkLeg = (side) => {
+      const leg = new THREE.Group();
+      leg.position.set(side * 0.13, 0.78, 0);      // hip joint
+      const thigh = cyl(0.11, 0.125, 0.44, 12, pants);
+      thigh.position.set(0, -0.235, 0);
+      const sidePanel = box(0.06, 0.22, 0.14, pants2);  // cargo pocket
+      sidePanel.position.set(side * 0.115, -0.26, 0.02);
+      const knee = new THREE.Group();
+      knee.position.set(0, -0.46, 0);              // knee joint
+      const shin = cyl(0.085, 0.105, 0.34, 12, pants);
+      shin.position.set(0, -0.16, 0);
+      const kneePad = box(0.14, 0.13, 0.08, pouch);
+      kneePad.position.set(0, 0.0, 0.09);
+      const boot = box(0.20, 0.10, 0.30, boots);
+      boot.position.set(0, -0.34, 0.04);
+      const bootCuff = box(0.17, 0.07, 0.20, pants2);
+      bootCuff.position.set(0, -0.27, 0.0);
+      knee.add(shin, kneePad, boot, bootCuff);
+      leg.add(thigh, sidePanel, knee);
+      leg.userData.knee = knee;
+      return leg;
+    };
+    const legL = mkLeg(-1);
+    const legR = mkLeg(1);
 
     group.add(
-      head, neck, helmet, brim, strap, visor, stripe,
-      eyeL, eyeR, pupL, pupR, browL, browR,
-      mouthBg, teethBar, div1, div2, div3,
-      earL, earR,
-      chest, tacVest, waist, pouchL, pouchR, belt, buckle, backpack,
+      headGrp, neck,
+      chest, tacVest, chestPlate, magP1, magP2, nade, nadeTop, radio, antenna,
+      waist, belt, buckle, holster, canteen, backpack, packStrapL, packStrapR, bedroll,
       shoulderL, shoulderR,
-      lUpper, rUpper, lFore, rFore, lHand, rHand,
+      armL, armR,
       weaponSocket,
       legL, legR,
     );
 
-    // Store leg groups on the group itself so per-frame animation can
-    // walk the swing without needing engine-level state.
+    // Joint handles for the per-frame pose code (_poseSoldier).
     group.userData.legL = legL;
     group.userData.legR = legR;
+    group.userData.kneeL = legL.userData.knee;
+    group.userData.kneeR = legR.userData.knee;
+    group.userData.armL = armL;
+    group.userData.armR = armR;
+    group.userData.headGrp = headGrp;
     // Modular held-weapon plumbing. Everyone starts with a rifle; the
     // real weapon is corrected by opponent_weapon_switch / opponent_move
     // packets once it's known.
@@ -3025,6 +3046,50 @@ const GameEngine = {
     // Cast + receive the sun's soft shadows so players are grounded.
     group.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
     return group;
+  },
+
+  // Drive a soldier rig's joints for one frame. Shared by the 1v1 opponent
+  // and every team-mode player so both look identical in motion.
+  //   ud:    the model group's userData (joint handles)
+  //   gait:  accumulated stride phase
+  //   speed: actual horizontal speed (m/s) — scales stride + bob
+  //   pitch: the player's aim pitch (radians, +down in camera terms)
+  //   airY:  current jump height (m) — tucks the legs while airborne
+  _poseSoldier(ud, gait, speed, pitch, airY, dt) {
+    if (!ud) return;
+    const moving = speed > 0.25;
+    const airborne = (airY || 0) > 0.12;
+    // Stride amplitude scales with real speed — a creeping walk barely
+    // swings, a full sprint reaches ~0.7 rad.
+    const stride = Math.min(0.72, speed * 0.155);
+    const swing = moving ? Math.sin(gait) * stride : 0;
+    if (airborne) {
+      // Jump tuck: legs split + knees up.
+      if (ud.legL) ud.legL.rotation.x += (0.45 - ud.legL.rotation.x) * Math.min(1, dt * 10);
+      if (ud.legR) ud.legR.rotation.x += (-0.30 - ud.legR.rotation.x) * Math.min(1, dt * 10);
+      if (ud.kneeL) ud.kneeL.rotation.x = Math.max(ud.kneeL.rotation.x, 0.85);
+      if (ud.kneeR) ud.kneeR.rotation.x = Math.max(ud.kneeR.rotation.x, 0.55);
+    } else {
+      if (ud.legL) ud.legL.rotation.x =  swing;
+      if (ud.legR) ud.legR.rotation.x = -swing;
+      // Knees bend on the back-swing (positive x = knee folds backward).
+      if (ud.kneeL) ud.kneeL.rotation.x = moving ? Math.max(0, -Math.sin(gait)) * stride * 1.25 : 0;
+      if (ud.kneeR) ud.kneeR.rotation.x = moving ? Math.max(0,  Math.sin(gait)) * stride * 1.25 : 0;
+    }
+    // Arms: both hands stay on the weapon, but the body works — a small
+    // counter-sway sells the gait without breaking the two-handed hold.
+    const armSway = moving ? Math.sin(gait) * stride * 0.18 : 0;
+    // Camera pitch is + when looking UP, but the rig's face/barrel sit at
+    // local +z where a POSITIVE x-rotation tilts them DOWN — so negate.
+    const aim = Math.max(-0.9, Math.min(0.9, -(pitch || 0)));
+    if (ud.armL) ud.armL.rotation.x = -armSway + aim * 0.25;
+    if (ud.armR) ud.armR.rotation.x =  armSway + aim * 0.25;
+    // Head + weapon track the aim pitch so you can SEE where an enemy is
+    // aiming — crucial for reading an AWPer holding an angle above you.
+    if (ud.headGrp) ud.headGrp.rotation.x = aim * 0.55;
+    if (ud.weaponSocket) {
+      ud.weaponSocket.rotation.x = aim * 0.8 - (ud.weaponSocket.userData._slash || 0) * 0.9;
+    }
   },
 
   // Original 1v1 setup — builds the single opponentGroup and adds it
@@ -3126,6 +3191,12 @@ const GameEngine = {
         break;
       }
     }
+    // The weapon parts are authored with the barrel toward local -z (the
+    // first-person convention), but the player model's FRONT is local +z.
+    // Flip the whole gun so the muzzle points out through the hands instead
+    // of back into the chest — this also puts the remote muzzle flash in
+    // front of the player where the shot actually comes from.
+    g.rotation.y = Math.PI;
     g.userData.weaponKey = key;
     return g;
   },
@@ -3331,30 +3402,62 @@ const GameEngine = {
   // the weapon group so they recoil / sway / hide with it. Rendered always-on-
   // top (depthTest off) to match the gun convention so they never clip walls.
   _addViewModelArms(G, key) {
-    const sleeveMat = new THREE.MeshLambertMaterial({ color: 0x55602f, depthTest:false, depthWrite:false }); // olive sleeve
-    const gloveMat  = new THREE.MeshLambertMaterial({ color: 0x2a2a2a, depthTest:false, depthWrite:false }); // dark glove
-    const thumbMat  = new THREE.MeshLambertMaterial({ color: 0x202020, depthTest:false, depthWrite:false }); // thumb
+    const mkMat = (color, shininess) => shininess
+      ? new THREE.MeshPhongMaterial({ color, specular: 0x333333, shininess, depthTest:false, depthWrite:false })
+      : new THREE.MeshLambertMaterial({ color, depthTest:false, depthWrite:false });
+    const sleeveMat = mkMat(0x55602f);        // olive sleeve
+    const sleeve2   = mkMat(0x4a5429);        // sleeve shadow fold
+    const cuffMat   = mkMat(0x39411f);        // elastic cuff
+    const gloveMat  = mkMat(0x2a2a2a);        // glove leather
+    const fingerMat = mkMat(0x232323);        // finger segments
+    const knuckMat  = mkMat(0x1a1a1a, 35);    // hard knuckle plate (slight sheen)
+    const skinMat   = mkMat(0xd9a173);        // sliver of wrist skin
 
     const UP = new THREE.Vector3(0, 1, 0);
-    // A fist gripping the gun at `hand`, with a SHORT wrist stub going mostly
-    // straight DOWN (+ a little back) so the forearm runs off the bottom of the
-    // screen instead of extending toward the camera and ballooning in
-    // perspective (which is what made the old arms look like floating tubes).
+    // A detailed gloved hand gripping the gun at `hand`, with a SHORT
+    // tapered wrist running mostly straight down so the forearm exits the
+    // bottom of the screen instead of ballooning toward the camera.
     const makeArm = (hand, dir, len = 0.18) => {
       const arm = new THREE.Group();
       arm.userData.isViewArms = true;          // survive the FBX gun swap
       const d = new THREE.Vector3(dir.x, dir.y, dir.z).normalize();
       const q = new THREE.Quaternion().setFromUnitVectors(UP, d);
       const h = new THREE.Vector3(hand.x, hand.y, hand.z);
+      const put = (mesh, offset, order) => {
+        mesh.position.copy(h);
+        if (offset) mesh.position.add(offset.applyQuaternion(q.clone()));
+        mesh.quaternion.copy(q);
+        mesh.renderOrder = order;
+        arm.add(mesh);
+        return mesh;
+      };
 
-      const fist = new THREE.Mesh(new THREE.BoxGeometry(0.072, 0.066, 0.092), gloveMat);
-      fist.position.copy(h); fist.quaternion.copy(q); fist.renderOrder = 1003;
-      const thumb = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.05, 0.045), thumbMat);
-      thumb.position.copy(h).add(new THREE.Vector3(0, 0.018, 0.05)); thumb.quaternion.copy(q); thumb.renderOrder = 1004;
-      const fore = new THREE.Mesh(new THREE.CylinderGeometry(0.046, 0.056, len, 12), sleeveMat);
-      fore.position.copy(h).addScaledVector(d, len * 0.5); fore.quaternion.copy(q); fore.renderOrder = 1001;
-
-      arm.add(fore, fist, thumb);
+      // Palm + four curled finger segments wrapping the far side + thumb
+      // locked over the near side — reads as a real grip, not a cube.
+      put(new THREE.Mesh(new THREE.BoxGeometry(0.066, 0.062, 0.088), gloveMat), null, 1003);
+      put(new THREE.Mesh(new THREE.BoxGeometry(0.060, 0.026, 0.094), fingerMat),
+          new THREE.Vector3(0, 0.040, 0.012), 1004);                 // upper finger row
+      put(new THREE.Mesh(new THREE.BoxGeometry(0.054, 0.024, 0.088), fingerMat),
+          new THREE.Vector3(0, 0.062, 0.030), 1004);                 // curled fingertips
+      put(new THREE.Mesh(new THREE.BoxGeometry(0.030, 0.052, 0.040), fingerMat),
+          new THREE.Vector3(0, 0.012, 0.058), 1005);                 // thumb
+      put(new THREE.Mesh(new THREE.BoxGeometry(0.070, 0.020, 0.060), knuckMat),
+          new THREE.Vector3(0, -0.012, -0.040), 1004);               // knuckle plate
+      // Wrist: skin sliver → cuff ring → two-segment tapered sleeve.
+      // (These sit along the world-space wrist direction `d`, so they're
+      // positioned directly — NOT via put(), which rotates hand-local offsets.)
+      const skin = new THREE.Mesh(new THREE.CylinderGeometry(0.040, 0.043, 0.030, 12), skinMat);
+      skin.position.copy(h).addScaledVector(d, len * 0.16); skin.quaternion.copy(q);
+      skin.renderOrder = 1002; arm.add(skin);
+      const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.050, 0.050, 0.028, 12), cuffMat);
+      cuff.position.copy(h).addScaledVector(d, len * 0.30); cuff.quaternion.copy(q);
+      cuff.renderOrder = 1002; arm.add(cuff);
+      const fore1 = new THREE.Mesh(new THREE.CylinderGeometry(0.048, 0.054, len * 0.45, 12), sleeveMat);
+      fore1.position.copy(h).addScaledVector(d, len * 0.52); fore1.quaternion.copy(q);
+      fore1.renderOrder = 1001; arm.add(fore1);
+      const fore2 = new THREE.Mesh(new THREE.CylinderGeometry(0.054, 0.062, len * 0.45, 12), sleeve2);
+      fore2.position.copy(h).addScaledVector(d, len * 0.88); fore2.quaternion.copy(q);
+      fore2.renderOrder = 1001; arm.add(fore2);
       return arm;
     };
 
@@ -4466,14 +4569,15 @@ const GameEngine = {
       // Re-set position with crouch sink applied (jump y already set above).
       this.opponentGroup.position.y = this._oppCurY - crouchSink;
 
-      // Leg-swing + a more alive body: stride bob, walking sway, a slight
-      // forward lean while running, and a gentle idle breathe when still.
+      // Full skeleton pose: hip-pivot stride + knee bend + arm sway + aim
+      // pitch (head/weapon track where they're looking) + jump tuck.
       const moveSpeed = prev.distanceTo(this._oppCurPos) / Math.max(dt, 0.001);
       this._oppGait = (this._oppGait || 0) + dt * Math.min(moveSpeed * 1.6, 14);
       const moving = moveSpeed > 0.2;
-      const swing = moving ? Math.sin(this._oppGait) * 0.6 : 0;
-      if (this._oppLegL) this._oppLegL.rotation.x =  swing;
-      if (this._oppLegR) this._oppLegR.rotation.x = -swing;
+      this._oppCurPitch = (this._oppCurPitch || 0) +
+        ((this._oppTgtPitch || 0) - (this._oppCurPitch || 0)) * Math.min(1, dt * 10);
+      this._poseSoldier(this.opponentGroup.userData, this._oppGait, moveSpeed,
+                        this._oppCurPitch, this._oppCurY, dt);
       const nowS = performance.now() * 0.0016;
       const bob  = moving ? Math.sin(this._oppGait * 2) * 0.032 : Math.sin(nowS) * 0.012;
       this.opponentGroup.position.y = this._oppCurY - crouchSink + bob;
@@ -4506,15 +4610,12 @@ const GameEngine = {
         e.group.position.set(e.curPos.x, e.curY, e.curPos.z);
         e.group.scale.set(1, sy, 1);
         e.group.rotation.y = e.curYaw + Math.PI;
-        // Leg-swing + stride bob, walking sway, run lean, idle breathe.
+        // Full skeleton pose — same rig driver as the 1v1 opponent.
         const moveSpeed = prev.distanceTo(e.curPos) / Math.max(dt, 0.001);
         e.gait = (e.gait || 0) + dt * Math.min(moveSpeed * 1.6, 14);
         const moving = moveSpeed > 0.2;
-        const swing = moving ? Math.sin(e.gait) * 0.6 : 0;
-        const lL = e.group.userData.legL;
-        const lR = e.group.userData.legR;
-        if (lL) lL.rotation.x =  swing;
-        if (lR) lR.rotation.x = -swing;
+        e.curPitch = (e.curPitch || 0) + ((e.tgtPitch || 0) - (e.curPitch || 0)) * Math.min(1, dt * 10);
+        this._poseSoldier(e.group.userData, e.gait, moveSpeed, e.curPitch, e.curY, dt);
         const nowS = performance.now() * 0.0016;
         const bob  = moving ? Math.sin(e.gait * 2) * 0.032 : Math.sin(nowS + e.curPos.x) * 0.012;
         e.group.position.y = e.curY + bob;
@@ -4975,7 +5076,10 @@ const GameEngine = {
       this._oppWeapon = weapon;
     }
     this._oppTgtPos.set(position.x, 0, position.z);
-    if (rotation != null) this._oppTgtYaw = rotation.y ?? 0;
+    if (rotation != null) {
+      this._oppTgtYaw   = rotation.y ?? 0;
+      this._oppTgtPitch = rotation.x ?? 0;   // aim pitch → head/weapon track it
+    }
     this._oppTgtY      = Number(yOffset) || 0;
     this._oppTgtCrouch = !!crouching;
     // Spatial footstep — fire when the opponent has moved noticeably
@@ -5018,6 +5122,7 @@ const GameEngine = {
         curPos: new THREE.Vector3(position.x, 0, position.z),
         tgtPos: new THREE.Vector3(position.x, 0, position.z),
         curYaw: rotation?.y || 0, tgtYaw: rotation?.y || 0,
+        curPitch: rotation?.x || 0, tgtPitch: rotation?.x || 0,
         curY: 0, tgtY: 0, curCrouch: 0, tgtCrouch: 0,
         gait: 0,
         weapon: weapon || 'rifle',
@@ -5038,7 +5143,10 @@ const GameEngine = {
     }
     this._oppLastPos[sockId] = { x: position.x, z: position.z };
     entry.tgtPos.set(position.x, 0, position.z);
-    if (rotation != null) entry.tgtYaw = rotation.y ?? 0;
+    if (rotation != null) {
+      entry.tgtYaw   = rotation.y ?? 0;
+      entry.tgtPitch = rotation.x ?? 0;
+    }
     entry.tgtY      = Number(yOffset) || 0;
     entry.tgtCrouch = !!crouching;
   },
@@ -5086,14 +5194,15 @@ const GameEngine = {
   },
 
   // Subtle held-weapon motion: a vertical bob while the player is moving,
-  // plus a decaying forward swing when a knife slash was triggered.
+  // plus decay of the knife-slash timer. The socket's rotation.x itself is
+  // owned by _poseSoldier (aim pitch + slash combined) — don't write it here
+  // or the aim tracking gets stomped every frame.
   _animateWeaponSocket(socket, moving, gait, dt) {
     if (!socket) return;
     const bob = moving ? Math.sin((gait || 0) * 2) * 0.02 : 0;
     let slash = socket.userData._slash || 0;
     if (slash > 0) { slash = Math.max(0, slash - dt * 4); socket.userData._slash = slash; }
     socket.position.y = 1.00 + bob;
-    socket.rotation.x = -slash * 0.9;
   },
 
   _disposeOtherPlayers() {
