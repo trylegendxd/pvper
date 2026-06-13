@@ -64,15 +64,47 @@ body{font-family:'Rajdhani',system-ui,sans-serif;}
 .tablecard{width:48px;height:66px;border-radius:7px;background:#f5f7fb;color:#13202b;display:grid;place-items:center;font-family:Georgia,serif;font-weight:700;font-size:26px;box-shadow:0 3px 10px rgba(0,0,0,.5);border:2px solid var(--rr-gold);}
 .tablecard.A{color:#1f7fae;} .tablecard.K{color:#c0392b;} .tablecard.Q{color:#8e44ad;}
 
-.arena-wrap{position:relative;background:var(--rr-panel);border:1px solid var(--rr-line);border-radius:14px;padding:14px;overflow:hidden;}
+/* ── The bar at night: near-black room, one warm hanging light over a
+   green-felt card table with a worn wood rim. ───────────────────────── */
+.arena-wrap{position:relative;background:#070b09;border:1px solid #20281f;border-radius:14px;padding:14px;overflow:hidden;}
+.arena-wrap::before{content:'';position:absolute;left:50%;top:-22%;width:130%;height:120%;transform:translateX(-50%);
+  background:radial-gradient(ellipse at 50% 30%,rgba(255,196,110,.20),rgba(255,170,80,.07) 42%,transparent 68%);pointer-events:none;}
+.arena-wrap::after{content:'';position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(ellipse at center,transparent 52%,rgba(0,0,0,.55) 100%);}
+/* drifting smoke wisps under the lamp */
+.smoke{position:absolute;width:46%;height:24%;left:24%;top:6%;border-radius:50%;
+  background:radial-gradient(ellipse,rgba(220,225,230,.05),transparent 70%);filter:blur(6px);
+  animation:smokeDrift 14s ease-in-out infinite alternate;pointer-events:none;z-index:2;}
+.smoke.s2{left:34%;top:12%;width:36%;animation-duration:19s;animation-delay:-7s;}
+@keyframes smokeDrift{from{transform:translateX(-7%) scaleY(1);}to{transform:translateX(9%) scaleY(1.25);}}
 .arena{position:relative;width:100%;max-width:560px;aspect-ratio:1/1;margin:0 auto;}
-.rr-table{position:absolute;inset:6% 16%;border-radius:50%;background:radial-gradient(circle at 50% 42%,#1c3848,#102532 70%,#0b1a24 100%);box-shadow:inset 0 0 60px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.04);}
-.rr-table .rim{position:absolute;inset:0;border-radius:50%;border:6px solid #102733;box-shadow:inset 0 0 0 2px rgba(255,255,255,.05);}
-/* Centre of the felt shows the current table card. */
-.felt-center{position:absolute;left:50%;top:42%;transform:translate(-50%,-50%);text-align:center;z-index:3;pointer-events:none;}
-.felt-big{width:62px;height:86px;margin:0 auto;border-radius:9px;background:#f5f7fb;color:#13202b;display:grid;place-items:center;font-family:Georgia,serif;font-weight:700;font-size:36px;box-shadow:0 6px 16px rgba(0,0,0,.55);border:2px solid var(--rr-gold);}
-.felt-big.A{color:#1f7fae;} .felt-big.K{color:#c0392b;} .felt-big.Q{color:#8e44ad;} .felt-big.none{color:#9fb1c0;border-color:var(--rr-line);background:#16313f;font-size:30px;}
-.felt-lab{margin-top:7px;color:var(--rr-dim);font-size:10px;letter-spacing:3px;text-transform:uppercase;}
+.rr-table{position:absolute;inset:6% 16%;border-radius:50%;
+  background:radial-gradient(circle at 50% 38%,#33513a,#22392a 58%,#152418 86%,#0d1810 100%);
+  box-shadow:inset 0 0 70px rgba(0,0,0,.65),0 14px 40px rgba(0,0,0,.6);}
+.rr-table .rim{position:absolute;inset:-9px;border-radius:50%;border:10px solid #382414;
+  box-shadow:inset 0 2px 4px rgba(255,210,140,.18), inset 0 -3px 6px rgba(0,0,0,.6), 0 6px 18px rgba(0,0,0,.55);}
+.rr-table::after{content:'';position:absolute;inset:9%;border-radius:50%;border:1.5px solid rgba(247,201,72,.12);}
+.arena-wrap.shake{animation:tblShake .5s ease;}
+@keyframes tblShake{0%,100%{transform:translate(0,0);}15%{transform:translate(-7px,3px) rotate(-.4deg);}35%{transform:translate(6px,-4px) rotate(.35deg);}55%{transform:translate(-4px,2px);}75%{transform:translate(3px,-1px);}}
+#redflash{position:absolute;inset:0;background:radial-gradient(circle,rgba(255,30,40,.42),rgba(120,0,10,.55));opacity:0;pointer-events:none;z-index:9;}
+#redflash.go{animation:redgo .55s ease-out;}
+@keyframes redgo{0%{opacity:1;}100%{opacity:0;}}
+/* Centre of the felt: the table card + the face-down play pile. */
+.felt-center{position:absolute;left:50%;top:40%;transform:translate(-50%,-50%);text-align:center;z-index:3;pointer-events:none;}
+.felt-big{width:62px;height:86px;margin:0 auto;border-radius:9px;background:linear-gradient(160deg,#fdfdfa,#e8e6da);color:#13202b;display:grid;place-items:center;font-family:Georgia,serif;font-weight:700;font-size:36px;box-shadow:0 6px 16px rgba(0,0,0,.6);border:2px solid var(--rr-gold);position:relative;}
+.felt-big::after{content:'';position:absolute;inset:4px;border:1px solid rgba(0,0,0,.14);border-radius:6px;}
+.felt-big.A{color:#1f6fae;} .felt-big.K{color:#c0392b;} .felt-big.Q{color:#8e44ad;} .felt-big.none{color:#9fb1c0;border-color:#3a4a3a;background:#1b2a1e;font-size:30px;}
+.felt-lab{margin-top:7px;color:#9ab39a;font-size:10px;letter-spacing:3px;text-transform:uppercase;text-shadow:0 1px 3px rgba(0,0,0,.7);}
+/* Face-down pile of the last play, fanned on the felt. */
+.pile{position:absolute;left:50%;top:62%;transform:translate(-50%,-50%);z-index:4;pointer-events:none;text-align:center;}
+.pile .pcards{display:flex;justify-content:center;height:46px;}
+.pile .pc{width:32px;height:44px;border-radius:5px;margin:0 -7px;border:1.5px solid rgba(255,255,255,.25);
+  background:repeating-linear-gradient(45deg,#5e1f24,#7a2a30 5px,#5e1f24 10px);box-shadow:0 3px 8px rgba(0,0,0,.55);
+  animation:pcIn .3s cubic-bezier(.2,1.2,.4,1) backwards;}
+.pile .pc:nth-child(2){transform:rotate(7deg) translateY(2px);animation-delay:.06s;}
+.pile .pc:nth-child(3){transform:rotate(-7deg) translateY(2px);animation-delay:.12s;}
+@keyframes pcIn{from{transform:translateY(-46px) scale(.7);opacity:0;}to{opacity:1;}}
+.pile .claim{margin-top:4px;font-size:10px;letter-spacing:1.5px;color:var(--rr-gold);font-weight:700;text-transform:uppercase;text-shadow:0 1px 3px rgba(0,0,0,.8);}
 
 /* Each player's own revolver, resting on the table pointed at them. */
 .pgun{position:absolute;width:88px;z-index:6;pointer-events:none;}
@@ -101,31 +133,91 @@ body{font-family:'Rajdhani',system-ui,sans-serif;}
 .pcard .status{font-size:10px;letter-spacing:1px;color:var(--rr-green);text-transform:uppercase;font-weight:700;}
 .pmeta{display:flex;justify-content:space-between;margin-top:7px;font-size:10px;letter-spacing:1px;color:var(--rr-dim);text-transform:uppercase;}
 .pmeta b{color:#fff;}
-.cyl{display:flex;gap:3px;justify-content:center;margin-top:6px;}
-.cyl .c{width:9px;height:9px;border-radius:50%;border:1.5px solid rgba(255,255,255,.22);background:rgba(0,0,0,.25);}
-.cyl .c.spent{border-color:rgba(255,255,255,.1);background:rgba(255,255,255,.06);}
+/* Mini revolver cylinder: six chambers in a circle around a centre pin.
+   Spent chambers dim out; the live count drives the odds chip colour. */
+.cylrow{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:6px;}
+.cylWheel{position:relative;width:30px;height:30px;flex-shrink:0;}
+.cylWheel::before{content:'';position:absolute;left:50%;top:50%;width:8px;height:8px;border-radius:50%;
+  transform:translate(-50%,-50%);background:#0a141c;border:1.5px solid rgba(255,255,255,.25);}
+.cylWheel .c{position:absolute;left:50%;top:50%;width:7px;height:7px;border-radius:50%;margin:-3.5px 0 0 -3.5px;
+  border:1.5px solid rgba(255,255,255,.30);background:rgba(0,0,0,.45);}
+.cylWheel .c.spent{border-color:rgba(255,255,255,.08);background:rgba(255,255,255,.05);}
+.cylWheel .c:nth-child(1){transform:translate(0,-11px);}  .cylWheel .c:nth-child(2){transform:translate(9.5px,-5.5px);}
+.cylWheel .c:nth-child(3){transform:translate(9.5px,5.5px);} .cylWheel .c:nth-child(4){transform:translate(0,11px);}
+.cylWheel .c:nth-child(5){transform:translate(-9.5px,5.5px);} .cylWheel .c:nth-child(6){transform:translate(-9.5px,-5.5px);}
+.odds{font-size:10px;letter-spacing:1px;font-weight:700;border-radius:6px;padding:2px 7px;text-transform:uppercase;
+  background:rgba(31,211,107,.13);color:var(--rr-green);}
+.odds.warm{background:rgba(247,201,72,.15);color:var(--rr-gold);}
+.odds.hot{background:rgba(255,77,94,.18);color:var(--rr-red);animation:oddsPulse 1.1s ease infinite alternate;}
+@keyframes oddsPulse{from{box-shadow:0 0 0 rgba(255,77,94,0);}to{box-shadow:0 0 10px rgba(255,77,94,.5);}}
 .pplayed{margin-top:6px;text-align:center;font-size:11px;letter-spacing:1px;font-weight:700;border-radius:7px;padding:3px;background:rgba(247,201,72,.14);color:var(--rr-gold);}
 .pslot.active .pcard{border-color:var(--rr-red);box-shadow:0 0 0 2px var(--rr-red),0 0 30px rgba(255,77,94,.5);}
 .pslot.active .badge-aim{position:absolute;top:-15px;left:50%;transform:translateX(-50%);color:var(--rr-red);font-size:17px;text-shadow:0 0 10px var(--rr-red);}
 .pslot.dead .pcard{opacity:.42;filter:grayscale(.7);}
 .pslot.dead .pcard::after{content:'OUT';position:absolute;inset:0;display:grid;place-items:center;font-size:15px;letter-spacing:3px;color:var(--rr-red);background:rgba(8,8,10,.4);border-radius:12px;font-weight:700;}
 
-/* reveal overlay */
+/* reveal overlay — cards flip over one by one, then the verdict slams in */
 .reveal{display:none;background:var(--rr-panel2);border:1px solid var(--rr-line);border-radius:12px;padding:14px;text-align:center;}
 .reveal.show{display:block;animation:evIn .3s ease;}
 .reveal .rv-lab{font-size:11px;letter-spacing:2px;color:var(--rr-dim);text-transform:uppercase;}
-.reveal .rv-cards{display:flex;gap:8px;justify-content:center;margin:10px 0;}
-.reveal .rv-verdict{font-weight:700;font-size:15px;}
+.reveal .rv-cards{display:flex;gap:8px;justify-content:center;margin:10px 0;perspective:600px;}
+.reveal .rv-cards .hcard{opacity:0;transform:rotateY(92deg);}
+.reveal .rv-cards .hcard.flip{animation:rvFlip .34s ease forwards;}
+@keyframes rvFlip{from{opacity:0;transform:rotateY(92deg);}60%{opacity:1;}to{opacity:1;transform:rotateY(0);}}
+.reveal .rv-verdict{font-weight:700;font-size:16px;letter-spacing:1px;opacity:0;}
+.reveal .rv-verdict.pop{animation:verdictPop .4s cubic-bezier(.2,1.4,.4,1) forwards;}
+@keyframes verdictPop{from{opacity:0;transform:scale(.6);}to{opacity:1;transform:scale(1);}}
 .reveal .rv-verdict.lie{color:var(--rr-red);} .reveal .rv-verdict.truth{color:var(--rr-green);}
+
+/* turn countdown — thin bar under the actions, red + pulsing when low */
+.turnbar{height:5px;border-radius:3px;background:rgba(255,255,255,.07);overflow:hidden;margin-top:8px;display:none;}
+.turnbar.show{display:block;}
+.turnbar .fill{height:100%;width:100%;border-radius:3px;background:linear-gradient(90deg,var(--rr-green),#7be3a8);transition:width .15s linear;}
+.turnbar .fill.low{background:linear-gradient(90deg,#ff4d5e,#ff8a6a);animation:oddsPulse .7s ease infinite alternate;}
+/* tiny countdown ring chip on the active seat */
+.pcard .tchip{position:absolute;right:-8px;bottom:-9px;min-width:26px;height:22px;padding:0 5px;border-radius:7px;
+  background:#1a0e10;border:1.5px solid var(--rr-red);color:#fff;display:none;place-items:center;
+  font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;}
+.pslot.active .pcard .tchip{display:grid;}
+.pcard .tchip.low{background:var(--rr-red);animation:oddsPulse .6s ease infinite alternate;}
+
+/* ── POV trigger-pull overlay: YOUR turn to face the revolver ── */
+#pov{position:fixed;inset:0;z-index:9500;display:none;align-items:center;justify-content:center;flex-direction:column;
+  background:radial-gradient(circle at 50% 46%,rgba(20,8,8,.88),rgba(2,1,1,.97) 75%);}
+#pov.show{display:flex;animation:povIn .3s ease;}
+@keyframes povIn{from{opacity:0;}to{opacity:1;}}
+#pov .pov-gun{width:min(46vmin,330px);filter:drop-shadow(0 0 26px rgba(255,80,60,.25));animation:povZoom 1.25s ease-out forwards;}
+#pov .pov-gun svg{width:100%;height:auto;display:block;}
+@keyframes povZoom{from{transform:scale(.78) rotate(-4deg);}to{transform:scale(1.06) rotate(0);}}
+#pov .pov-lab{margin-top:18px;font-size:14px;letter-spacing:5px;color:#e8b4af;text-transform:uppercase;animation:povLabPulse 1s ease infinite alternate;}
+@keyframes povLabPulse{from{opacity:.55;}to{opacity:1;}}
+#pov .pov-odds{margin-top:8px;font-size:21px;font-weight:700;color:#fff;letter-spacing:2px;font-variant-numeric:tabular-nums;}
+#pov .pov-result{margin-top:14px;font-size:34px;font-weight:800;letter-spacing:6px;opacity:0;}
+#pov .pov-result.bang{color:#ff4030;text-shadow:0 0 30px rgba(255,40,30,.8);animation:verdictPop .25s ease forwards;}
+#pov .pov-result.safe{color:#7be3a8;text-shadow:0 0 22px rgba(60,220,140,.55);animation:verdictPop .35s ease forwards;}
+#pov.bangflash{animation:povBang .5s ease-out;}
+@keyframes povBang{0%{background:rgba(255,40,30,.92);}100%{background:radial-gradient(circle at 50% 46%,rgba(20,8,8,.88),rgba(2,1,1,.97) 75%);}}
+
+/* win confetti */
+.confetti{position:fixed;top:-4vh;z-index:9000;width:9px;height:14px;border-radius:2px;pointer-events:none;
+  animation:confFall linear forwards;}
+@keyframes confFall{to{transform:translateY(110vh) rotate(720deg);}}
 
 /* your hand */
 .hand-wrap{background:var(--rr-panel);border:1px solid var(--rr-line);border-radius:12px;padding:14px;}
 .hand-lab{font-size:11px;letter-spacing:2px;color:var(--rr-dim);text-transform:uppercase;margin-bottom:10px;text-align:center;}
 .hand{display:flex;gap:9px;justify-content:center;flex-wrap:wrap;min-height:86px;perspective:800px;}
-.hcard{width:60px;height:84px;border-radius:8px;background:#f5f7fb;color:#13202b;cursor:pointer;display:flex;flex-direction:column;justify-content:space-between;padding:5px 6px;font-family:Georgia,serif;font-weight:700;font-size:18px;box-shadow:0 3px 8px rgba(0,0,0,.45);transition:transform .14s, box-shadow .14s;user-select:none;}
-.hcard .b{align-self:flex-end;transform:rotate(180deg);}
-.hcard.A{color:#1f7fae;} .hcard.K{color:#c0392b;} .hcard.Q{color:#8e44ad;}
-.hcard.joker{background:linear-gradient(135deg,#b58bff,#6a35d8);color:#fff;align-items:center;justify-content:center;font-size:30px;}
+.hcard{position:relative;width:60px;height:84px;border-radius:8px;background:linear-gradient(160deg,#fdfdfa,#e9e7db);color:#13202b;cursor:pointer;font-family:Georgia,serif;font-weight:700;box-shadow:0 3px 8px rgba(0,0,0,.45);transition:transform .14s, box-shadow .14s;user-select:none;}
+.hcard::after{content:'';position:absolute;inset:4px;border:1px solid rgba(0,0,0,.13);border-radius:5px;pointer-events:none;}
+.hcard .pip{position:absolute;left:5px;top:3px;font-size:13px;line-height:1.1;text-align:center;}
+.hcard .pip small{display:block;font-size:8px;letter-spacing:.5px;}
+.hcard .pip.b{left:auto;right:5px;top:auto;bottom:3px;transform:rotate(180deg);}
+.hcard .big{position:absolute;inset:0;display:grid;place-items:center;font-size:30px;text-shadow:0 1px 0 rgba(0,0,0,.12);}
+.hcard.A{color:#1f6fae;} .hcard.K{color:#c0392b;} .hcard.Q{color:#8e44ad;}
+.hcard.joker{background:linear-gradient(150deg,#caa6ff,#6a35d8);color:#fff;}
+.hcard.joker::after{border-color:rgba(255,255,255,.25);}
+.hcard.joker .big{font-size:26px;}
+.hcard.joker .jlab{position:absolute;left:0;right:0;bottom:7px;text-align:center;font-size:8px;letter-spacing:2.5px;font-family:inherit;}
 .hcard.sel{transform:translateY(-14px);box-shadow:0 0 0 3px var(--rr-gold),0 8px 16px rgba(0,0,0,.5);}
 .hcard.dis{cursor:default;opacity:.85;}
 .hcard.fresh{animation:bjDeal .45s cubic-bezier(.22,1.15,.34,1) backwards;}
@@ -208,14 +300,17 @@ body{font-family:'Rajdhani',system-ui,sans-serif;}
         <div class="rp"><div class="eyebrow">Table Card</div><div class="tablecard-wrap"><div class="tablecard" id="tableCard">?</div></div></div>
       </div>
 
-      <div class="arena-wrap">
+      <div class="arena-wrap" id="arenaWrap">
+        <div class="smoke"></div><div class="smoke s2"></div>
         <div class="arena" id="arena">
           <div class="rr-table"><div class="rim"></div>
             <div class="felt-center"><div class="felt-big none" id="feltBig">?</div><div class="felt-lab">Table Card</div></div>
+            <div class="pile" id="pile" style="display:none"></div>
           </div>
           <div class="rr-flash" id="flash"></div>
           <!-- Each player's seat card AND their own revolver are injected by JS. -->
         </div>
+        <div id="redflash"></div>
       </div>
 
       <div class="reveal" id="reveal"></div>
@@ -233,6 +328,7 @@ body{font-family:'Rajdhani',system-ui,sans-serif;}
         <button class="act cancel" id="cancelBtn" style="display:none">✖ Cancel</button>
       </div>
       <div class="status-line" id="statusLine">Pick a buy-in and press <b>Find Match</b> to queue against real players.</div>
+      <div class="turnbar" id="turnbar"><div class="fill" id="turnFill"></div></div>
     </main>
 
     <!-- INFO -->
@@ -254,6 +350,14 @@ body{font-family:'Rajdhani',system-ui,sans-serif;}
   </div>
 </div>
 <div class="legal-footer">Credits are fictional play-money credits only and have no real-world monetary value.</div>
+
+<!-- POV trigger-pull moment: shown when YOU lose a call and must pull. -->
+<div id="pov">
+  <div class="pov-gun" id="povGun"></div>
+  <div class="pov-lab" id="povLab">Your pull</div>
+  <div class="pov-odds" id="povOdds"></div>
+  <div class="pov-result" id="povResult"></div>
+</div>
 
 <script src="/socket.io/socket.io.js"></script>
 <script src="/js/api.js"></script>
@@ -343,6 +447,8 @@ function renderSeats(){
     const you=p.seat===st.yourSeat;
     const played=st.lastPlay&&st.lastPlay.seat===p.seat;
     let cyl=''; for(let i=0;i<CHAMBERS;i++){ cyl+=`<span class="c ${i<(CHAMBERS-p.safeLeft)?'spent':''}"></span>`; }
+    // Death odds for the NEXT pull — heats up as the cylinder advances.
+    const oddsCls = p.safeLeft<=2?'hot':(p.safeLeft<=4?'warm':'');
     arena.appendChild(placeSeat(p.seat,st.size,
       `<div class="pslot ${p.alive?'':'dead'} ${isActive?'active':''}">
         ${isActive?'<div class="badge-aim">▾</div>':''}
@@ -351,16 +457,31 @@ function renderSeats(){
           <div class="head"><div class="avatar" style="background:${av.bg}">${av.ch}${p.voice?'<span class="mic">🎙</span>':''}</div>
             <div><div class="uname">${escapeHtml(p.name)}</div><div class="status" style="color:${p.alive?'var(--rr-green)':'var(--rr-red)'}">${p.alive?(isActive?'Turn':'Alive'):'Out'}</div></div></div>
           <div class="pmeta"><span>Cards <b>${p.handCount}</b></span><span>Pulls <b>${p.pulls}</b></span></div>
-          <div class="cyl">${cyl}</div>
+          <div class="cylrow"><div class="cylWheel">${cyl}</div>${p.alive?`<span class="odds ${oddsCls}" title="Odds the next pull fires">☠ 1 in ${p.safeLeft}</span>`:''}</div>
           ${played?`<div class="pplayed">Played ${st.lastPlay.count}</div>`:''}
+          <div class="tchip" data-tchip></div>
         </div></div>`));
   });
 }
+/* Face-down pile of the last play on the felt, with the spoken claim. */
+function renderPile(){
+  const st=C.st, el=$('#pile');
+  if(!st || !st.lastPlay || st.phase!=='play'){ el.style.display='none'; el.dataset.key=''; return; }
+  el.style.display='';
+  const key=st.round+':'+st.lastPlay.seat+':'+st.lastPlay.count;
+  if(el.dataset.key===key) return;          // only re-animate on a new play
+  el.dataset.key=key;
+  const who=(st.players.find(p=>p.seat===st.lastPlay.seat)||{}).name||('P'+(st.lastPlay.seat+1));
+  el.innerHTML=`<div class="pcards">${'<div class="pc"></div>'.repeat(st.lastPlay.count)}</div>
+    <div class="claim">${escapeHtml(who)} · ${st.lastPlay.count}× ${cardName(st.tableCard)}</div>`;
+}
 
 /* ── Your hand + actions ─────────────────────────────────────────────────── */
+const GLYPH={A:'♠',K:'♚',Q:'♛'};
 function cardInner(c){
-  if(c==='J') return '<span>★</span>';
-  return `<span>${c}</span><span class="b">${c}</span>`;
+  if(c==='J') return '<span class="big">★</span><span class="jlab">JOKER</span>';
+  const g=GLYPH[c]||c;
+  return `<span class="pip">${c}<small>${g}</small></span><span class="big">${g}</span><span class="pip b">${c}<small>${g}</small></span>`;
 }
 function renderHand(){
   const st=C.st, host=$('#hand');
@@ -404,14 +525,22 @@ function renderActions(){
 function revealCardHTML(c){ const cls=c==='J'?'joker':c; return `<div class="hcard ${cls}" style="cursor:default;width:48px;height:68px;font-size:16px">${cardInner(c)}</div>`; }
 function renderReveal(){
   const st=C.st, host=$('#reveal');
-  if(!st || !st.reveal){ host.classList.remove('show'); return; }
+  if(!st || !st.reveal){ host.classList.remove('show'); host.dataset.key=''; return; }
   const r=st.reveal;
+  // Animate each reveal exactly once (state re-broadcasts mustn't restart it).
+  const key=st.round+':'+r.callerSeat+':'+r.blufferSeat;
+  if(host.dataset.key===key) return;
+  host.dataset.key=key;
   const verdict = r.truthful
-    ? `<span class="rv-verdict truth">Honest! ${escapeHtml(r.callerName)} pulls the trigger</span>`
-    : `<span class="rv-verdict lie">Bluff caught! ${escapeHtml(r.blufferName)} pulls the trigger</span>`;
-  host.innerHTML=`<div class="rv-lab">${escapeHtml(r.callerName)} called LIAR on ${escapeHtml(r.blufferName)} — table card was ${cardName(r.tableCard)}</div>
+    ? `<span class="rv-verdict truth" id="rvVerdict">HONEST — ${escapeHtml(r.callerName)} pulls the trigger</span>`
+    : `<span class="rv-verdict lie" id="rvVerdict">BLUFF — ${escapeHtml(r.blufferName)} pulls the trigger</span>`;
+  host.innerHTML=`<div class="rv-lab">${escapeHtml(r.callerName)} called LIAR on ${escapeHtml(r.blufferName)} — table card: ${cardName(r.tableCard)}</div>
     <div class="rv-cards">${r.cards.map(revealCardHTML).join('')}</div>${verdict}`;
   host.classList.add('show');
+  // Card-by-card flips, then the verdict slams in with the sting.
+  const cards=$$('.rv-cards .hcard',host);
+  cards.forEach((el,i)=>setTimeout(()=>{ el.classList.add('flip'); try{Snd.flip();}catch(_){} }, 300+i*330));
+  setTimeout(()=>{ const v=$('#rvVerdict'); if(v){ v.classList.add('pop'); try{Snd.liar();}catch(_){} } }, 300+cards.length*330+120);
 }
 /* Every player gets their OWN revolver on the table, barrel pointed at them. */
 const GUN_SVG=`<div class="gun-inner"><svg viewBox="0 0 360 170" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -469,6 +598,10 @@ const Snd={
   click(){ this.noise(.05,1700,.5); },
   win(){ [523,659,784,1047].forEach((f,i)=>setTimeout(()=>this.tone(f,.22,.16,'triangle'),i*120)); },
   lose(){ this.tone(300,.5,.16,'sawtooth',110); },
+  heart(){ this.tone(58,.10,.30,'sine',40); setTimeout(()=>this.tone(50,.12,.26,'sine',36),150); },  // lub-dub
+  breath(){ this.noise(.45,180,.10); },                                                              // relief exhale
+  tick(){ this.noise(.025,2600,.22); },                                                              // clock urgency
+  thud(){ this.tone(82,.20,.30,'sine',44); },                                                        // body drop
 };
 let _shotSfx=null;
 function playShot(){ try{ if(!_shotSfx){ _shotSfx=new Audio('/audio/gunshot_rifle.mp3'); _shotSfx.preload='auto'; _shotSfx.volume=0.6; } _shotSfx.pause(); _shotSfx.currentTime=0; _shotSfx.play().catch(()=>{}); }catch(_){} try{ Snd.tone(70,.35,.32,'sine',38); }catch(_){} }
@@ -478,30 +611,92 @@ function addEvent(ev){ if(!ev)return; const t=new Date().toLocaleTimeString([],{
 
 /* ── Apply state ─────────────────────────────────────────────────────────── */
 function applyState(st){
-  const prevPhase=C.st&&C.st.phase;
+  // Odds of the incoming pull, read from the PREVIOUS state (the new one
+  // already has the chamber advanced).
+  const prevSafe = st.shot ? (C.st?.players?.find(p=>p.seat===st.shot.seat)?.safeLeft || 1) : 0;
   C.st=st; C.yourSeat=st.yourSeat; C.pendingAct=false;
+  C.turnEndsAt = st.turnEndsAt||0;
+  C.srvOffset  = (st.serverNow||Date.now()) - Date.now();
   if(st.phase==='play') C.selected.clear();        // new turn/round → clear selection
   if(st.event) addEvent(st.event);
-  // Event-driven sounds.
+  // Event-driven sounds (the LIAR sting now plays inside the staggered reveal).
   if(st.event){ const k=st.event.kind;
     if(k==='deal') Snd.deal();
     else if(k==='play') Snd.play();
-    else if(k==='lie'||k==='truth'){ Snd.flip(); setTimeout(()=>Snd.liar(),140); }
   }
-  renderHUD(); renderGameInfo(); renderSeats(); renderGuns(); renderHand(); renderActions(); renderReveal();
+  renderHUD(); renderGameInfo(); renderSeats(); renderGuns(); renderPile(); renderHand(); renderActions(); renderReveal();
   if(st.shot){
+    const mine = st.shot.seat===C.yourSeat;
+    // The victim gets a longer, scarier beat: POV overlay + heartbeats.
+    const fireDelay = mine?1100:540;
     Snd.cock();                                    // cock the cylinder…
+    if(mine) Pov.show(st.shot.fired, prevSafe, fireDelay);
     setTimeout(()=>{                               // …then pull the trigger
       fireGun(st.shot.seat, st.shot.fired);
-      if(st.shot.fired){ bang(); playShot(); }
+      if(st.shot.fired){
+        bang(); playShot(); shakeTable(); redFlash();
+        setTimeout(()=>{ try{Snd.thud();}catch(_){} },280);   // the slump
+      }
       else Snd.click();
-    }, 540);
+    }, fireDelay);
   }
   setStatus(st);
 }
+function shakeTable(){ const w=$('#arenaWrap'); if(!w)return; w.classList.remove('shake'); void w.offsetWidth; w.classList.add('shake'); }
+function redFlash(){ const f=$('#redflash'); if(!f)return; f.classList.remove('go'); void f.offsetWidth; f.classList.add('go'); }
+
+/* ── POV trigger-pull: full-screen moment when YOU face the revolver ──────── */
+const Pov={
+  init(){ const g=$('#povGun'); if(g && !g.innerHTML) g.innerHTML=GUN_SVG; },
+  show(fired, oddsIn, fireDelay){
+    const el=$('#pov'); if(!el) return;
+    this.init();
+    const res=$('#povResult'); res.className='pov-result'; res.textContent='';
+    $('#povLab').textContent='Your pull';
+    $('#povOdds').textContent=`☠ 1 in ${Math.max(1,oddsIn)}`;
+    el.classList.remove('bangflash'); el.classList.add('show');
+    [80,480,880].forEach(t=>setTimeout(()=>{ try{Snd.heart();}catch(_){} },t));   // heartbeat build
+    setTimeout(()=>{
+      if(fired){ el.classList.add('bangflash'); res.textContent='BANG'; res.className='pov-result bang'; $('#povLab').textContent='Eliminated'; }
+      else { res.textContent='*CLICK*'; res.className='pov-result safe'; $('#povLab').textContent='You live'; try{Snd.breath();}catch(_){} }
+    }, fireDelay);
+    setTimeout(()=>el.classList.remove('show'), fireDelay+1150);
+  },
+};
+
+/* Turn countdown — bar under the actions + seconds chip on the active seat. */
+function tickTimer(){
+  const st=C.st, bar=$('#turnbar'), fill=$('#turnFill');
+  const active = C.inMatch && st && st.phase==='play' && (C.turnEndsAt||0)>0;
+  bar.classList.toggle('show',!!active);
+  if(!active){ C._lastTickS=null; return; }
+  const left=Math.max(0, C.turnEndsAt - (Date.now()+(C.srvOffset||0)));
+  const frac=Math.max(0,Math.min(1,left/30000));
+  fill.style.width=(frac*100)+'%';
+  fill.classList.toggle('low',left<8000);
+  const chip=$('.pslot.active [data-tchip]',$('#arena'));
+  if(chip){ chip.textContent=Math.ceil(left/1000); chip.classList.toggle('low',left<8000); }
+  // Soft clock ticks for YOUR last 5 seconds.
+  if(st.canPlay||st.canCall){
+    const s=Math.ceil(left/1000);
+    if(left<5200 && s!==C._lastTickS){ C._lastTickS=s; try{Snd.tick();}catch(_){} }
+  }
+}
+
+/* Gold-rain celebration when you take the pot. */
+function confetti(){
+  const cols=['#f7c948','#1fd36b','#3fd1e6','#ff4d5e','#b58bff'];
+  for(let i=0;i<28;i++){
+    const d=document.createElement('div'); d.className='confetti';
+    d.style.cssText=`left:${Math.random()*100}vw;background:${cols[i%cols.length]};animation-duration:${1.6+Math.random()*1.5}s;animation-delay:${Math.random()*0.5}s;`;
+    document.body.appendChild(d); setTimeout(()=>d.remove(),3800);
+  }
+}
 function setStatus(st){
   let s;
+  const me = st.players && st.players.find(p=>p.seat===st.yourSeat);
   if(st.phase==='over') s='Game over.';
+  else if(me && !me.alive) s='💀 <b>You\'re out</b> — spectating. Last one alive takes the pot…';
   else if(st.phase==='reveal'||st.phase==='shoot') s='Revealing…';
   else if(st.canPlay||st.canCall){ s = st.yourHand && st.yourHand.length===0 ? '<b>You have no cards</b> — call LIAR.' : '<b>Your turn</b> — play cards or call LIAR.'; }
   else s=`<b>${escapeHtml(st.activeName)}</b> is deciding…`;
@@ -544,9 +739,11 @@ function connect(){
   s.on('lb_state',applyState);
   s.on('lb_chat',addChat);
   s.on('lb_match_end',d=>{
-    C.inMatch=false; $('#reveal').classList.remove('show'); Voice.stop();
+    C.inMatch=false; C.turnEndsAt=0; $('#reveal').classList.remove('show'); Voice.stop();
+    $('#pile').style.display='none'; $('#pov').classList.remove('show');
     try{ window.MenuMusic && window.MenuMusic.resume(); }catch(_){}
     try{ d.youWon?Snd.win():Snd.lose(); }catch(_){}
+    if(d.youWon) try{ confetti(); }catch(_){}
     if(typeof d.newBalance==='number'){ const tb=document.querySelector('.topbar .balance'); if(tb&&window.fmtCredits)tb.textContent=fmtCredits(d.newBalance); }
     if(d.youWon){ addEvent({text:`🏆 You win the pot ${fmtCr(d.pot)}!`,kind:'win'}); $('#statusLine').innerHTML=`<b>You win ${fmtCr(d.pot)}!</b> 🏆`; toast(`You win ${fmtCr(d.pot)}!`); }
     else if(d.winnerName){ addEvent({text:`🏆 ${d.winnerName} wins the pot.`,kind:'win'}); $('#statusLine').innerHTML=`${escapeHtml(d.winnerName)} wins. Try again?`; }
@@ -636,6 +833,8 @@ $('#chatInput').addEventListener('keydown',e=>{ if(e.key==='Enter')sendChat(); }
 (async()=>{
   const user=await renderTopbar(); if(!user)return;
   renderLobby(); renderHUD(); renderGameInfo(); renderSeatsIdle(); renderHand(); renderActions();
+  Pov.init();
+  setInterval(tickTimer,120);            // turn countdown bar + seat chip
   addEvent({text:'Welcome to Liar\'s Bar — pick a buy-in and find a table.',kind:'deal'});
   connect();
 })();

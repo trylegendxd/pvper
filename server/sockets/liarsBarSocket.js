@@ -22,8 +22,8 @@ const lb = require('../games/liarsBar');
 
 const SIZES = [2, 3, 4];
 const TURN_MS    = 30000;   // think time per turn
-const REVEAL_MS  = 2600;    // show the revealed cards before the shot
-const SHOT_MS    = 2200;    // bang/click beat
+const REVEAL_MS  = 3400;    // card-by-card flip reveal before the shot
+const SHOT_MS    = 2400;    // bang/click beat (room for the victim's POV moment)
 const NEXT_MS    = 1700;    // pause before the next round deals
 const START_MS   = 1600;    // pause after match start
 
@@ -227,6 +227,7 @@ function attach(io) {
     // Skip any dead seats defensively.
     if (!m.players[m.active]?.alive) m.active = nextAlive(m, m.active);
     m.phase = 'play';
+    m.turnEndsAt = Date.now() + TURN_MS;   // clients render the countdown
     emitState(m);
     setTimer(m, () => onTurnTimeout(m), TURN_MS);
   }
@@ -308,6 +309,8 @@ function attach(io) {
   function buildBase(m, extra) {
     return {
       phase: m.phase, round: m.round, pot: m.pot, bet: m.bet, size: m.size,
+      turnEndsAt: m.phase === 'play' ? (m.turnEndsAt || 0) : 0,
+      serverNow: Date.now(),
       tableCard: m.tableCard, active: m.active,
       activeName: m.players[m.active]?.username || '',
       players: m.players.map(p => ({
