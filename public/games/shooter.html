@@ -815,6 +815,36 @@ input:focus { border-color:var(--accent); }
 .controls-hint { background:var(--bg3);border:1px solid var(--border);border-radius:3px;padding:10px 14px;font-size:11px;color:var(--dim);line-height:1.7; }
 .controls-hint b { color:var(--text); }
 
+/* ── Extensive (CS2-style) tabbed settings window ───────────────────────── */
+.settings-box-lg { width:min(760px,94vw);max-height:88vh;padding:0;gap:0;overflow:hidden; }
+.settings-header { display:flex;align-items:center;justify-content:space-between;padding:18px 26px 14px; }
+.settings-header h2 { margin:0;text-align:left; }
+.set-close-x { background:transparent;border:none;color:var(--dim);font-size:20px;cursor:pointer;line-height:1;padding:4px 8px;border-radius:4px;transition:color .12s,background .12s; }
+.set-close-x:hover { color:#fff;background:rgba(255,255,255,.08); }
+.settings-tabs { display:flex;gap:2px;padding:0 18px;border-bottom:1px solid var(--border);flex-wrap:wrap; }
+.set-tab { background:transparent;border:none;border-bottom:2px solid transparent;color:var(--dim);font-family:inherit;font-size:12px;letter-spacing:2px;padding:11px 16px;cursor:pointer;transition:color .12s,border-color .12s; }
+.set-tab:hover { color:var(--text); }
+.set-tab.active { color:#fff;border-bottom-color:var(--accent); }
+.settings-panels { padding:20px 26px;overflow-y:auto;flex:1; }
+.set-panel { display:none;flex-direction:column;gap:16px; }
+.set-panel.active { display:flex;animation:fadeSlideIn .16s ease; }
+.set-panel .set-section-title { font-size:11px;letter-spacing:3px;color:var(--accent);text-transform:uppercase;margin:4px 0 -4px;opacity:.85; }
+/* Toggle + select rows reuse setting-row but lay out inline. */
+.set-row-inline { display:flex;align-items:center;justify-content:space-between;gap:14px; }
+.set-row-inline label { font-size:12px;color:var(--dim);letter-spacing:1px;text-transform:uppercase; }
+.set-row-inline .sr-sub { font-size:10px;color:var(--dim);opacity:.7;letter-spacing:0;text-transform:none;margin-top:2px; }
+.set-row-inline select { background:rgba(0,0,0,.4);border:1px solid #444;color:#fff;padding:7px 10px;font-family:inherit;font-size:12px;border-radius:3px;min-width:130px; }
+/* iOS-style switch */
+.set-switch { position:relative;width:42px;height:23px;flex:none;cursor:pointer; }
+.set-switch input { opacity:0;width:0;height:0;position:absolute; }
+.set-switch .sw-track { position:absolute;inset:0;background:var(--bg3);border:1px solid var(--border);border-radius:23px;transition:background .15s; }
+.set-switch .sw-track::before { content:'';position:absolute;width:17px;height:17px;left:2px;top:2px;background:#cfd6e2;border-radius:50%;transition:transform .15s,background .15s; }
+.set-switch input:checked + .sw-track { background:var(--accent);border-color:var(--accent); }
+.set-switch input:checked + .sw-track::before { transform:translateX(19px);background:#fff; }
+.settings-footer { display:flex;justify-content:space-between;gap:10px;padding:14px 26px 18px;border-top:1px solid var(--border); }
+.settings-footer button { padding:10px 22px;font-size:12px;letter-spacing:1.5px; }
+#hud-fps { position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:7;font-family:monospace;font-size:13px;font-weight:700;color:#8fffa0;text-shadow:0 0 6px rgba(0,0,0,.9);letter-spacing:1px;pointer-events:none;display:none; }
+
 /* ═══ ANIMATIONS ══════════════════════════════════════════════════════════ */
 @keyframes fadeSlideIn { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
 @keyframes pulse { from{opacity:1} to{opacity:.65} }
@@ -1066,6 +1096,9 @@ input:focus { border-color:var(--accent); }
   <canvas id="hud-radar" class="hud-el" width="180" height="180"
           style="top:14px;right:14px;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.18);border-radius:6px;"></canvas>
 
+  <!-- FPS counter (top-centre) — toggled by the Video settings tab. -->
+  <div id="hud-fps" class="hud-el">60 FPS</div>
+
   <!-- Directional damage arrows ring. The four arrows fade in
        independently when you take damage from each cardinal direction.
        GameEngine.flashDamageArrow(dir) sets the opacity. -->
@@ -1210,71 +1243,153 @@ input:focus { border-color:var(--accent); }
 
 <!-- Settings overlay (top-level — works from any screen) -->
 <div id="overlay-settings">
-  <div class="settings-box">
-    <h2>SETTINGS</h2>
-
-    <div class="setting-row">
-      <div class="sr-head"><label>Mouse sensitivity</label><span class="sr-val" id="sv-sens">1.00x</span></div>
-      <input type="range" id="set-sens" min="0.2" max="3" step="0.05" value="1">
+  <div class="settings-box settings-box-lg">
+    <div class="settings-header">
+      <h2>SETTINGS</h2>
+      <button class="set-close-x" onclick="App.closeSettings()" title="Close">✕</button>
     </div>
 
-    <div class="setting-row">
-      <div class="sr-head"><label>Field of view</label><span class="sr-val" id="sv-fov">75°</span></div>
-      <input type="range" id="set-fov" min="60" max="100" step="1" value="75">
+    <div class="settings-tabs">
+      <button class="set-tab active" data-tab="game">GAME</button>
+      <button class="set-tab" data-tab="mouse">MOUSE</button>
+      <button class="set-tab" data-tab="video">VIDEO</button>
+      <button class="set-tab" data-tab="audio">AUDIO</button>
+      <button class="set-tab" data-tab="crosshair">CROSSHAIR</button>
+      <button class="set-tab" data-tab="hud">HUD</button>
     </div>
 
-    <div class="setting-row">
-      <div class="sr-head"><label>Music volume</label><span class="sr-val" id="sv-mus">45%</span></div>
-      <input type="range" id="set-mus" min="0" max="100" step="1" value="45">
-    </div>
-
-    <div class="setting-row">
-      <div class="sr-head"><label>SFX volume</label><span class="sr-val" id="sv-sfx">80%</span></div>
-      <input type="range" id="set-sfx" min="0" max="100" step="1" value="80">
-    </div>
-
-    <!-- Track picker — populated from /audio-files at boot. The empty
-         value means "auto rotate": when one song ends the next plays
-         until the user pins a specific track. -->
-    <div class="setting-row">
-      <div class="sr-head"><label>Music track</label><span class="sr-val" id="sv-track">Auto rotate</span></div>
-      <select id="set-track"
-              style="width:100%;background:rgba(0,0,0,.4);border:1px solid #444;color:#fff;padding:8px 10px;font-family:inherit;font-size:13px;border-radius:3px;">
-        <option value="">— Auto (next song after this one) —</option>
-      </select>
-    </div>
-
-    <!-- Crosshair customisation. Each control writes through to
-         Crosshair.set() which persists to localStorage and live-updates
-         the on-screen reticle. -->
-    <div class="setting-row" style="border-top:1px solid rgba(255,255,255,0.05);padding-top:12px;margin-top:8px;">
-      <div class="sr-head"><label>Crosshair</label></div>
-      <div style="display:grid;grid-template-columns:auto 1fr;gap:8px 10px;align-items:center;margin-top:8px;font-size:11px;letter-spacing:1px;color:var(--dim);">
-        <span>Colour</span>
-        <input type="color" id="ch-color" value="#00ffff" style="width:64px;height:26px;background:transparent;border:1px solid #444;border-radius:3px;padding:1px;cursor:pointer;">
-
-        <span>Length <span id="ch-length-val" style="color:#fff;">8</span></span>
-        <input type="range" id="ch-length" min="1" max="20" step="1" value="8">
-
-        <span>Thickness <span id="ch-thickness-val" style="color:#fff;">2</span></span>
-        <input type="range" id="ch-thickness" min="1" max="5" step="1" value="2">
-
-        <span>Gap <span id="ch-gap-val" style="color:#fff;">6</span></span>
-        <input type="range" id="ch-gap" min="0" max="20" step="1" value="6">
+    <div class="settings-panels">
+      <!-- ── GAME ─────────────────────────────────────────────────────── -->
+      <div class="set-panel active" data-panel="game">
+        <div class="setting-row">
+          <div class="sr-head"><label>Field of view</label><span class="sr-val" id="sv-fov">75°</span></div>
+          <input type="range" id="set-fov" min="60" max="100" step="1" value="75">
+        </div>
+        <div class="setting-row">
+          <div class="sr-head"><label>View-model bob</label><span class="sr-val" id="sv-bob">100%</span></div>
+          <input type="range" id="set-bob" min="0" max="200" step="5" value="100">
+        </div>
+        <div class="set-row-inline">
+          <div><label>Toggle crouch</label><div class="sr-sub">Tap Ctrl to crouch / stand instead of holding</div></div>
+          <label class="set-switch"><input type="checkbox" id="set-togglecrouch"><span class="sw-track"></span></label>
+        </div>
+        <div class="controls-hint">
+          <b>WASD</b> move · <b>Shift</b> silent walk · <b>Ctrl</b> crouch · <b>Space</b> jump · <b>Left Click</b> shoot · <b>1/2/3/4</b> weapons · <b>R</b> reload · <b>Y</b> all-chat · <b>U</b> team-chat · <b>Tab</b> scoreboard · <b>Esc</b> pause
+        </div>
       </div>
-      <div style="display:flex;gap:14px;margin-top:10px;flex-wrap:wrap;font-size:11px;letter-spacing:1px;color:var(--dim);">
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="ch-dot"> Centre dot</label>
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="ch-outline" checked> Black outline</label>
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="ch-dynamic" checked> Dynamic (bloom on fire)</label>
+
+      <!-- ── MOUSE ────────────────────────────────────────────────────── -->
+      <div class="set-panel" data-panel="mouse">
+        <div class="setting-row">
+          <div class="sr-head"><label>Mouse sensitivity</label><span class="sr-val" id="sv-sens">1.00x</span></div>
+          <input type="range" id="set-sens" min="0.2" max="3" step="0.05" value="1">
+        </div>
+        <div class="setting-row">
+          <div class="sr-head"><label>Zoom (ADS) sensitivity</label><span class="sr-val" id="sv-zoom">1.00x</span></div>
+          <input type="range" id="set-zoom" min="0.2" max="2" step="0.05" value="1">
+        </div>
+        <div class="set-row-inline">
+          <div><label>Invert mouse Y</label><div class="sr-sub">Pull down to look up</div></div>
+          <label class="set-switch"><input type="checkbox" id="set-inverty"><span class="sw-track"></span></label>
+        </div>
+      </div>
+
+      <!-- ── VIDEO ────────────────────────────────────────────────────── -->
+      <div class="set-panel" data-panel="video">
+        <div class="setting-row">
+          <div class="sr-head"><label>Resolution scale</label><span class="sr-val" id="sv-res">100%</span></div>
+          <input type="range" id="set-res" min="50" max="100" step="5" value="100">
+        </div>
+        <div class="setting-row">
+          <div class="sr-head"><label>Brightness</label><span class="sr-val" id="sv-bright">100%</span></div>
+          <input type="range" id="set-bright" min="60" max="160" step="5" value="100">
+        </div>
+        <div class="set-row-inline">
+          <div><label>Shadows</label><div class="sr-sub">Real-time sun shadows (off boosts FPS)</div></div>
+          <label class="set-switch"><input type="checkbox" id="set-shadows" checked><span class="sw-track"></span></label>
+        </div>
+        <div class="set-row-inline">
+          <div><label>FPS counter</label></div>
+          <label class="set-switch"><input type="checkbox" id="set-fpsshow"><span class="sw-track"></span></label>
+        </div>
+        <div class="set-row-inline">
+          <div><label>Max FPS</label></div>
+          <select id="set-maxfps">
+            <option value="0">Unlimited</option>
+            <option value="60">60</option>
+            <option value="120">120</option>
+            <option value="144">144</option>
+            <option value="240">240</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- ── AUDIO ────────────────────────────────────────────────────── -->
+      <div class="set-panel" data-panel="audio">
+        <div class="setting-row">
+          <div class="sr-head"><label>Master volume</label><span class="sr-val" id="sv-master">100%</span></div>
+          <input type="range" id="set-master" min="0" max="100" step="1" value="100">
+        </div>
+        <div class="setting-row">
+          <div class="sr-head"><label>Music volume</label><span class="sr-val" id="sv-mus">45%</span></div>
+          <input type="range" id="set-mus" min="0" max="100" step="1" value="45">
+        </div>
+        <div class="setting-row">
+          <div class="sr-head"><label>SFX volume</label><span class="sr-val" id="sv-sfx">80%</span></div>
+          <input type="range" id="set-sfx" min="0" max="100" step="1" value="80">
+        </div>
+        <!-- Track picker — populated from /audio-files at boot. Empty value =
+             "auto rotate": when one song ends the next plays until pinned. -->
+        <div class="setting-row">
+          <div class="sr-head"><label>Music track</label><span class="sr-val" id="sv-track">Auto rotate</span></div>
+          <select id="set-track"
+                  style="width:100%;background:rgba(0,0,0,.4);border:1px solid #444;color:#fff;padding:8px 10px;font-family:inherit;font-size:13px;border-radius:3px;">
+            <option value="">— Auto (next song after this one) —</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- ── CROSSHAIR ────────────────────────────────────────────────── -->
+      <!-- Each control writes through Crosshair.set() which persists to
+           localStorage and live-updates the on-screen reticle. -->
+      <div class="set-panel" data-panel="crosshair">
+        <div style="display:grid;grid-template-columns:auto 1fr;gap:12px 14px;align-items:center;font-size:11px;letter-spacing:1px;color:var(--dim);">
+          <span>Colour</span>
+          <input type="color" id="ch-color" value="#00ffff" style="width:64px;height:26px;background:transparent;border:1px solid #444;border-radius:3px;padding:1px;cursor:pointer;">
+          <span>Length <span id="ch-length-val" style="color:#fff;">8</span></span>
+          <input type="range" id="ch-length" min="1" max="20" step="1" value="8">
+          <span>Thickness <span id="ch-thickness-val" style="color:#fff;">2</span></span>
+          <input type="range" id="ch-thickness" min="1" max="5" step="1" value="2">
+          <span>Gap <span id="ch-gap-val" style="color:#fff;">6</span></span>
+          <input type="range" id="ch-gap" min="0" max="20" step="1" value="6">
+        </div>
+        <div style="display:flex;gap:18px;margin-top:6px;flex-wrap:wrap;font-size:11px;letter-spacing:1px;color:var(--dim);">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="ch-dot-cb"> Centre dot</label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="ch-outline" checked> Black outline</label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="ch-dynamic" checked> Dynamic (bloom on fire)</label>
+        </div>
+      </div>
+
+      <!-- ── HUD ──────────────────────────────────────────────────────── -->
+      <div class="set-panel" data-panel="hud">
+        <div class="set-row-inline">
+          <div><label>Show radar</label></div>
+          <label class="set-switch"><input type="checkbox" id="set-radar" checked><span class="sw-track"></span></label>
+        </div>
+        <div class="set-row-inline">
+          <div><label>Damage direction arrows</label></div>
+          <label class="set-switch"><input type="checkbox" id="set-dmgarrows" checked><span class="sw-track"></span></label>
+        </div>
+        <div class="setting-row">
+          <div class="sr-head"><label>Killfeed duration</label><span class="sr-val" id="sv-kfdur">5s</span></div>
+          <input type="range" id="set-kfdur" min="2" max="12" step="1" value="5">
+        </div>
       </div>
     </div>
 
-    <div class="controls-hint">
-      <b>WASD</b> move · <b>Shift</b> silent walk · <b>Ctrl</b> crouch · <b>Space</b> jump · <b>Left Click</b> shoot · <b>1/2/3/4</b> weapons · <b>R</b> reload · <b>Y</b> all-chat · <b>U</b> team-chat · <b>Tab</b> scoreboard · <b>Esc</b> pause
-    </div>
-
-    <div class="settings-btns">
-      <button class="btn-secondary" onclick="App.closeSettings()">CLOSE</button>
+    <div class="settings-footer">
+      <button class="btn-secondary" onclick="App.resetSettings()">RESET DEFAULTS</button>
+      <button class="btn-primary" onclick="App.closeSettings()">DONE</button>
     </div>
   </div>
 </div>
@@ -1809,16 +1924,24 @@ const AudioManager = {
 
   resume() { if (this.ctx?.state === 'suspended') this.ctx.resume(); },
 
+  // Master volume scales BOTH buses on top of their per-channel sliders, so
+  // the music/SFX values stay the user's intended mix while master rides over.
+  setMasterVolume(v) {
+    this._masterVol = Math.max(0, Math.min(1, v));
+    this.setMusicVolume(this._musicVol);
+    this.setSfxVolume(this._sfxVol);
+  },
   setMusicVolume(v) {
     this._musicVol = Math.max(0, Math.min(1, v));
-    if (this._music) this._music.volume = this._musicVol;
+    if (this._music) this._music.volume = this._musicVol * (this._masterVol ?? 1);
   },
   setSfxVolume(v) {
     this._sfxVol = Math.max(0, Math.min(1, v));
-    if (this.masterSfx) this.masterSfx.gain.value = this._sfxVol;
+    if (this.masterSfx) this.masterSfx.gain.value = this._sfxVol * (this._masterVol ?? 1);
   },
-  getMusicVolume() { return this._musicVol; },
-  getSfxVolume()   { return this._sfxVol;   },
+  getMasterVolume() { return this._masterVol ?? 1; },
+  getMusicVolume()  { return this._musicVol; },
+  getSfxVolume()    { return this._sfxVol;   },
 
   playMusic() {
     this._wantMusic = true;
@@ -2326,6 +2449,13 @@ const Bot = {
       this.active  = false;
       this.deaths++;
       App.myKills++;
+      // Ragdoll the bot where it fell; onOpponentRespawn re-shows the body.
+      try {
+        GameEngine.spawnCorpse(null,
+          { x: GameEngine._oppCurPos.x, y: GameEngine._oppCurY || 0, z: GameEngine._oppCurPos.z },
+          GameEngine._oppCurYaw, GameEngine._oppWeapon || 'rifle');
+        GameEngine.opponentGroup.visible = false;
+      } catch (_) {}
       try { Economy.trainingKill(GameEngine.currentWeapon); } catch (_) {}   // CS economy: kill reward
       UIManager.showKillNotify();
       AudioManager.playKill();
@@ -2866,14 +2996,24 @@ const GameEngine = {
 
     // Sky/ground hemisphere — soft coloured fill so shadowed sides still
     // read with form (warm bounce from the grass, cool from the sky).
-    this.scene.add(new THREE.HemisphereLight(0xbcd8ff, 0x586b39, 0.55));
+    const hemi = new THREE.HemisphereLight(0xbcd8ff, 0x586b39, 0.55);
+    this.scene.add(hemi);
+    this._hemi = hemi;
     // Low flat ambient so shadows stay deep and readable.
-    this.scene.add(new THREE.AmbientLight(0x8499b5, 0.32));
+    const amb = new THREE.AmbientLight(0x8499b5, 0.32);
+    this.scene.add(amb);
+    this._amb = amb;
     // Cool rim / back light — separates players from the background and
     // gives the models a crisp lit edge. No shadow (cheap fill).
     const rim = new THREE.DirectionalLight(0xaecbff, 0.6);
     rim.position.set(-18, 14, -16);
     this.scene.add(rim);
+    this._rim = rim;
+    // Remember the hand-tuned base intensities so the brightness setting can
+    // scale every light proportionally without drifting from the art.
+    this._lightBase = { sun: sun.intensity, hemi: hemi.intensity, amb: amb.intensity, rim: rim.intensity };
+    // Apply any persisted video settings now that the lights/renderer exist.
+    try { Settings.applyVideo?.(); } catch (_) {}
   },
 
   // ── Opponent mesh — humanoid soldier (cylinders + sized cubes) ────────
@@ -4246,9 +4386,10 @@ const GameEngine = {
       // browser uses it for focus traversal, so we always preventDefault.
       if (e.code === 'Tab')    { e.preventDefault(); try { App.showScoreboard(true); } catch (_) {} }
       if (e.code === 'ControlLeft' || e.code === 'ControlRight') {
-        // Crouch is hold-to-crouch on Ctrl; toggle stays via the existing
-        // settings/HUD if any. Ctrl is more standard than C.
-        this.crouching = true;
+        // Ctrl crouches. Hold-to-crouch by default; the "toggle crouch"
+        // setting flips it on each press instead (ignore auto-repeat).
+        if (this._toggleCrouch) { if (!e.repeat) this.crouching = !this.crouching; }
+        else this.crouching = true;
       }
       if (e.code === 'Space' && this.pointerLocked && this._grounded && !this.crouching
           && !(typeof Economy !== 'undefined' && Economy.isFrozen())) {
@@ -4258,8 +4399,8 @@ const GameEngine = {
     });
     window.addEventListener('keyup', e => {
       this._keys[e.code] = false;
-      if (e.code === 'ControlLeft' || e.code === 'ControlRight') {
-        this.crouching = false;
+      if ((e.code === 'ControlLeft' || e.code === 'ControlRight') && !this._toggleCrouch) {
+        this.crouching = false;   // hold-mode releases; toggle-mode keeps state
       }
       // Release TAB → hide the scoreboard.
       if (e.code === 'Tab') {
@@ -4339,9 +4480,12 @@ const GameEngine = {
       // delta needs to be halved for the same on-target movement.
       const fov = this.camera?.fov || this._fov;
       const fovScale = fov / 75;
-      const s = 0.0022 * this._sens * fovScale;
+      // While scoped, fold in the separate zoom (ADS) sensitivity multiplier.
+      const zoomMul = this._scoped ? (this._zoomSens ?? 1) : 1;
+      const s = 0.0022 * this._sens * fovScale * zoomMul;
+      const yInv = this._invertY ? -1 : 1;
       this.yaw   -= e.movementX * s;
-      this.pitch -= e.movementY * s;
+      this.pitch -= e.movementY * s * yInv;
       this.pitch  = Math.max(-1.45, Math.min(1.45, this.pitch));
     });
 
@@ -4797,6 +4941,9 @@ const GameEngine = {
       }
     }
 
+    // Advance any death ragdolls toward the ground.
+    this._updateCorpses(dt);
+
     // Bot update (training mode only)
     if (App.trainingMode) {
       Bot.update(dt, { x: this.pos.x, z: this.pos.z }, this._staticBoxes);
@@ -5057,7 +5204,7 @@ const GameEngine = {
     if (velRatio > 0.1 && this.pointerLocked) {
       this._gunBobT += dt * (6 + velRatio * 5);
     }
-    const bobAmt = velRatio > 0.1 ? 0.0042 * velRatio : 0;
+    const bobAmt = (velRatio > 0.1 ? 0.0042 * velRatio : 0) * (this._bobScale ?? 1);
     const bobX   = Math.sin(this._gunBobT) * bobAmt + (this._swayX || 0);
     const bobY   = Math.abs(Math.cos(this._gunBobT * 2)) * bobAmt * -0.5 + (this._swayY || 0)
                  - (this._landDip || 0) * 0.35;   // gun dips with the landing
@@ -5163,8 +5310,24 @@ const GameEngine = {
   // ── Game loop ──────────────────────────────────────────────────────────
   _loop(ts) {
     if (!this.running) return;
+    // Schedule the next frame FIRST so an early-out (frame cap) keeps the
+    // loop alive.
+    this._rafId = requestAnimationFrame(t => this._loop(t));
+    // Optional frame-rate cap: skip this tick if we're ahead of the target
+    // interval. dt-based physics stays correct on the frames we keep.
+    const cap = this._maxFps || 0;
+    if (cap > 0 && this._lastTime != null && (ts - this._lastTime) < (1000 / cap) - 0.6) return;
     const dt = Math.min(ts - (this._lastTime ?? ts), 100) / 1000;
     this._lastTime = ts;
+    // Smoothed on-screen FPS readout (DOM writes throttled to ~5/s).
+    if (this._showFps) {
+      this._fpsEMA = (this._fpsEMA || 60) * 0.92 + (1 / Math.max(dt, 1e-3)) * 0.08;
+      if (ts - (this._fpsLastWrite || 0) > 200) {
+        this._fpsLastWrite = ts;
+        const fe = document.getElementById('hud-fps');
+        if (fe) fe.textContent = Math.round(this._fpsEMA) + ' FPS';
+      }
+    }
     this._update(dt);
     // Keep the Web Audio listener glued to the camera so remote_shot
     // PannerNodes can pan/attenuate against the player's actual POV.
@@ -5200,12 +5363,13 @@ const GameEngine = {
       this.camera.updateProjectionMatrix();
     }
     this.renderer.render(this.scene, this.camera);
-    this._rafId = requestAnimationFrame(t => this._loop(t));
   },
 
   start(spawnPos) {
     this.running     = true;
     this._lastTime   = null;
+    this._oppDead    = false;
+    this.clearCorpses();              // no bodies carry over into a fresh match
     this.pos.set(spawnPos.x, 0, spawnPos.z);
     this.yaw         = spawnPos.z > 0 ? Math.PI : 0;
     this.pitch       = 0;
@@ -5276,6 +5440,8 @@ const GameEngine = {
     this._oppWeapon = null;
     this._attachThirdPersonWeapon(this.opponentGroup, 'rifle');
     if (this.opponentNameTagEl) this.opponentNameTagEl.style.display = 'none';
+    this._oppDead = false;
+    this.clearCorpses();
     this._disposeOtherPlayers();
     this._arenaObjects.forEach(o => this.scene.remove(o));
     this._arenaObjects = [];
@@ -5306,6 +5472,10 @@ const GameEngine = {
       this._attachThirdPersonWeapon(this.opponentGroup, weapon);
       this._oppWeapon = weapon;
     }
+    // Opponent was lying dead and is now moving again → they respawned.
+    // Clearing _oppVisible makes the snap-and-show block below re-reveal the
+    // live body at the new spawn (the corpse stays on the ground).
+    if (this._oppDead) { this._oppDead = false; this._oppVisible = false; }
     this._oppTgtPos.set(position.x, 0, position.z);
     if (rotation != null) {
       this._oppTgtYaw   = rotation.y ?? 0;
@@ -5365,6 +5535,14 @@ const GameEngine = {
       // Weapon changed since we last saw this player — swap the model.
       this._attachThirdPersonWeapon(entry.group, weapon);
       entry.weapon = weapon;
+    }
+    // Was lying dead and is moving again → respawned. Re-show the live body
+    // and snap it to the new spawn so it doesn't glide from the corpse.
+    if (entry._dead) {
+      entry._dead = false;
+      entry.group.visible = true;
+      entry.curPos.set(position.x, 0, position.z);
+      entry.curYaw = rotation?.y ?? entry.curYaw;
     }
     // Spatial footstep — same threshold/crouch rule as the 1v1 path.
     const last = this._oppLastPos[sockId];
@@ -5459,6 +5637,122 @@ const GameEngine = {
     this._otherPlayers = null;
   },
 
+  // ── Death ragdolls (corpses) ──────────────────────────────────────────
+  // When a player dies we drop an independent humanoid "corpse" at their
+  // last spot and play a short procedural ragdoll flop: the rig collapses
+  // into a slumped pose and the whole body tips to the ground with a
+  // gravity-like ease + thud settle. Corpses persist until the round/match
+  // ends (then clearCorpses() disposes them). They are built as fresh meshes
+  // — NOT clones — so their geometry/materials are independent and disposing
+  // a live player can never corrupt a corpse (or vice-versa).
+  _corpses: null,
+  _MAX_CORPSES: 16,
+
+  spawnCorpse(team, position, yaw, weapon) {
+    if (!this.scene) return null;
+    if (!this._corpses) this._corpses = [];
+    // Bound the body count so a long deathmatch can't pile up unbounded
+    // geometry — retire the oldest corpse first.
+    while (this._corpses.length >= this._MAX_CORPSES) {
+      this._removeCorpse(this._corpses.shift());
+    }
+    const group = this._buildPlayerMesh(team || null, /*assignToOpp*/ false);
+    group.visible = true;                       // _buildPlayerMesh hides by default
+    try { this._attachThirdPersonWeapon(group, weapon || 'rifle'); } catch (_) {}
+    const baseY = position.y || 0;
+    group.position.set(position.x, baseY, position.z);
+    group.rotation.y = (yaw || 0) + Math.PI;    // same facing convention as live models
+
+    // Collapse the rig into a limp, slumped pose. Randomised a little so no
+    // two bodies land identically.
+    const ud = group.userData;
+    const R = (a) => (Math.random() - 0.5) * a;
+    if (ud.kneeL)   ud.kneeL.rotation.x = 0.7 + Math.random() * 0.6;
+    if (ud.kneeR)   ud.kneeR.rotation.x = 0.6 + Math.random() * 0.6;
+    if (ud.legL)    ud.legL.rotation.set(R(0.4), 0,  0.16 + R(0.2));
+    if (ud.legR)    ud.legR.rotation.set(R(0.4), 0, -0.16 + R(0.2));
+    if (ud.armL)    ud.armL.rotation.set(-0.3 + R(0.6), R(0.5),  0.95 + R(0.4)); // arms splay out
+    if (ud.armR)    ud.armR.rotation.set(-0.3 + R(0.6), R(0.5), -0.95 + R(0.4));
+    if (ud.headGrp) ud.headGrp.rotation.set(-0.55 + R(0.3), R(0.5), R(0.45));    // head lolls
+    if (ud.weaponSocket) ud.weaponSocket.rotation.x = 1.3;                       // gun drops from aim
+
+    this.scene.add(group);
+    const corpse = {
+      group, baseY,
+      t: 0,
+      dur: 0.5 + Math.random() * 0.25,
+      tip:  (Math.random() < 0.5 ? 1 : -1) * (Math.PI / 2),   // fall forward / backward
+      lean: R(0.55),                                          // sideways roll
+      lift: 0.18,                                             // raise so torso rests on ground
+    };
+    this._corpses.push(corpse);
+    return corpse;
+  },
+
+  // Resolve who died and drop a corpse for them. iDied = the local player.
+  spawnCorpseForDeath(killedId, iDied) {
+    try {
+      if (iDied) {
+        this.spawnCorpse(App.yourTeam || null,
+          { x: this.pos.x, y: this._floorY || 0, z: this.pos.z },
+          this.yaw, this.currentWeapon);
+        return;
+      }
+      if (this._otherPlayers && this._otherPlayers.has(killedId)) {
+        const e = this._otherPlayers.get(killedId);
+        this.spawnCorpse(e.team || null,
+          { x: e.curPos.x, y: e.curY || 0, z: e.curPos.z }, e.curYaw, e.weapon);
+        e.group.visible = false;   // hide the now-frozen live body…
+        e._dead = true;            // …until the next move packet (respawn) un-hides it
+        return;
+      }
+      // 1v1 — the only other body is the single opponentGroup.
+      if (this.opponentGroup && this._oppVisible) {
+        this.spawnCorpse(null,
+          { x: this._oppCurPos.x, y: this._oppCurY || 0, z: this._oppCurPos.z },
+          this._oppCurYaw, this._oppWeapon || 'rifle');
+        this.opponentGroup.visible = false;
+        this._oppDead = true;
+      }
+    } catch (_) {}
+  },
+
+  _updateCorpses(dt) {
+    if (!this._corpses || !this._corpses.length) return;
+    // Overshoot-and-settle ease — the body tips slightly past flat then
+    // rocks back, reading as a thud rather than a stiff plank.
+    const easeOutBack = (x) => {
+      const s = 1.70158 * 0.7;
+      return 1 + (s + 1) * Math.pow(x - 1, 3) + s * Math.pow(x - 1, 2);
+    };
+    for (const c of this._corpses) {
+      if (c.t >= 1) continue;
+      c.t = Math.min(1, c.t + dt / c.dur);
+      const e = easeOutBack(c.t);
+      c.group.rotation.x = c.tip  * e;
+      c.group.rotation.z = c.lean * e;
+      c.group.position.y = c.baseY + c.lift * Math.min(1, c.t * 1.3);
+    }
+  },
+
+  _removeCorpse(c) {
+    if (!c || !c.group) return;
+    this.scene?.remove(c.group);
+    c.group.traverse(o => {
+      if (o.isMesh) {
+        o.geometry?.dispose?.();
+        if (Array.isArray(o.material)) o.material.forEach(m => m.dispose?.());
+        else o.material?.dispose?.();
+      }
+    });
+  },
+
+  clearCorpses() {
+    if (!this._corpses) return;
+    for (const c of this._corpses) this._removeCorpse(c);
+    this._corpses.length = 0;
+  },
+
   setOpponentPos(pos, playerPos) {
     this._oppTgtPos.set(pos.x, 0, pos.z);
     // Bot always faces the player
@@ -5524,6 +5818,56 @@ const GameEngine = {
       this.camera.fov = this._fov;
       this.camera.updateProjectionMatrix();
     }
+  },
+
+  // ── Configurable settings (driven by the settings window) ─────────────
+  setInvertY(on)      { this._invertY   = !!on; },
+  setZoomSens(m)      { this._zoomSens  = Math.max(0.1, Math.min(2, +m || 1)); },
+  setBobScale(s)      { this._bobScale  = Math.max(0, Math.min(2, +s ?? 1)); },
+  setToggleCrouch(on) { this._toggleCrouch = !!on; },
+  setShowFps(on) {
+    this._showFps = !!on;
+    const el = document.getElementById('hud-fps');
+    if (el) el.style.display = on ? 'block' : 'none';
+  },
+  setMaxFps(v)        { this._maxFps = Math.max(0, +v || 0); },   // 0 = unlimited
+
+  // Render resolution multiplier (0.5 .. 1.0). Scales the device pixel ratio
+  // so a lower value renders fewer pixels (big perf win) and a value of 1
+  // restores full native sharpness.
+  setResolutionScale(p) {
+    this._resScale = Math.max(0.4, Math.min(1, +p || 1));
+    if (this.renderer) {
+      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2) * this._resScale);
+      try { this._onResize(); } catch (_) {}
+    }
+  },
+
+  // Toggle real-time sun shadows. Materials must recompile when the shadow
+  // pipeline changes, so flag them dirty after flipping the renderer + sun.
+  setShadows(on) {
+    on = !!on;
+    if (!this.renderer) return;
+    this.renderer.shadowMap.enabled = on;
+    if (this._sun) this._sun.castShadow = on;
+    this.renderer.shadowMap.needsUpdate = true;
+    this.scene?.traverse(o => { if (o.isMesh && o.material) {
+      if (Array.isArray(o.material)) o.material.forEach(m => m.needsUpdate = true);
+      else o.material.needsUpdate = true;
+    }});
+  },
+
+  // Scene brightness — scales every light off its hand-tuned base intensity.
+  // 1.0 = the original art-directed look; 0.6..1.6 gives darker/brighter.
+  setBrightness(v) {
+    const b = Math.max(0.5, Math.min(1.7, +v || 1));
+    this._brightness = b;
+    const base = this._lightBase;
+    if (!base) return;
+    if (this._sun)  this._sun.intensity  = base.sun  * b;
+    if (this._hemi) this._hemi.intensity = base.hemi * b;
+    if (this._amb)  this._amb.intensity  = base.amb  * b;
+    if (this._rim)  this._rim.intensity  = base.rim  * b;
   },
 
   // Briefly jolt the camera. Stacks via Math.max so a heavy hit isn't
@@ -6150,8 +6494,18 @@ const UIManager = {
     entry.className = `kf-entry ${cls}`;
     entry.innerHTML = html;
     feed.appendChild(entry);
-    this._kfTimers.push(setTimeout(() => entry.remove(), 5000));
+    this._kfTimers.push(setTimeout(() => entry.remove(), this._kfDuration || 5000));
     while (feed.children.length > 5) feed.removeChild(feed.firstChild);
+  },
+  _kfDuration: 5000,   // ms a killfeed line stays before fading (settings-driven)
+
+  // HUD visibility / timing options from the settings window.
+  applyHudSettings(showRadar, showArrows, kfDurSec) {
+    const radar = document.getElementById('hud-radar');
+    if (radar) radar.style.display = showRadar ? '' : 'none';
+    const ring = document.getElementById('hud-dmg-ring');
+    if (ring) ring.style.display = showArrows ? '' : 'none';
+    this._kfDuration = Math.max(1, Number(kfDurSec) || 5) * 1000;
   },
 
   // CS-style killfeed weapon icon. Returns an original SVG silhouette for the
@@ -8495,7 +8849,18 @@ const NetworkManager = {
 //  SETTINGS  (persisted in localStorage)
 // ══════════════════════════════════════════════════════════════
 const Settings = {
-  defaults: { sens: 1.0, fov: 75, musicVol: 0.45, sfxVol: 0.8 },
+  defaults: {
+    // Mouse / aim
+    sens: 1.0, zoomSens: 1.0, invertY: false,
+    // Game / view
+    fov: 75, bobScale: 1.0, toggleCrouch: false,
+    // Video
+    resScale: 1.0, shadows: true, brightness: 1.0, showFps: false, maxFps: 0,
+    // Audio
+    masterVol: 1.0, musicVol: 0.45, sfxVol: 0.8,
+    // HUD
+    showRadar: true, showDmgArrows: true, killfeedDur: 5,
+  },
   data: null,
 
   load() {
@@ -8518,8 +8883,32 @@ const Settings = {
   apply() {
     GameEngine.setSensitivity(this.get('sens'));
     GameEngine.setFOV(this.get('fov'));
+    GameEngine.setInvertY?.(this.get('invertY'));
+    GameEngine.setZoomSens?.(this.get('zoomSens'));
+    GameEngine.setBobScale?.(this.get('bobScale'));
+    GameEngine.setToggleCrouch?.(this.get('toggleCrouch'));
+    GameEngine.setShowFps?.(this.get('showFps'));
+    GameEngine.setMaxFps?.(this.get('maxFps'));
+    AudioManager.setMasterVolume?.(this.get('masterVol'));
     AudioManager.setMusicVolume(this.get('musicVol'));
     AudioManager.setSfxVolume(this.get('sfxVol'));
+    UIManager.applyHudSettings?.(this.get('showRadar'), this.get('showDmgArrows'), this.get('killfeedDur'));
+    this.applyVideo();
+  },
+
+  // Renderer/light settings. Split out because they're also (re)applied from
+  // _buildLights the moment the renderer + light rig exist, before the rest
+  // of apply() would otherwise run.
+  applyVideo() {
+    GameEngine.setResolutionScale?.(this.get('resScale'));
+    GameEngine.setShadows?.(this.get('shadows'));
+    GameEngine.setBrightness?.(this.get('brightness'));
+  },
+
+  resetDefaults() {
+    this.data = Object.assign({}, this.defaults);
+    this.save();
+    this.apply();
   },
 };
 
@@ -8547,6 +8936,11 @@ const Crosshair = {
   set(k, v) {
     if (!this.data) this.load();
     this.data[k] = v;
+    this.save();
+    this.apply();
+  },
+  resetDefaults() {
+    this.data = Object.assign({}, this.defaults);
     this.save();
     this.apply();
   },
@@ -8641,45 +9035,78 @@ const App = {
   },
 
   _wireSettingsUI() {
-    const sens = document.getElementById('set-sens');
-    const fov  = document.getElementById('set-fov');
-    const mus  = document.getElementById('set-mus');
-    const sfx  = document.getElementById('set-sfx');
+    const $ = (id) => document.getElementById(id);
+    const idf = (x) => x;
+    // Conversions: percent-style sliders store a 0..n model but show 0..n%.
+    const pct = { toModel: r => r / 100, toRaw: m => Math.round(m * 100), fmt: r => r + '%' };
+    const lin = (fmt) => ({ toModel: idf, toRaw: idf, fmt });
 
-    sens.value = Settings.get('sens');
-    fov.value  = Settings.get('fov');
-    mus.value  = Math.round(Settings.get('musicVol') * 100);
-    sfx.value  = Math.round(Settings.get('sfxVol') * 100);
+    // [inputId, valueLabelId, settingsKey, conversion, liveApply]
+    const sliders = [
+      ['set-sens',   'sv-sens',   'sens',        lin(r => (+r).toFixed(2) + 'x'), v => GameEngine.setSensitivity(v)],
+      ['set-zoom',   'sv-zoom',   'zoomSens',    lin(r => (+r).toFixed(2) + 'x'), v => GameEngine.setZoomSens(v)],
+      ['set-fov',    'sv-fov',    'fov',         lin(r => r + '°'),               v => GameEngine.setFOV(v)],
+      ['set-bob',    'sv-bob',    'bobScale',    pct,                             v => GameEngine.setBobScale(v)],
+      ['set-res',    'sv-res',    'resScale',    pct,                             v => GameEngine.setResolutionScale(v)],
+      ['set-bright', 'sv-bright', 'brightness',  pct,                             v => GameEngine.setBrightness(v)],
+      ['set-master', 'sv-master', 'masterVol',   pct,                             v => AudioManager.setMasterVolume(v)],
+      ['set-mus',    'sv-mus',    'musicVol',    pct,                             v => AudioManager.setMusicVolume(v)],
+      ['set-sfx',    'sv-sfx',    'sfxVol',      pct,                             v => AudioManager.setSfxVolume(v)],
+      ['set-kfdur',  'sv-kfdur',  'killfeedDur', lin(r => r + 's'),
+        v => UIManager.applyHudSettings(Settings.get('showRadar'), Settings.get('showDmgArrows'), v)],
+    ];
+    const toggles = [
+      ['set-inverty',      'invertY',       v => GameEngine.setInvertY(v)],
+      ['set-togglecrouch', 'toggleCrouch',  v => GameEngine.setToggleCrouch(v)],
+      ['set-shadows',      'shadows',       v => GameEngine.setShadows(v)],
+      ['set-fpsshow',      'showFps',       v => GameEngine.setShowFps(v)],
+      ['set-radar',        'showRadar',     v => UIManager.applyHudSettings(v, Settings.get('showDmgArrows'), Settings.get('killfeedDur'))],
+      ['set-dmgarrows',    'showDmgArrows', v => UIManager.applyHudSettings(Settings.get('showRadar'), v, Settings.get('killfeedDur'))],
+    ];
+    const maxfps = $('set-maxfps');
 
-    document.getElementById('sv-sens').textContent = (+sens.value).toFixed(2) + 'x';
-    document.getElementById('sv-fov').textContent  = fov.value + '°';
-    document.getElementById('sv-mus').textContent  = mus.value + '%';
-    document.getElementById('sv-sfx').textContent  = sfx.value + '%';
+    // Bind listeners once.
+    for (const [inId, svId, key, conv, apply] of sliders) {
+      const el = $(inId); if (!el) continue;
+      el.addEventListener('input', e => {
+        const raw = +e.target.value;
+        const m = conv.toModel(raw);
+        Settings.set(key, m);
+        apply(m);
+        const sv = $(svId); if (sv) sv.textContent = conv.fmt(raw);
+      });
+    }
+    for (const [inId, key, apply] of toggles) {
+      const el = $(inId); if (!el) continue;
+      el.addEventListener('change', e => { const v = e.target.checked; Settings.set(key, v); apply(v); });
+    }
+    if (maxfps) maxfps.addEventListener('change', e => {
+      const v = +e.target.value || 0; Settings.set('maxFps', v); GameEngine.setMaxFps(v);
+    });
 
-    sens.addEventListener('input', e => {
-      const v = +e.target.value;
-      Settings.set('sens', v);
-      GameEngine.setSensitivity(v);
-      document.getElementById('sv-sens').textContent = v.toFixed(2) + 'x';
-    });
-    fov.addEventListener('input', e => {
-      const v = +e.target.value;
-      Settings.set('fov', v);
-      GameEngine.setFOV(v);
-      document.getElementById('sv-fov').textContent = v + '°';
-    });
-    mus.addEventListener('input', e => {
-      const v = +e.target.value / 100;
-      Settings.set('musicVol', v);
-      AudioManager.setMusicVolume(v);
-      document.getElementById('sv-mus').textContent = e.target.value + '%';
-    });
-    sfx.addEventListener('input', e => {
-      const v = +e.target.value / 100;
-      Settings.set('sfxVol', v);
-      AudioManager.setSfxVolume(v);
-      document.getElementById('sv-sfx').textContent = e.target.value + '%';
-    });
+    // Tab switching.
+    const tabs   = document.querySelectorAll('#overlay-settings .set-tab');
+    const panels = document.querySelectorAll('#overlay-settings .set-panel');
+    tabs.forEach(tab => tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.toggle('active', t === tab));
+      panels.forEach(p => p.classList.toggle('active', p.dataset.panel === tab.dataset.tab));
+    }));
+
+    // Push current settings into the controls. Exposed on App so the
+    // Reset-Defaults button can refresh the visible values after a reset.
+    this._syncSettingsControls = () => {
+      for (const [inId, svId, key, conv] of sliders) {
+        const el = $(inId); if (!el) continue;
+        const raw = conv.toRaw(Settings.get(key));
+        el.value = raw;
+        const sv = $(svId); if (sv) sv.textContent = conv.fmt(+raw);
+      }
+      for (const [inId, key] of toggles) {
+        const el = $(inId); if (el) el.checked = !!Settings.get(key);
+      }
+      if (maxfps) maxfps.value = String(Settings.get('maxFps'));
+    };
+    this._syncSettingsControls();
 
     // ── Music track picker ─────────────────────────────────────────────
     // /audio-files takes a moment to come back, so we poll briefly.
@@ -8722,28 +9149,30 @@ const App = {
   // overlay. Each control writes through Crosshair.set() which
   // persists + re-renders live.
   _wireCrosshairUI() {
-    const cfg = Crosshair.load();
+    Crosshair.load();
     const $ = (id) => document.getElementById(id);
     const colorEl = $('ch-color');
     const lenEl   = $('ch-length');
     const thkEl   = $('ch-thickness');
     const gapEl   = $('ch-gap');
-    const dotEl   = $('ch-dot');
+    const dotEl   = $('ch-dot-cb');
     const outEl   = $('ch-outline');
     const dynEl   = $('ch-dynamic');
     if (!colorEl) return;
-    // Initial values.
-    colorEl.value = cfg.color;
-    lenEl.value   = cfg.length;
-    $('ch-length-val').textContent = cfg.length;
-    thkEl.value   = cfg.thickness;
-    $('ch-thickness-val').textContent = cfg.thickness;
-    gapEl.value   = cfg.gap;
-    $('ch-gap-val').textContent = cfg.gap;
-    dotEl.checked = !!cfg.dot;
-    outEl.checked = !!cfg.outline;
-    dynEl.checked = !!cfg.dynamic;
-    // Wire.
+    // Push Crosshair state into the controls — reused by Reset Defaults.
+    const sync = () => {
+      const cfg = Crosshair.data || Crosshair.defaults;
+      colorEl.value = cfg.color;
+      lenEl.value   = cfg.length;    $('ch-length-val').textContent = cfg.length;
+      thkEl.value   = cfg.thickness; $('ch-thickness-val').textContent = cfg.thickness;
+      gapEl.value   = cfg.gap;       $('ch-gap-val').textContent = cfg.gap;
+      dotEl.checked = !!cfg.dot;
+      outEl.checked = !!cfg.outline;
+      dynEl.checked = !!cfg.dynamic;
+    };
+    sync();
+    this._syncCrosshairControls = sync;
+    // Wire (once).
     colorEl.addEventListener('input', e => Crosshair.set('color', e.target.value));
     lenEl.addEventListener('input', e => {
       const v = +e.target.value; $('ch-length-val').textContent = v; Crosshair.set('length', v);
@@ -8763,6 +9192,13 @@ const App = {
   closeSettings() {
     UIManager.hideSettings();
     if (GameEngine.running && !GameEngine.pointerLocked) UIManager.showPause();
+  },
+  // Restore every setting to its default and refresh the visible controls.
+  resetSettings() {
+    Settings.resetDefaults();
+    Crosshair.resetDefaults?.();
+    this._syncSettingsControls?.();
+    this._syncCrosshairControls?.();
   },
 
   leaveMatch() {
@@ -9378,6 +9814,8 @@ const App = {
       `<span class="kf-killed ${dCls}">${linkify(data.killedName)}</span>`,
       iKilled ? 'you-killed' : iDied ? 'you-died' : ''
     );
+    // Drop a ragdoll corpse for whoever died — stays until the round ends.
+    GameEngine.spawnCorpseForDeath(data.killedId, iDied);
     if (iDied) {
       GameEngine.isDead = true;
       UIManager.showRespawn(3);
