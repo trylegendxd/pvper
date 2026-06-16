@@ -129,8 +129,12 @@ body{font-family:'Rajdhani',system-ui,sans-serif;}
 .pcard .head{display:flex;align-items:center;gap:9px;}
 .avatar{width:34px;height:34px;border-radius:9px;flex-shrink:0;display:grid;place-items:center;font-weight:700;color:#fff;font-size:14px;border:1px solid rgba(255,255,255,.18);position:relative;}
 .avatar .mic{position:absolute;right:-5px;bottom:-5px;font-size:11px;}
-.pcard .uname{font-weight:700;color:#fff;font-size:13px;line-height:1.1;}
-.pcard .status{font-size:10px;letter-spacing:1px;color:var(--rr-green);text-transform:uppercase;font-weight:700;}
+/* Name + status column: own its vertical centring against the 34px avatar
+   (min-height) so the two lines read optically centred rather than top-biased,
+   and let it shrink so long names ellipsis instead of shoving things around. */
+.pcard .head>div:last-child{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;min-height:34px;}
+.pcard .uname{font-weight:700;color:#fff;font-size:13px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pcard .status{font-size:10px;letter-spacing:1px;color:var(--rr-green);text-transform:uppercase;font-weight:700;line-height:1.25;}
 .pmeta{display:flex;justify-content:space-between;margin-top:7px;font-size:10px;letter-spacing:1px;color:var(--rr-dim);text-transform:uppercase;}
 .pmeta b{color:#fff;}
 /* Mini revolver cylinder: six chambers in a circle around a centre pin.
