@@ -3090,6 +3090,7 @@ function attach(io) {
           killerName: players.get(socket.id)?.username || '?',
           killedName: players.get(oppSock)?.username || '?',
           headshot: didHead,
+          weapon: wKey,
         };
         Replay.log(match.id, 'kill', {
           killer: socket.id, victim: oppSock, weapon: wKey, headshot: didHead,

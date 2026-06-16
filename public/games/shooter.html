@@ -281,7 +281,12 @@ input:focus { border-color:var(--accent); }
 .kf-entry.you-killed { border-right-color:#4b9eff; } .kf-entry.you-died { border-right-color:#e63946; }
 .kf-killer.you { color:#4b9eff; } .kf-killer.opp { color:#e63946; }
 .kf-killed.you { color:#4b9eff; } .kf-killed.opp { color:#e63946; }
-.kf-icon { color:#888;margin:0 4px; }
+.kf-icon { color:#888;margin:0 5px;display:inline-flex;align-items:center;gap:5px;vertical-align:middle; }
+/* Per-weapon kill icon — an original SVG silhouette, fill driven by the
+   element's own `color` so it stays bright regardless of the feed tint. */
+.kf-wpn { width:30px;height:11px;color:#eaeaea;filter:drop-shadow(0 1px 1px rgba(0,0,0,.85)); }
+/* Headshot marker — a small red target pip after the weapon icon. */
+.kf-hs  { color:#ff5252;font-size:12px;line-height:1;text-shadow:0 0 6px rgba(255,82,82,.75); }
 
 /* Health bottom-left */
 #hud-health { bottom:0;left:0;background:rgba(0,0,0,.75);padding:8px 18px 12px;min-width:140px; }
@@ -2305,7 +2310,7 @@ const Bot = {
       App.myKills_opp = this.kills;
       UIManager.updateScore(App.myKills, this.kills);
       UIManager.addKillfeedEntry(
-        '<span class="kf-killer opp">BOT</span><span class="kf-icon">☠</span><span class="kf-killed you">' + App.myUsername + '</span>',
+        '<span class="kf-killer opp">BOT</span><span class="kf-icon">' + UIManager.weaponIcon('rifle') + '</span><span class="kf-killed you">' + App.myUsername + '</span>',
         'you-died'
       );
       App.onTrainingPlayerDied();
@@ -2326,7 +2331,7 @@ const Bot = {
       AudioManager.playKill();
       UIManager.updateScore(App.myKills, this.kills);
       UIManager.addKillfeedEntry(
-        '<span class="kf-killer you">' + App.myUsername + '</span><span class="kf-icon">☠</span><span class="kf-killed opp">BOT</span>',
+        '<span class="kf-killer you">' + App.myUsername + '</span><span class="kf-icon">' + UIManager.weaponIcon(GameEngine.currentWeapon) + '</span><span class="kf-killed opp">BOT</span>',
         'you-killed'
       );
 
@@ -3502,27 +3507,34 @@ const GameEngine = {
       return arm;
     };
 
-    if (key === 'knife') {
-      // Single fist wrapping the knife handle.
-      G.add(makeArm({ x: 0.0, y: -0.05, z: 0.0 }, { x: 0.18, y: -0.95, z: 0.25 }, 0.2));
+    // Per-weapon grip anchors, in the gun group's LOCAL space — the same space
+    // as the gun's own meshes built above. The right/firing hand sits on the
+    // pistol grip; the left/support hand sits on the handguard, pump, fore-grip
+    // or fore-barrel; pistols stack the support hand under the firing hand.
+    // Each anchor is taken directly from that weapon's grip / handguard mesh
+    // position (nudged down a hair so the palm wraps the part instead of
+    // hovering over its centre), so every hand actually lands ON its gun rather
+    // than at a generic long-gun/pistol average — which is what made the SMG,
+    // Scout, Deagle and pistol hands read as "off-place".
+    const GRIPS = {
+      knife:   { single:[ 0.000, -0.050,  0.000], sDir:[ 0.18, -0.95, 0.25], len:0.20 },
+      rifle:   { r:[ 0.000, -0.095,  0.055], l:[ 0.000, -0.030, -0.190], rDir:[ 0.22, -0.93, 0.26], lDir:[-0.32, -0.91, 0.20] },
+      m4:      { r:[ 0.000, -0.095,  0.055], l:[ 0.000, -0.028, -0.190], rDir:[ 0.22, -0.93, 0.26], lDir:[-0.32, -0.91, 0.20] },
+      shotgun: { r:[ 0.000, -0.098,  0.065], l:[ 0.000, -0.072, -0.200], rDir:[ 0.22, -0.93, 0.26], lDir:[-0.30, -0.92, 0.18] },
+      sniper:  { r:[ 0.000, -0.092,  0.085], l:[ 0.000, -0.030, -0.220], rDir:[ 0.22, -0.93, 0.26], lDir:[-0.32, -0.91, 0.18] },
+      scout:   { r:[ 0.000, -0.088,  0.085], l:[ 0.000, -0.020, -0.150], rDir:[ 0.22, -0.93, 0.26], lDir:[-0.32, -0.91, 0.18] },
+      smg:     { r:[ 0.000, -0.088,  0.072], l:[ 0.000, -0.092, -0.120], rDir:[ 0.22, -0.93, 0.26], lDir:[-0.28, -0.93, 0.22] },
+      pistol:  { r:[ 0.000, -0.110,  0.030], l:[-0.046, -0.140,  0.010], rDir:[ 0.20, -0.94, 0.28], lDir:[-0.34, -0.90, 0.26] },
+      deagle:  { r:[ 0.000, -0.120,  0.075], l:[-0.046, -0.150,  0.050], rDir:[ 0.20, -0.94, 0.26], lDir:[-0.34, -0.90, 0.24] },
+    };
+    const g = GRIPS[key] || GRIPS.rifle;
+    const vec = a => ({ x: a[0], y: a[1], z: a[2] });
+    if (g.single) {
+      G.add(makeArm(vec(g.single), vec(g.sDir), g.len || 0.18));
       return;
     }
-
-    let rightHand, leftHand, rDir, lDir;
-    if (key === 'pistol' || key === 'deagle') {
-      rightHand = { x: 0.00,  y: -0.12, z: 0.0 };    // firing hand on the grip
-      leftHand  = { x: -0.05, y: -0.145, z: -0.02 }; // support hand under
-      rDir = { x: 0.2,  y: -0.94, z: 0.28 };
-      lDir = { x: -0.3, y: -0.92, z: 0.26 };
-    } else {
-      // long guns — right on the grip, left on the handguard.
-      rightHand = { x: 0.02,  y: -0.105, z: 0.06 };
-      leftHand  = { x: -0.02, y: -0.075, z: -0.18 };
-      rDir = { x: 0.24,  y: -0.93, z: 0.27 };
-      lDir = { x: -0.34, y: -0.91, z: 0.24 };
-    }
-    G.add(makeArm(rightHand, rDir));
-    G.add(makeArm(leftHand,  lDir));
+    G.add(makeArm(vec(g.r), vec(g.rDir)));   // firing hand on the grip
+    G.add(makeArm(vec(g.l), vec(g.lDir)));   // support hand on the handguard
   },
 
   // ── Bullet holes ───────────────────────────────────────────────────────
@@ -6140,6 +6152,32 @@ const UIManager = {
     feed.appendChild(entry);
     this._kfTimers.push(setTimeout(() => entry.remove(), 5000));
     while (feed.children.length > 5) feed.removeChild(feed.firstChild);
+  },
+
+  // CS-style killfeed weapon icon. Returns an original SVG silhouette for the
+  // weapon used in a kill, grouped by class (rifle / smg / sniper / shotgun /
+  // pistol / knife / explosive). Drawn with simple rects so it reads cleanly at
+  // ~30px wide; `fill="currentColor"` ties it to the `.kf-wpn` colour.
+  weaponIcon(weapon) {
+    const w = String(weapon || 'rifle').toLowerCase();
+    const svg = (inner) =>
+      `<svg class="kf-wpn" viewBox="0 0 80 26" fill="currentColor" aria-hidden="true">${inner}</svg>`;
+    if (w === 'molotov' || w === 'incendiary' || w === 'fire')
+      return svg('<path d="M41 2c4 7 1 10 5 14a9 9 0 1 1-13 1c5-3 2-8 8-15z"/>');
+    if (w === 'grenade' || w === 'he' || w === 'frag' || w === 'flash' || w === 'smoke' || w === 'decoy')
+      return svg('<circle cx="40" cy="16" r="9"/><rect x="36" y="2" width="8" height="6" rx="1"/>');
+    if (w === 'knife')
+      return svg('<path d="M8 19l40-13 7 2-39 15z"/><rect x="49" y="14" width="15" height="6" rx="2"/>');
+    if (w === 'pistol' || w === 'deagle')
+      return svg('<rect x="20" y="8" width="34" height="6" rx="1"/><rect x="22" y="13" width="9" height="11" rx="1"/><rect x="50" y="9" width="9" height="3"/>');
+    if (w === 'shotgun')
+      return svg('<rect x="6" y="9" width="58" height="5" rx="1"/><rect x="2" y="8" width="9" height="9" rx="2"/><rect x="30" y="14" width="15" height="4" rx="1"/><rect x="64" y="9" width="14" height="4"/>');
+    if (w === 'sniper' || w === 'scout')
+      return svg('<rect x="4" y="12" width="62" height="4" rx="1"/><rect x="0" y="11" width="9" height="7" rx="2"/><rect x="28" y="4" width="24" height="4" rx="1"/><rect x="31" y="8" width="4" height="4"/><rect x="45" y="8" width="4" height="4"/><rect x="66" y="12" width="14" height="3"/>');
+    if (w === 'smg')
+      return svg('<rect x="14" y="9" width="34" height="6" rx="1"/><rect x="22" y="14" width="6" height="10" rx="1"/><rect x="16" y="14" width="5" height="6" rx="1"/><rect x="48" y="10" width="15" height="4"/>');
+    // rifle / m4 / default
+    return svg('<rect x="8" y="9" width="46" height="6" rx="1"/><rect x="1" y="9" width="8" height="4"/><rect x="22" y="14" width="8" height="10" rx="2"/><rect x="14" y="14" width="5" height="7" rx="1"/><rect x="54" y="10" width="24" height="3"/>');
   },
 
   clearKillfeed() {
@@ -9333,8 +9371,11 @@ const App = {
     // entry to see who killed them. target="_blank" so the click
     // doesn't yank them out of the match tab.
     const linkify = (n) => `<a href="/profile.html?u=${encodeURIComponent(n || '')}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;pointer-events:auto;">${escapeHtml(n || '?')}</a>`;
+    const hs = data.headshot ? '<span class="kf-hs" title="Headshot">◉</span>' : '';
     UIManager.addKillfeedEntry(
-      `<span class="kf-killer ${kCls}">${linkify(data.killerName)}</span><span class="kf-icon">☠</span><span class="kf-killed ${dCls}">${linkify(data.killedName)}</span>`,
+      `<span class="kf-killer ${kCls}">${linkify(data.killerName)}</span>` +
+      `<span class="kf-icon">${UIManager.weaponIcon(data.weapon)}${hs}</span>` +
+      `<span class="kf-killed ${dCls}">${linkify(data.killedName)}</span>`,
       iKilled ? 'you-killed' : iDied ? 'you-died' : ''
     );
     if (iDied) {
