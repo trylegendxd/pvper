@@ -160,7 +160,11 @@ async function updateProfile(userId, updates = {}) {
       const a = String(updates.avatar);
       // Must be a data URL — anything else (remote URL etc) is rejected
       // so the rendering side stays free of CORS / SSRF concerns.
-      if (!/^data:image\/(png|jpe?g|gif|webp);base64,/.test(a)) {
+      // The payload is validated to END-OF-STRING as strict base64: a
+      // prefix-only check would accept `data:image/png;base64,AA" onerror=…`
+      // and the avatar is interpolated into src="…" attributes client-side —
+      // i.e. a stored-XSS vector. Anchoring the whole string closes it.
+      if (!/^data:image\/(png|jpe?g|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(a)) {
         const e = new Error('invalid_avatar_format'); e.status = 400; throw e;
       }
       // Cap at ~270 KB of base64 (≈ 200 KB binary). Anything larger is

@@ -11,6 +11,27 @@ const { pool }     = require('../db');
 
 const router = express.Router();
 
+// ── Live presence ─────────────────────────────────────────────────────────
+// Per-game connected-player counts for the hub. Reads the live Socket.IO
+// namespace sizes (real connections only — no invented numbers). HTTP-only
+// games (roulette/blackjack/mines/plinko) have no persistent socket, so
+// they are deliberately absent; the hub renders no badge for them.
+router.get('/online', requireAuth, (req, res) => {
+  const io = req.app.locals.io;
+  if (!io) return res.json({ ok: true, counts: {} });
+  const size = (ns) => { try { return io.of(ns).sockets.size || 0; } catch (_) { return 0; } };
+  res.json({
+    ok: true,
+    counts: {
+      shooter:  size('/shooter'),
+      rps:      size('/rps'),
+      wheel:    size('/wheel'),
+      liarsbar: size('/lb'),
+      paperio:  size('/paperio'),
+    },
+  });
+});
+
 // ── SHOOTER ranking ───────────────────────────────────────────────────────
 // Lightweight read used by the lobby/dashboard to render rank + requirements.
 router.get('/shooter/stats', requireAuth, async (req, res) => {

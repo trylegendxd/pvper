@@ -11,58 +11,109 @@
 <body>
 <div class="topbar" id="topbar"></div>
 <div class="container">
-  <h1 class="page">GAME HUB</h1>
-  <p class="subtitle">Pick a game. All credits are play-money only.</p>
 
+  <!-- ── Featured: the flagship shooter ─────────────────────────────── -->
+  <a class="g-hero" href="/games/shooter.html">
+    <div class="g-hero-art">
+      <span class="g-hero-glyph">🎯</span>
+      <div class="g-hero-scan"></div>
+    </div>
+    <div class="g-hero-body">
+      <div class="g-kicker">FEATURED · PVP</div>
+      <h2>SHOOTER ARENA</h2>
+      <p>Tactical duels &amp; team fights — buy economy, recoil spray, killcam, ranked ladder.</p>
+      <div class="g-meta">
+        <span class="g-live" data-live="shooter"></span>
+        <span class="g-cta">PLAY NOW →</span>
+      </div>
+    </div>
+  </a>
+
+  <!-- ── PvP games ──────────────────────────────────────────────────── -->
+  <h2 class="g-section">PVP ARENA <span class="g-section-sub">player vs player · winner takes the pot</span></h2>
   <div class="game-grid">
-    <a class="game-card shooter" href="/games/shooter.html">
-      <div class="icon">🎯</div>
-      <h3>SHOOTER ARENA</h3>
+    <a class="g-card" href="/games/rps.html" style="--ga:#9b59b6;--gb:#3d1f52">
+      <div class="g-art"><span class="g-glyph">✊</span><span class="g-tag">PVP</span></div>
+      <div class="g-body">
+        <h3>ROCK PAPER SCISSORS</h3>
+        <p>Best-of rounds. Pure mind games, real stakes.</p>
+        <div class="g-meta"><span class="g-live" data-live="rps"></span><span class="g-cta">PLAY →</span></div>
+      </div>
     </a>
-    <a class="game-card rps" href="/games/rps.html">
-      <div class="icon">✊</div>
-      <h3>ROCK PAPER SCISSORS</h3>
+    <a class="g-card" href="/games/liars-bar.html" style="--ga:#ff3b4e;--gb:#4a1218">
+      <div class="g-art"><span class="g-glyph">🃏</span><span class="g-tag">PVP</span></div>
+      <div class="g-body">
+        <h3>LIAR'S BAR</h3>
+        <p>Bluff your cards — get caught and face the revolver.</p>
+        <div class="g-meta"><span class="g-live" data-live="liarsbar"></span><span class="g-cta">PLAY →</span></div>
+      </div>
     </a>
-    <a class="game-card roulette" href="/games/roulette.html">
-      <div class="icon">🎡</div>
-      <h3>ROULETTE</h3>
+    <a class="g-card" href="/games/paper-io.html" style="--ga:#1fd36b;--gb:#0d3d22">
+      <div class="g-art"><span class="g-glyph">🟦</span><span class="g-tag">PVP</span></div>
+      <div class="g-body">
+        <h3>TERRITORY</h3>
+        <p>Claim ground, cut off rivals, own the board.</p>
+        <div class="g-meta"><span class="g-live" data-live="paperio"></span><span class="g-cta">PLAY →</span></div>
+      </div>
     </a>
-    <a class="game-card blackjack" href="/games/blackjack.html">
-      <div class="icon">🂡</div>
-      <h3>BLACKJACK</h3>
-    </a>
-    <a class="game-card" href="/games/mines.html" style="border-color:rgba(241,196,15,.35)">
-      <div class="icon">💣</div>
-      <h3>MINES</h3>
-    </a>
-    <a class="game-card" href="/games/wheel.html" style="border-color:rgba(0,215,255,.45)">
-      <div class="icon">🎰</div>
-      <h3>WHEEL</h3>
-    </a>
-    <a class="game-card" href="/games/plinko.html" style="border-color:rgba(245,166,35,.5)">
-      <div class="icon">🔻</div>
-      <h3>PLINKO</h3>
-    </a>
-    <a class="game-card" href="/games/liars-bar.html" style="border-color:rgba(255,59,78,.5)">
-      <div class="icon">🃏</div>
-      <h3>LIAR'S BAR</h3>
-    </a>
-    <a class="game-card" href="/games/paper-io.html" style="border-color:rgba(31,211,107,.5)">
-      <div class="icon">🟦</div>
-      <h3>TERRITORY</h3>
-    </a>
-    <a class="game-card wallet" href="/wallet.html">
-      <div class="icon">💳</div>
-      <h3>WALLET</h3>
-    </a>
-    <a class="game-card admin" href="/admin.html" id="admin-card" style="display:none">
-      <div class="icon">🛠️</div>
-      <h3>ADMIN PANEL</h3>
+    <a class="g-card" href="/games/wheel.html" style="--ga:#00d7ff;--gb:#083a45">
+      <div class="g-art"><span class="g-glyph">🎰</span><span class="g-tag">LIVE</span></div>
+      <div class="g-body">
+        <h3>WHEEL</h3>
+        <p>Shared live spins — everyone bets, one wheel decides.</p>
+        <div class="g-meta"><span class="g-live" data-live="wheel"></span><span class="g-cta">PLAY →</span></div>
+      </div>
     </a>
   </div>
 
+  <!-- ── Casino games ───────────────────────────────────────────────── -->
+  <h2 class="g-section">CASINO <span class="g-section-sub">house games · instant rounds</span></h2>
+  <div class="game-grid">
+    <a class="g-card" href="/games/roulette.html" style="--ga:#e63946;--gb:#3f0f14">
+      <div class="g-art"><span class="g-glyph">🎡</span><span class="g-tag">CASINO</span></div>
+      <div class="g-body">
+        <h3>ROULETTE</h3>
+        <p>European wheel — inside &amp; outside bets.</p>
+        <div class="g-meta"><span></span><span class="g-cta">PLAY →</span></div>
+      </div>
+    </a>
+    <a class="g-card" href="/games/blackjack.html" style="--ga:#2ecc71;--gb:#0e3d22">
+      <div class="g-art"><span class="g-glyph">🂡</span><span class="g-tag">CASINO</span></div>
+      <div class="g-body">
+        <h3>BLACKJACK</h3>
+        <p>Hit, stand, double — beat the dealer to 21.</p>
+        <div class="g-meta"><span></span><span class="g-cta">PLAY →</span></div>
+      </div>
+    </a>
+    <a class="g-card" href="/games/mines.html" style="--ga:#f1c40f;--gb:#453a06">
+      <div class="g-art"><span class="g-glyph">💣</span><span class="g-tag">CASINO</span></div>
+      <div class="g-body">
+        <h3>MINES</h3>
+        <p>Pick gems, dodge the bomb, cash out any time.</p>
+        <div class="g-meta"><span></span><span class="g-cta">PLAY →</span></div>
+      </div>
+    </a>
+    <a class="g-card" href="/games/plinko.html" style="--ga:#f5a623;--gb:#46300a">
+      <div class="g-art"><span class="g-glyph">🔻</span><span class="g-tag">CASINO</span></div>
+      <div class="g-body">
+        <h3>PLINKO</h3>
+        <p>Drop the ball, ride the multipliers.</p>
+        <div class="g-meta"><span></span><span class="g-cta">PLAY →</span></div>
+      </div>
+    </a>
+  </div>
+
+  <!-- ── Quick links ────────────────────────────────────────────────── -->
+  <div class="g-quick">
+    <a href="/leaderboard.html"><span>🏆</span>Leaderboard</a>
+    <a href="/achievements.html"><span>🎖️</span>Achievements</a>
+    <a href="/my-matches.html"><span>📼</span>My Matches</a>
+    <a href="/wallet.html"><span>💳</span>Wallet</a>
+    <a href="/admin.html" id="admin-card" style="display:none"><span>🛠️</span>Admin</a>
+  </div>
+
   <!-- Friends + chat -->
-  <h2 class="page" style="margin-top:32px;font-size:22px;">SOCIAL</h2>
+  <h2 class="g-section" style="margin-top:34px;">SOCIAL <span class="g-section-sub">friends · direct messages</span></h2>
   <div id="friends-root" class="friends-root">
     <div class="friends-empty">Loading friends…</div>
   </div>
@@ -81,6 +132,21 @@
   const user = await renderTopbar();
   if (user?.is_admin) document.getElementById('admin-card').style.display = '';
   if (window.FriendsPanel) FriendsPanel.init();
+
+  // Live "N playing" badges — real socket counts from /api/games/online.
+  // Badges stay hidden at 0 (no invented numbers, no dead-looking zeros).
+  async function refreshOnline() {
+    try {
+      const { counts } = await api('/api/games/online');
+      document.querySelectorAll('[data-live]').forEach(el => {
+        const n = counts?.[el.dataset.live] || 0;
+        el.textContent = n > 0 ? `● ${n} playing` : '';
+        el.classList.toggle('on', n > 0);
+      });
+    } catch (_) {}
+  }
+  refreshOnline();
+  setInterval(refreshOnline, 15000);
 })();
 </script>
 </body>

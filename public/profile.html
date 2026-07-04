@@ -111,7 +111,7 @@ function tierForMmr(mmr) {
 
   const displayName = p.display_name || p.username;
   const avatar = p.avatar
-    ? `<img src="${p.avatar}" style="width:84px;height:84px;border-radius:12px;object-fit:cover;border:2px solid ${t.color};">`
+    ? `<img src="${escapeHtml(p.avatar)}" style="width:84px;height:84px;border-radius:12px;object-fit:cover;border:2px solid ${t.color};">`
     : `<div class="pr-tier" style="border-color:${t.color};color:${t.color};">${t.icon}</div>`;
   root.innerHTML = `
     <div class="pr-card">

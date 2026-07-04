@@ -73,7 +73,7 @@ function avatarChip(user) {
   if (!user) return '';
   const initial = (user.display_name || user.username || '?')[0].toUpperCase();
   if (user.avatar) {
-    return `<img class="avatar-chip" src="${user.avatar}" alt="" referrerpolicy="no-referrer"
+    return `<img class="avatar-chip" src="${escapeHtml(user.avatar)}" alt="" referrerpolicy="no-referrer"
               style="width:28px;height:28px;border-radius:50%;object-fit:cover;border:1px solid rgba(255,255,255,0.18);">`;
   }
   return `<span class="avatar-chip"

@@ -96,7 +96,7 @@
     const base = 'width:22px;height:22px;border-radius:50%;flex-shrink:0;object-fit:cover;'
                + 'border:1px solid rgba(255,255,255,0.16);';
     if (f.avatar) {
-      return `<img src="${f.avatar}" alt="" referrerpolicy="no-referrer" style="${base}">`;
+      return `<img src="${escapeHtml(f.avatar)}" alt="" referrerpolicy="no-referrer" style="${base}">`;
     }
     const initial = escapeHtml(String(name)[0].toUpperCase());
     return `<span style="${base}display:inline-flex;align-items:center;justify-content:center;`

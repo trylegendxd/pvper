@@ -76,22 +76,112 @@ p.subtitle { color: var(--dim); font-size: 13px; letter-spacing: 1px; margin-bot
   padding: 22px 24px;
 }
 
-.game-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
-.game-card {
-  background: var(--bg2); border: 1px solid var(--border); border-radius: 5px;
-  padding: 22px; cursor: pointer; transition: transform .12s, border-color .12s, background .12s;
-  display: flex; flex-direction: column; gap: 8px;
+.game-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
+
+/* ── Hub game cards ──────────────────────────────────────────────────
+   Each card carries its game's colour as CSS vars (--ga bright, --gb deep)
+   set inline in dashboard.html; the art tile, tag, hover glow and CTA all
+   derive from them so adding a game is one <a> block, zero new CSS. */
+.g-card {
+  --ga: var(--accent); --gb: #10203a;
+  display: flex; flex-direction: column;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
+  overflow: hidden; text-decoration: none;
+  transition: transform .14s, border-color .14s, box-shadow .14s;
 }
-.game-card:hover { transform: translateY(-3px); border-color: var(--accent); background: #15151f; }
-.game-card .icon { font-size: 36px; }
-.game-card h3 { font-size: 18px; letter-spacing: 1.5px; color: #fff; }
-.game-card p { font-size: 12px; color: var(--dim); line-height: 1.5; }
-.game-card.shooter { border-color: rgba(75,158,255,.35); }
-.game-card.rps     { border-color: rgba(155,89,182,.35); }
-.game-card.roulette{ border-color: rgba(230,57,70,.35); }
-.game-card.blackjack{ border-color: rgba(46,204,113,.35); }
-.game-card.admin   { border-color: rgba(241,196,15,.35); }
-.game-card.wallet  { border-color: rgba(26,188,156,.35); }
+.g-card:hover {
+  transform: translateY(-4px); text-decoration: none;
+  border-color: color-mix(in srgb, var(--ga) 55%, transparent);
+  box-shadow: 0 10px 28px -12px color-mix(in srgb, var(--ga) 45%, transparent);
+}
+.g-art {
+  position: relative; height: 92px;
+  background:
+    radial-gradient(120% 140% at 85% -20%, color-mix(in srgb, var(--ga) 38%, transparent), transparent 60%),
+    linear-gradient(135deg, var(--gb), #0c0c14 80%);
+  display: flex; align-items: center; justify-content: center;
+  border-bottom: 1px solid rgba(255,255,255,.06);
+}
+.g-glyph {
+  font-size: 44px; filter: drop-shadow(0 4px 12px rgba(0,0,0,.6));
+  transition: transform .18s;
+}
+.g-card:hover .g-glyph { transform: scale(1.12) rotate(-4deg); }
+.g-tag {
+  position: absolute; top: 8px; right: 8px;
+  font-size: 9px; font-weight: 700; letter-spacing: 1.5px;
+  color: color-mix(in srgb, var(--ga) 85%, #fff);
+  background: rgba(0,0,0,.45); border: 1px solid color-mix(in srgb, var(--ga) 40%, transparent);
+  padding: 2px 7px; border-radius: 3px;
+}
+.g-body { display: flex; flex-direction: column; gap: 5px; padding: 13px 15px 12px; flex: 1; }
+.g-body h3 { font-size: 16px; letter-spacing: 1.5px; color: #fff; }
+.g-body p { font-size: 12px; color: var(--dim); line-height: 1.45; flex: 1; }
+.g-meta { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; min-height: 16px; }
+.g-live { font-size: 11px; letter-spacing: .5px; color: var(--green); font-weight: 600; }
+.g-cta {
+  font-size: 11px; font-weight: 700; letter-spacing: 1.5px;
+  color: color-mix(in srgb, var(--ga) 80%, #fff);
+  opacity: .55; transition: opacity .14s, transform .14s;
+}
+.g-card:hover .g-cta { opacity: 1; transform: translateX(2px); }
+
+/* Featured hero card (flagship game) */
+.g-hero {
+  --ga: #4b9eff; --gb: #12325e;
+  display: grid; grid-template-columns: minmax(200px, 340px) 1fr;
+  background: var(--bg2); border: 1px solid rgba(75,158,255,.35); border-radius: 10px;
+  overflow: hidden; text-decoration: none; margin-bottom: 30px;
+  transition: transform .14s, border-color .14s, box-shadow .14s;
+}
+.g-hero:hover {
+  transform: translateY(-3px); text-decoration: none;
+  border-color: rgba(75,158,255,.7);
+  box-shadow: 0 14px 40px -14px rgba(75,158,255,.5);
+}
+.g-hero-art {
+  position: relative; min-height: 150px; overflow: hidden;
+  background:
+    radial-gradient(120% 150% at 80% -30%, rgba(75,158,255,.4), transparent 55%),
+    linear-gradient(135deg, #12325e, #0b0b12 80%);
+  display: flex; align-items: center; justify-content: center;
+  border-right: 1px solid rgba(255,255,255,.06);
+}
+.g-hero-glyph { font-size: 74px; filter: drop-shadow(0 6px 18px rgba(0,0,0,.7)); }
+/* A slow sweeping scanline gives the hero art motion without any assets. */
+.g-hero-scan {
+  position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(105deg, transparent 40%, rgba(120,190,255,.14) 50%, transparent 60%);
+  transform: translateX(-100%);
+  animation: heroScan 4.5s ease-in-out infinite;
+}
+@keyframes heroScan { 0%,55% { transform: translateX(-100%); } 85%,100% { transform: translateX(100%); } }
+.g-hero-body { padding: 20px 26px; display: flex; flex-direction: column; gap: 7px; justify-content: center; }
+.g-kicker { font-size: 10px; font-weight: 700; letter-spacing: 3px; color: var(--accent); }
+.g-hero-body h2 { font-size: 26px; letter-spacing: 3px; color: #fff; }
+.g-hero-body p { font-size: 13px; color: var(--dim); line-height: 1.5; max-width: 520px; }
+.g-hero .g-cta { font-size: 12px; }
+
+/* Section headings */
+.g-section { font-size: 17px; letter-spacing: 3px; color: #fff; margin: 26px 0 12px; font-weight: 700; }
+.g-section-sub { font-size: 11px; letter-spacing: 1px; color: var(--dim); font-weight: 400; margin-left: 10px; text-transform: none; }
+
+/* Quick links strip */
+.g-quick { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 26px; }
+.g-quick a {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 9px 16px; font-size: 12px; letter-spacing: 1.5px; color: var(--text);
+  text-transform: uppercase; font-weight: 600;
+  transition: border-color .12s, color .12s;
+}
+.g-quick a:hover { border-color: var(--accent); color: #fff; text-decoration: none; }
+.g-quick a span { font-size: 15px; }
+
+@media (max-width: 640px) {
+  .g-hero { grid-template-columns: 1fr; }
+  .g-hero-art { min-height: 110px; border-right: 0; border-bottom: 1px solid rgba(255,255,255,.06); }
+}
 
 /* Forms */
 .form-box {
