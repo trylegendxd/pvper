@@ -1,10 +1,13 @@
 // public/js/api.js — tiny fetch wrapper for the JSON API
 async function api(path, opts = {}) {
+  const { body, headers: customHeaders, ...requestOptions } = opts;
+  const headers = new Headers(customHeaders);
+  if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
   const res = await fetch(path, {
     credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
-    ...opts,
-    body: opts.body ? JSON.stringify(opts.body) : undefined,
+    ...requestOptions,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   let data = null;
   try { data = await res.json(); } catch (_) {}

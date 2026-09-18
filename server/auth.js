@@ -11,7 +11,7 @@ const ADMIN_IDS = new Set(
 const USERNAME_RE = /^[a-zA-Z0-9_.-]{3,24}$/;
 
 async function register(username, password) {
-  if (!USERNAME_RE.test(username)) {
+  if (typeof username !== 'string' || !USERNAME_RE.test(username)) {
     const err = new Error('invalid_username'); err.status = 400; throw err;
   }
   if (typeof password !== 'string' || password.length < 6 || password.length > 200) {
@@ -63,7 +63,8 @@ async function register(username, password) {
 }
 
 async function login(username, password) {
-  if (!USERNAME_RE.test(username || '')) {
+  if (typeof username !== 'string' || !USERNAME_RE.test(username) ||
+      typeof password !== 'string' || password.length < 1 || password.length > 200) {
     const err = new Error('invalid_credentials'); err.status = 401; throw err;
   }
   const { rows } = await pool.query(
@@ -76,7 +77,7 @@ async function login(username, password) {
     const err = new Error('invalid_credentials'); err.status = 401; throw err;
   }
   const u = rows[0];
-  const ok = await bcrypt.compare(password || '', u.password_hash);
+  const ok = await bcrypt.compare(password, u.password_hash);
   if (!ok) {
     const err = new Error('invalid_credentials'); err.status = 401; throw err;
   }
@@ -122,6 +123,9 @@ async function updateProfile(userId, updates = {}) {
   if (!userId) {
     const err = new Error('not_authenticated'); err.status = 401; throw err;
   }
+  if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
+    const err = new Error('invalid_profile'); err.status = 400; throw err;
+  }
   const setClauses = [];
   const values = [];
   const push = (col, val) => {
@@ -133,6 +137,9 @@ async function updateProfile(userId, updates = {}) {
     if (updates.display_name === null || updates.display_name === '') {
       push('display_name', null);
     } else {
+      if (typeof updates.display_name !== 'string') {
+        const e = new Error('invalid_display_name'); e.status = 400; throw e;
+      }
       // Strip angle brackets so the value can never inject markup, even if a
       // renderer somewhere forgets to escape it (defense-in-depth XSS guard).
       const dn = String(updates.display_name).replace(/[<>]/g, '').trim();
@@ -146,6 +153,9 @@ async function updateProfile(userId, updates = {}) {
     if (updates.bio === null || updates.bio === '') {
       push('bio', null);
     } else {
+      if (typeof updates.bio !== 'string') {
+        const e = new Error('invalid_bio'); e.status = 400; throw e;
+      }
       const b = String(updates.bio).replace(/[<>]/g, '');
       if (b.length > 280) {
         const e = new Error('invalid_bio'); e.status = 400; throw e;
@@ -157,6 +167,9 @@ async function updateProfile(userId, updates = {}) {
     if (updates.avatar === null || updates.avatar === '') {
       push('avatar', null);
     } else {
+      if (typeof updates.avatar !== 'string') {
+        const e = new Error('invalid_avatar_format'); e.status = 400; throw e;
+      }
       const a = String(updates.avatar);
       // Must be a data URL — anything else (remote URL etc) is rejected
       // so the rendering side stays free of CORS / SSRF concerns.
