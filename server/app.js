@@ -8,6 +8,11 @@ const cors     = require('cors');
 const session  = require('express-session');
 const pgSession = require('connect-pg-simple')(session);
 const rateLimit = require('express-rate-limit');
+const errorHandler = require('./middleware/errorHandler');
+const { getSessionSecret } = require('./sessionConfig');
+
+// Validate before constructing the database-backed session store.
+const sessionSecret = getSessionSecret();
 
 const { pool }       = require('./db');
 const authRoutes     = require('./routes/authRoutes');
@@ -77,6 +82,9 @@ if (process.env.CORS_ORIGIN) {
   app.use(cors({ origin: process.env.CORS_ORIGIN, credentials: true }));
 }
 
+// Parse avatar uploads before the general parser: a later route-level parser
+// cannot override a body that was already rejected by the 100 KB limit.
+app.patch('/api/auth/me', express.json({ limit: '300kb' }));
 app.use(express.json({ limit: '100kb' }));
 app.use(express.urlencoded({ extended: false }));
 
@@ -88,7 +96,7 @@ const sessionMiddleware = session({
     createTableIfMissing: false, // migrations create it
   }),
   name: 'fps.sid',
-  secret: process.env.SESSION_SECRET || 'dev_change_me',
+  secret: sessionSecret,
   resave: false,
   saveUninitialized: false,
   cookie: {
@@ -209,5 +217,7 @@ app.use((req, res) => {
   }
   res.status(404).type('txt').send('Not found');
 });
+
+app.use(errorHandler);
 
 module.exports = { app, sessionMiddleware };

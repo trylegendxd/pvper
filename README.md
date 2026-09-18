@@ -99,6 +99,28 @@ npm run dev          # same (no nodemon here — kept lean)
 
 Open <http://localhost:3000>. You will be sent to `/login.html`. Register an account → you'll land in the dashboard.
 
+### Tests and maintenance
+
+```bash
+npm ci
+npm test
+npm audit --omit=dev
+```
+
+The test suite uses Node's built-in runner and needs no database. It covers
+wallet mutations, authentication input validation, bcrypt verification, session
+configuration, the browser API helper, and HTTP middleware/error handling. HTTP
+tests use an in-memory session store and stub database-backed operations; they
+do not replace PostgreSQL integration tests or multiplayer browser testing.
+GitHub Actions runs the suite on Node 22 and 24.
+
+Production startup rejects a missing, short, or example `SESSION_SECRET`.
+Generate a unique value with `openssl rand -hex 32` and keep it in your deployment
+environment. Changing an existing secret invalidates existing login cookies.
+
+See [the code review](docs/code-review.md) for remaining engineering priorities
+and the scope of the current reliability improvements.
+
 ### Creating an admin
 
 The simplest way: put your **username** into `ADMIN_USER_IDS` *before* registering. Or, after registering, find your UUID in the users table and add it:

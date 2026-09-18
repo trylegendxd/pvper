@@ -7,13 +7,13 @@
     "start": "node server/server.js",
     "dev": "node server/server.js",
     "migrate": "node server/migrate.js",
-    "test": "node --test tests/wallet.test.js"
+    "test": "node --test tests/*.test.js"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
-    "bcrypt": "^5.1.1",
+    "bcrypt": "^6.0.0",
     "connect-pg-simple": "^9.0.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",

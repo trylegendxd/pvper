@@ -26,31 +26,32 @@ function establishSession(req, userId) {
   });
 }
 
-router.post('/register', authLimiter, async (req, res) => {
+router.post('/register', authLimiter, async (req, res, next) => {
   try {
     const { username, password } = req.body || {};
     const user = await auth.register(username, password);
     await establishSession(req, user.id);
     res.json({ ok: true, user: { id: user.id, username: user.username, is_admin: user.is_admin } });
   } catch (e) {
-    res.status(e.status || 500).json({ error: e.message || 'register_failed' });
+    next(e);
   }
 });
 
-router.post('/login', authLimiter, async (req, res) => {
+router.post('/login', authLimiter, async (req, res, next) => {
   try {
     const { username, password } = req.body || {};
     const user = await auth.login(username, password);
     await establishSession(req, user.id);
     res.json({ ok: true, user });
   } catch (e) {
-    res.status(e.status || 500).json({ error: e.message || 'login_failed' });
+    next(e);
   }
 });
 
-router.post('/logout', (req, res) => {
+router.post('/logout', (req, res, next) => {
   if (!req.session) return res.json({ ok: true });
-  req.session.destroy(() => {
+  req.session.destroy((err) => {
+    if (err) return next(err);
     // Cookie name must match the one configured in app.js ('fps.sid').
     // Clearing 'connect.sid' (the express-session default) left the real
     // cookie lingering in the browser after logout.
@@ -59,22 +60,25 @@ router.post('/logout', (req, res) => {
   });
 });
 
-router.get('/me', async (req, res) => {
-  if (!req.session?.userId) return res.json({ user: null });
-  const me = await auth.currentUser(req.session.userId);
-  res.json({ user: me });
+router.get('/me', async (req, res, next) => {
+  try {
+    if (!req.session?.userId) return res.json({ user: null });
+    const me = await auth.currentUser(req.session.userId);
+    res.json({ user: me });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // Edit the player's own profile — display name, avatar (data URL),
-// bio. Express body limit is 100 KB by default in app.js; raise it
-// locally for this route so an avatar fits.
-router.patch('/me', express.json({ limit: '300kb' }), async (req, res) => {
+// bio. app.js applies the larger body limit before the general JSON parser.
+router.patch('/me', async (req, res, next) => {
   try {
     if (!req.session?.userId) return res.status(401).json({ error: 'not_authenticated' });
     const updated = await auth.updateProfile(req.session.userId, req.body || {});
     res.json({ ok: true, user: updated });
   } catch (e) {
-    res.status(e.status || 500).json({ error: e.message || 'update_failed' });
+    next(e);
   }
 });
 
